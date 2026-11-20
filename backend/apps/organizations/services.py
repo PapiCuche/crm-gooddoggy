@@ -14,7 +14,7 @@ from uuid import UUID
 
 from django.db import IntegrityError, connection, connections, transaction
 from django.db.models import F, Func, Max
-from django.db.models.functions import Now
+from django.db.models.functions import Greatest, Now
 from django.utils import timezone
 
 from apps.audit.services import Entity, record
@@ -465,7 +465,7 @@ def _send_wait(alias: str, email: str) -> int:
     rows = UserInvitation.objects.using(alias).filter(email=email)
     last = rows.aggregate(last=Max("sent_at"))["last"]
     left = (last + INVITATION_SEND_GAP - timezone.now()).total_seconds() if last else 0
-    return max(0, math.ceil(left))
+    return min(max(0, math.ceil(left)), int(INVITATION_SEND_GAP.total_seconds()))
 
 
 def invitation_to_send(
@@ -506,11 +506,14 @@ def store_invitation_link(ctx: TenantContext, *, invitation_id: UUID, token_hash
     (`invitation_to_send`), con la hora del envío y un envío más. El enlace anterior deja de
     valer (y no consta entregado). La base no deja pasar de `INVITATION_MAX_SENDS`."""
     rows = UserInvitation.objects.using(require_scope(ctx)).filter(pk=invitation_id)
-    sent = {"sent_at": Now(), "send_count": F("send_count") + 1, "updated_at": Now()}
+    # Si el reloj de la base retrocedió, `sent_at` no se adelanta (lo rechazaría el disparador).
+    later = Greatest(F("sent_at"), Now())
+    sent = {"sent_at": later, "send_count": F("send_count") + 1, "updated_at": Now()}
     rows.update(token_hash=token_hash, send_times=_APPEND_NOW, delivered_at=None, **sent)
 
 
 def invitation_delivered(ctx: TenantContext, *, invitation_id: UUID, token_hash: str) -> None:
     """El servidor de correo aceptó el enlace con ese hash, si sigue siendo el vigente (F2-130e)."""
     rows = UserInvitation.objects.using(require_scope(ctx))
-    rows.filter(pk=invitation_id, token_hash=token_hash).update(delivered_at=Now())
+    rows = rows.filter(pk=invitation_id, token_hash=token_hash)
+    rows.update(delivered_at=Greatest(F("sent_at"), Now()))  # nunca antes del envío

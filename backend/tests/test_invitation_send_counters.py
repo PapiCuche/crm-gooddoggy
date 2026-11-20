@@ -21,7 +21,7 @@ from tests.test_authorization import give
 from tests.test_invitation_accept import held
 from tests.test_invitation_preview import REFUSED, said
 from tests.test_invitation_preview import ask as preview
-from tests.test_invitation_renew import DENIED, age, delivery, event_of, resend, row
+from tests.test_invitation_renew import DENIED, age, code, delivery, event_of, resend, row
 from tests.test_invitation_send import invited, run, secret_in, send_now
 from tests.test_invitations_table import SENDS_GUARD
 from tests.test_invitations_table import invite as stored
@@ -43,6 +43,9 @@ UNDONE = (  # bajar la cuenta, quitar, cambiar o anteponer horas, o borrar o ade
     "send_times = array_prepend(now(), send_times), send_count = send_count + 1",
     "sent_at = NULL",
     "sent_at = sent_at - interval '1 second'",
+    "send_times = array_cat('[0:0]={2000-01-01 00:00:00+00}'::timestamptz[], send_times),"
+    " send_count = send_count + 1",  # delante, con otros índices
+    "email = 'otra@example.com'",  # el tope diario cuenta por correo
 )
 THREE = (  # tres envíos al mismo correo, con la hora de la base
     "UPDATE user_invitations SET sent_at = now() - interval '1 hour', send_times ="
@@ -67,7 +70,7 @@ def test_the_runtime_cannot_undo_a_send_but_can_add_one(
 ) -> None:
     invitation = sent_twice(rbac, migrator)
     before = sends(migrator, invitation)
-    for change in UNDONE:
+    for change in (*UNDONE, f"organization_id = '{rbac.b}'"):
         with pytest.raises(IntegrityError, match=SENDS_GUARD), tenant_scope(ctx(rbac.a)):
             raw(UPDATE.format(change), [invitation])
     assert sends(migrator, invitation) == before
@@ -75,6 +78,11 @@ def test_the_runtime_cannot_undo_a_send_but_can_add_one(
     with tenant_scope(ctx(rbac.a)):
         assert raw(UPDATE.format(grown), [invitation]) == [(1,)]
         assert raw(UPDATE.format("status = 'REVOKED', token_hash = NULL"), [invitation]) == [(1,)]
+        unsent = stored(rbac.a, "sin@example.com", rbac.ana).pk  # sin enviar, el correo sí cambia
+        assert raw(UPDATE.format("email = 'otro@example.com'"), [unsent]) == [(1,)]
+    once = stored(rbac.a, "una@example.com", rbac.ana, send_count=1).pk  # con un envío, ya no
+    with pytest.raises(IntegrityError, match=SENDS_GUARD), tenant_scope(ctx(rbac.a)):
+        raw(UPDATE.format("email = 'otro2@example.com'"), [once])
     count, times, _ = sends(migrator, invitation)
     assert count == 3 and times[:2] == before[1] and len(times) == 3
 
@@ -83,7 +91,7 @@ def test_the_owner_of_the_table_cannot_undo_a_send_either(
     rbac: Any, migrator: psycopg.Connection[Any]
 ) -> None:
     invitation = sent_twice(rbac, migrator)
-    for change in UNDONE:
+    for change in (*UNDONE, f"organization_id = '{rbac.b}'"):
         with pytest.raises(psycopg.errors.CheckViolation, match=SENDS_GUARD):
             migrator.execute(UPDATE.format(change), [invitation])
     function = (
@@ -146,6 +154,56 @@ def test_retry_after_never_passes_a_day_even_with_forged_future_sends(
     migrator.execute(THREE.replace("now() - interval", "now() + interval"))
     answer = resend(signed(rbac.ana), invitation)
     assert answer.status_code == 429 and answer.headers["Retry-After"] == str(24 * 3600)
+
+
+def test_the_gap_wait_never_passes_fifteen_minutes_even_with_a_forged_future_send(
+    rbac: Any, migrator: psycopg.Connection[Any]
+) -> None:
+    invitation = invited(rbac)
+    stored(rbac.a, "nueva@example.com", rbac.ana, status="REVOKED", send_count=1)
+    migrator.execute("UPDATE user_invitations SET sent_at = now() + interval '1 year'")
+    answer = resend(signed(rbac.ana), invitation)
+    assert code(answer) == (429, "INVITATION_SEND_TOO_SOON")
+    assert answer.headers["Retry-After"] == str(15 * 60)
+
+
+@pytest.mark.parametrize(
+    ("oldest", "low", "high"),
+    [
+        ("23 hours 59 minutes 50 seconds", 1, 10),
+        ("24 hours 1 second", 0, 0),
+        ("23 hours", 3540, 3600),
+    ],
+)
+def test_the_daily_window_ends_24_hours_after_a_send_and_counts_only_that_address(
+    rbac: Any, migrator: psycopg.Connection[Any], oldest: str, low: int, high: int
+) -> None:
+    stored(rbac.a, "nueva@example.com", rbac.ana, status="REVOKED", send_count=3)
+    migrator.execute(THREE.replace("23 hours", oldest))
+    with tenant_scope(ctx(rbac.a)) as tenant:
+        waits = [
+            organizations._address_wait(tenant, f"{who}@example.com") for who in ("nueva", "x")
+        ]
+    assert low <= waits[0] <= high and waits[1] == 0  # los de otro correo no cuentan
+
+
+def test_a_database_clock_stepping_back_never_fails_a_legitimate_send(
+    rbac: Any, migrator: psycopg.Connection[Any]
+) -> None:
+    invitation = invited(rbac)
+    ahead = "now() + interval '5 seconds'"  # el último envío, con un reloj que iba adelantado
+    migrator.execute(
+        UPDATE.format(f"send_count = 1, send_times = ARRAY[{ahead}], sent_at = {ahead}"),
+        [invitation],
+    )
+    before = sends(migrator, invitation)[2]
+    with tenant_scope(ctx(rbac.a)) as tenant:
+        organizations.store_invitation_link(tenant, invitation_id=invitation, token_hash="2" * 64)
+    with tenant_scope(ctx(rbac.a)) as tenant:
+        organizations.invitation_delivered(tenant, invitation_id=invitation, token_hash="2" * 64)
+    count, times, sent_at = sends(migrator, invitation)
+    assert (count, len(times), sent_at) == (2, 2, before)
+    assert row(migrator, invitation)[7] is True  # entregado, no antes de enviarse
 
 
 def test_a_lesser_admin_resending_waits_for_the_owner_renewal_and_is_refused(
