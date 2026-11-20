@@ -985,6 +985,7 @@ DROPS = {
     "apps/ai_gateway/migrations/0002_budget_and_calls.py",  # F8-05: solo al deshacerla
     "apps/ai_gateway/migrations/0004_daily_budget.py",  # F8-05b2: solo al deshacerla
     "apps/ai_gateway/migrations/0006_budget_alerts.py",  # F8-05b4: solo al deshacerla
+    "apps/organizations/migrations/0013_invitation_sends_guard.py",  # F2-130g: ídem
 }
 
 

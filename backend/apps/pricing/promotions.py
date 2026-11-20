@@ -39,6 +39,7 @@ from core.money import currency as check_currency
 from core.tenancy.context import TenantContext
 from core.tenancy.scope import require_scope
 from core.text import name as clean_name
+from core.text import shows_all
 
 TAG = re.compile(r"<[A-Za-z/!?]")  # el comienzo de una etiqueta o un comentario HTML
 NAME_MAX, TEXT_MAX, PRIORITY_MAX = 200, 2000, 10_000
@@ -73,8 +74,8 @@ class PromotionEnded(Exception):
 
 
 # Invisibles que falsean lo que se lee (inversión bidireccional, orden de bytes, etiquetas).
-# Se dejan pasar el unión y el no-unión de ancho cero y el guion blando: los usan los emoji
-# compuestos (familia, profesión) y el texto en otros alfabetos.
+# El unión y el no-unión de ancho cero pasan aquí; `core.text.shows_all` (F8-11) los deja solo
+# donde hacen falta (emoji compuestos, palabras de otros alfabetos) y rechaza el guion blando.
 SPOOFING = frozenset(
     [*range(0x202A, 0x202F), *range(0x2066, 0x206A), 0x200E, 0x200F, 0x061C, 0xFEFF]
     + list(range(0xE0000, 0xE0080))
@@ -92,7 +93,7 @@ def _plain(char: str) -> bool:
 
 def _text(field: str, value: str, limit: int) -> str:
     text = value.replace("\r\n", "\n").replace("\r", "\n").strip()
-    if len(text) > limit or TAG.search(text) or not all(map(_plain, text)):
+    if len(text) > limit or TAG.search(text) or not all(map(_plain, text)) or not shows_all(text):
         raise Invalid(field, f"hasta {limit} caracteres, sin HTML ni caracteres de control")
     return text
 

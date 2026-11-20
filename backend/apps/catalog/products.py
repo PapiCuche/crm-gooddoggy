@@ -18,7 +18,7 @@ from apps.catalog.models import Brand, Category, Product, ProductVariant
 from apps.catalog.slugs import clean_slug, slug_from
 from core.tenancy.context import TenantContext
 from core.tenancy.scope import require_scope
-from core.text import line
+from core.text import line, shows_all
 from core.text import name as clean_name
 
 NAME_MAX, SHORT_MAX, SKU_MAX, BARCODE_MAX, LABEL_MAX, DESCRIPTION_MAX = 200, 255, 64, 64, 100, 5000
@@ -56,11 +56,11 @@ def short_description(value: str) -> str:
 
 def description(value: str) -> str:
     """Texto libre de varias líneas: sin espacios exteriores ni caracteres de control salvo
-    saltos de línea y tabuladores."""
+    saltos de línea y tabuladores, ni lo que no se ve fuera de su sitio (F8-11: lo cita la IA)."""
     text = value.strip()
     if len(text) > DESCRIPTION_MAX:
         raise ValueError(f"hasta {DESCRIPTION_MAX} caracteres")
-    if any(not char.isprintable() and char not in "\n\t" for char in text):
+    if any(not char.isprintable() and char not in "\n\t" for char in text) or not shows_all(text):
         raise ValueError("solo texto imprimible")
     return text
 

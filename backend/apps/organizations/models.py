@@ -287,7 +287,8 @@ class UserInvitation(TenantModel):
         db_index=False,
     )
     sent_at = models.DateTimeField(null=True)
-    # Cuántas veces se envió su correo: el tope lo pone la base (ADR-020 §3).
+    # Cuántas veces se envió su correo: el tope lo pone la base (ADR-020 §3), que no la deja
+    # bajar, ni quitar horas de `send_times` ni deshacer `sent_at` (F2-130g, disparador).
     send_count = models.SmallIntegerField(default=0, db_default=0)
     # Cuándo salió cada envío: el tope diario por correo los cuenta (F2-130e, decisión del dueño).
     send_times = ArrayField(
