@@ -206,26 +206,33 @@ def shows_all(text: str) -> bool:
 
 VERIFY_MARK = "[verificar]"  # la marca del copiloto en lo que no tiene evidencia (ADR-034 §9)
 _PROTOTYPE = str.maketrans({char: shape for shape, chars in PROTOTYPES.items() for char in chars})
+# Antes de NFKC, que los haría un espacio: los espacios finos (U+2006–200A, U+202F y U+205F) no
+# separan una palabra a la vista; el braille vacío (`BLANK`) sí se ve como un espacio.
+_SPACING: dict[int, str | None] = {**dict.fromkeys([*range(0x2006, 0x200B), 0x202F, 0x205F]),
+                                   ord(BLANK): " "}  # fmt: skip
 
 
 def _unseen(char: str) -> bool:
     """Lo que el esqueleto de UTS #39 quita (Default_Ignorable) y no es de formato (`Cf`, que la
-    clave ya quitó): `UNSEEN`, los selectores de variación y los puntos ignorables sin asignar."""
-    hidden = _ignored(char) and unicodedata.category(char) != "Cf"
-    return hidden or _selector_fits(char, "") is not None
+    clave ya quitó): `UNSEEN` y los puntos ignorables sin asignar. Los selectores de variación son
+    marcas (`Mn`) y se van con ellas."""
+    return _ignored(char) and unicodedata.category(char) != "Cf"
 
 
 def _skeleton(text: str) -> str:
-    """El esqueleto de confusables de UTS #39: NFD, sin `_unseen`, cada carácter por su prototipo
-    (`core.confusables`, en minúsculas) y NFD otra vez."""
-    kept = "".join(char for char in unicodedata.normalize("NFD", text) if not _unseen(char))
+    """El esqueleto de confusables de UTS #39: NFD, sin `_unseen` ni las marcas que no ocupan
+    sitio (`Mn`: un punto de más sobre la «i» o un selector de variación), cada carácter por su
+    prototipo (`core.confusables`, en minúsculas) y NFD otra vez."""
+    decomposed = unicodedata.normalize("NFD", text)
+    kept = "".join(c for c in decomposed if not _unseen(c) and unicodedata.category(c) != "Mn")
     return unicodedata.normalize("NFD", kept.translate(_PROTOTYPE))
 
 
 def _key(text: str) -> str:
-    """La clave con la que se compara (ADR-034 §9.3), en este orden: NFKC, sin `Cf`, `casefold()` y
-    el esqueleto. Nunca se guarda ni se envía: quitar los `Cf` rompería los emoji unidos por ZWJ."""
-    normal = unicodedata.normalize("NFKC", text)
+    """La clave con la que se compara (ADR-034 §9.3), en este orden: los espacios de `_SPACING`,
+    NFKC, sin `Cf`, `casefold()` y el esqueleto. Nunca se guarda ni se envía: quitar los `Cf`
+    rompería los emoji unidos por ZWJ."""
+    normal = unicodedata.normalize("NFKC", text.translate(_SPACING))
     shown = "".join(char for char in normal if unicodedata.category(char) != "Cf")
     return _skeleton(shown.casefold())
 

@@ -137,7 +137,10 @@ REASONS = {
     "canal. Podrás responderle cuando vuelva a escribir.",
     "CLIENT_MESSAGE_ID_TAKEN": "Ese id de mensaje ya se usó para otro envío.",
 }
-UNVERIFIED = "El mensaje lleva la marca [verificar]: escribe tú el dato correcto antes de enviarlo."
+UNVERIFIED = (
+    "El mensaje lleva la marca [verificar] (la palabra entre corchetes o paréntesis): escribe tú "
+    "el dato correcto antes de enviarlo."
+)
 
 
 def queue(found: Conversation, **wanted: Any) -> tuple[Message, bool]:

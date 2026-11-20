@@ -3,16 +3,23 @@ La búsqueda pura (`core.text.has_verify_mark`), la tabla de confusables y su ge
 de envío del Inbox contra PostgreSQL con `crm_app`: 400 `UNVERIFIED_CONTENT` y nada escrito."""
 
 import hashlib
+import unicodedata
 from types import SimpleNamespace
 from typing import Any
+from uuid import uuid4
 
 import pytest
+from django.db import connections
+from django.test.utils import CaptureQueriesContext
 
+from apps.conversations import commands
 from apps.conversations.api.messages import UNVERIFIED
 from core import confusables, confusables_build
+from core.tenancy.scope import require_scope, tenant_scope
 from core.text import VERIFY_MARK, has_verify_mark
 from tests.test_conversations_api import crm, inbox, real_stack
 from tests.test_conversations_send_api import DB, counts, post
+from tests.test_memberships import ctx
 from tests.test_self_context import signed
 
 __all__ = ["crm", "inbox", "real_stack"]  # los fixtures, para pytest
@@ -26,6 +33,9 @@ MARKED = {  # la variante y el código con el que la ruta la rechaza
     "[veri\u200eficar]": "UNVERIFIED_CONTENT",  # una marca de dirección (Cf) que el texto admite
     WIDE: "UNVERIFIED_CONTENT",  # corchetes y letras
     "[VERIFICAR]": "UNVERIFIED_CONTENT",
+    "[VER\u0130F\u0130CAR]": "UNVERIFIED_CONTENT",  # la «I con punto»: su punto (Mn) no cuenta
+    "[veri\u200aficar]": "UNVERIFIED_CONTENT",  # un espacio fino no separa la palabra
+    "[\u2800verificar\u2800]": "UNVERIFIED_CONTENT",  # el braille vacío se ve como un espacio
     "(verificar)": "UNVERIFIED_CONTENT",
     "\u3010 verificar \u3011": "UNVERIFIED_CONTENT",
     "Son S/ 120 [ verificar ] con envío": "UNVERIFIED_CONTENT",
@@ -35,8 +45,17 @@ MARKED = {  # la variante y el código con el que la ruta la rechaza
 }
 PLAIN = ("verificar", "Lo vamos a verificar", "por verificar", "[verificado]", "[ver ificar]")
 
+HIDDEN = (  # más variantes que la búsqueda ve (`clean_body` ya rechaza algunas)
+    "[veri\u2060ficar]",
+    "[veri\u0307ficar]",
+    "[\u115fverificar]",
+    "[\nverificar\t]",
+    "[\u2028verificar\u1680]",
+    *(f"[veri{space}ficar]" for space in "\u2009\u202f\u2006\u205f"),
+)
 
-@pytest.mark.parametrize("text", [VERIFY_MARK, "[veri\u2060ficar]", *MARKED])
+
+@pytest.mark.parametrize("text", [VERIFY_MARK, *HIDDEN, *MARKED])
 def test_the_mark_is_found_however_it_is_disguised(text: str) -> None:
     assert VERIFY_MARK == "[verificar]" and has_verify_mark(text)
 
@@ -50,6 +69,7 @@ def test_the_table_comes_from_the_pinned_file_and_only_what_can_form_the_mark_en
     assert (confusables.VERSION, confusables.SHA256) == (
         confusables_build.VERSION, confusables_build.SHA256,
     )  # fmt: skip
+    assert unicodedata.unidata_version == confusables.VERSION  # otro Unicode: regenerar la tabla
     header = confusables.__doc__ or ""
     assert confusables_build.SHA256 in header and confusables_build.URL in header
     source = "\n".join((
@@ -66,6 +86,23 @@ def test_the_table_comes_from_the_pinned_file_and_only_what_can_form_the_mark_en
     with pytest.raises(ValueError, match="no es el confusables.txt"):
         confusables_build.build(source.encode())  # sin red: solo el archivo fijado
     assert hashlib.sha256(source.encode()).hexdigest() != confusables_build.SHA256
+    # un prototipo cuenta entero o por un extremo: «x(» empieza una marca y «)x» la termina
+    assert [confusables_build.contributes(t) for t in ("x(", ")x", "(x", "x)")] == [
+        True, True, False, False,
+    ]  # fmt: skip
+
+
+@pytest.mark.usefixtures("tenant_db")
+def test_the_mark_is_refused_before_any_query(inbox: SimpleNamespace) -> None:
+    with tenant_scope(ctx(inbox.a, inbox.ana)) as tenant:
+        alias = require_scope(tenant)
+        with CaptureQueriesContext(connections[alias]) as seen:
+            with pytest.raises(commands.UnverifiedContent):
+                commands.record_outbound(
+                    tenant, conversation_id=inbox.convs["nobody"], client_message_id=uuid4(),
+                    body="[VERIFICAR]", purpose="CUSTOMER_REPLY",
+                )  # fmt: skip
+    assert seen.captured_queries == []  # ni el permiso, ni la conversación, ni la transacción
 
 
 @pytest.mark.usefixtures("tenant_db")
