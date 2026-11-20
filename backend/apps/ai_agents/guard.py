@@ -5,10 +5,11 @@ La respuesta del modelo es una plantilla con placeholders `{{c1}}` y claims (`re
 `None` si no dio `ok`): tool y `kind`, `path` del `kind` en `Evidence.data`, evidencia ni del futuro
 ni caducada (`AI_EVIDENCE_TTL`); y por grupos (un nombre abre uno; lo anterior al primero es suyo):
 un producto y una variante, el «antes» y la promoción de la fila del precio actual, las condiciones
-de una promoción citada. Copia el valor de la evidencia, nunca de la plantilla; si no, `VERIFY_MARK`
-con un hallazgo (tipo y posición, nunca el texto del modelo) y un problema para el reintento. Las
-posiciones son índices de `str` (code points, no UTF-16: F8-09 las convierte); los detectores de
-F8-08f miran solo lo que no está en `inserted`. Puro: sin base de datos ni logs."""
+de la fila citada más cercana; y un solo precio actual por variante. Copia el valor de la
+evidencia, nunca de la plantilla; si no, `VERIFY_MARK` con un hallazgo (tipo y posición, nunca el
+texto del modelo) y un problema para el reintento. Las posiciones son índices de `str` (code
+points, no UTF-16: F8-09 las convierte); los detectores de F8-08f miran solo lo que no está en
+`inserted`. Puro: sin base de datos ni logs."""
 
 import copy
 import re
@@ -43,7 +44,8 @@ BANDS = {AVAILABLE: "disponible", FEW_UNITS: "disponible, con pocas unidades",
 PROMOTED = ("REGULAR_PRICE", "PROMOTION")  # solo con promoción y de la fila del precio actual
 ROWS = ("PRICE", *PROMOTED)  # las que citan una fila de `prices`
 # Códigos que solo cambian el texto del reintento; el hallazgo va con su tipo
-FINDING = {"NOT_TRACKED": "VALUE_MISSING", "TRUNCATED": "VALUE_MISSING"}
+FINDING = {"NOT_TRACKED": "VALUE_MISSING", "TRUNCATED": "VALUE_MISSING",
+           "PRICE_TWICE": "SUBJECT_MISMATCH"}  # fmt: skip
 TEXTS = {
     "CLAIM_ID": "una claim tiene un id inválido; usa c1, c2…",
     "CLAIM_DUPLICATE": "la claim {claim} está repetida",
@@ -51,6 +53,7 @@ TEXTS = {
     "SUBJECT_MISMATCH": "la claim {claim} no es del producto, variante o fila de su grupo",
     "NOT_TRACKED": "la claim {claim} no lleva stock: no afirmes disponibilidad",
     "TRUNCATED": "las condiciones de la claim {claim} llegaron recortadas: no las cites",
+    "PRICE_TWICE": "la claim {claim} es otro precio actual de una variante ya citada: da uno",
     "TOO_LONG": f"la respuesta renderizada pasa de {BODY_MAX} caracteres: acórtala",
 }
 
@@ -245,8 +248,8 @@ def _cite(claim: Claim, found: Evidence | None, now: datetime, ttl: timedelta) -
         return "NO_PROMOTION"
     if claim.kind == "STOCK" and leaf == NOT_TRACKED:
         return "NOT_TRACKED"
-    if claim.kind == "PROMOTION_TERMS" and type(leaf) is str and leaf.endswith(CUT):
-        return "TRUNCATED"  # recortadas por `get_price`: no se insertan como si estuvieran enteras
+    if claim.kind == "PROMOTION_TERMS" and type(leaf) is str and leaf.endswith(CUT.lstrip()):
+        return "TRUNCATED"  # recortadas por `get_price` (a cero: solo «[…]»): nunca como enteras
     value = _value(claim.kind, row, leaf) if type(leaf) is str and leaf.strip() else None
     if value is None:
         return "VALUE_MISSING"
@@ -280,13 +283,24 @@ def _groups(kinds: list[str], cited: list[_Cited | str]) -> list[tuple[Any, list
     return groups
 
 
-def _coherent(kinds: list[str], cited: list[_Cited | str]) -> None:
-    """Cambia por `SUBJECT_MISMATCH` lo que no es del sujeto de su grupo (ADR-005 Parte D)."""
+def _near(at: int, among: list[int]) -> int | None:
+    """El índice de `among` más cercano a `at`: el anterior antes que el siguiente."""
+    near = [p for p in among if p < at][-1:] or [p for p in among if p > at][:1]
+    return near[0] if near else None
 
-    def valid(at: int, *wanted: str) -> _Cited | None:
+
+def _coherent(kinds: list[str], cited: list[_Cited | str]) -> None:
+    """Cambia por `SUBJECT_MISMATCH` lo que no es del sujeto de su grupo (ADR-005 Parte D), y por
+    `PRICE_TWICE` otro precio actual de una variante ya citada: «antes X, ahora Y» con dos listas
+    o dos evidencias sería un descuento que no existe."""
+
+    def valid(at: int | None, *wanted: str) -> _Cited | None:
+        if at is None:  # sin fila con la que emparejar
+            return None
         found = cited[at]
         return found if isinstance(found, _Cited) and kinds[at] in wanted else None
 
+    current: dict[str | None, tuple[str, int] | None] = {}  # variante → fila de su precio actual
     for (product, variant), members in _groups(kinds, cited):
         for at in members:
             if (found := valid(at, *KINDS)) is None:
@@ -297,19 +311,25 @@ def _coherent(kinds: list[str], cited: list[_Cited | str]) -> None:
                 cited[at] = "SUBJECT_MISMATCH"
             else:
                 variant = found.variant
+        for at in members:  # en todo el texto, no solo en el grupo: un nombre no lo reinicia
+            if (found := valid(at, "PRICE")) is None:
+                continue
+            if current.setdefault(found.variant, found.row) != found.row:
+                cited[at] = "PRICE_TWICE"  # la misma fila repetida sí: es el mismo precio
         prices = [at for at in members if valid(at, "PRICE")]
         for at in members:
             if (found := valid(at, *PROMOTED)) is None:
                 continue
-            near = [p for p in prices if p < at][-1:] or [p for p in prices if p > at][:1]
-            pair = valid(near[0], "PRICE") if near else None
+            pair = valid(_near(at, prices), "PRICE")
             alone = pair is None and kinds[at] == "REGULAR_PRICE"  # un «antes» sin «ahora»
             if alone or (pair is not None and pair.row != found.row):
                 cited[at] = "SUBJECT_MISMATCH"
-        rows = [valid(at, *ROWS) for at in members]
-        promotions = {found.promotion for found in rows if found is not None} - {None}
-        for at in members:
-            if (found := valid(at, "PROMOTION_TERMS")) and found.promotion not in promotions:
+        rows = [at for at in members if valid(at, *ROWS)]
+        for at in members:  # las condiciones, de la fila citada más cercana y de su promoción
+            if (found := valid(at, "PROMOTION_TERMS")) is None:
+                continue
+            pair = valid(_near(at, rows), *ROWS)
+            if pair is None or found.promotion is None or pair.promotion != found.promotion:
                 cited[at] = "SUBJECT_MISMATCH"
 
 
