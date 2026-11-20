@@ -398,7 +398,10 @@ def test_only_the_records_writer_reaches_the_audit_service() -> None:
     config = tomllib.loads((pathlib.Path(__file__).parents[1] / "pyproject.toml").read_text())
     contracts = config["tool"]["importlinter"]["contracts"]
     (mine,) = [c for c in contracts if c.get("source_modules") == ["apps.ai_agents"]]
-    assert mine["ignore_imports"] == ["apps.ai_agents.records -> apps.audit.services"]
+    assert mine["ignore_imports"] == [
+        "apps.ai_agents.records -> apps.audit.services",
+        "apps.ai_agents.context -> apps.conversations.selectors",
+    ]
     (writer,) = [c for c in contracts if c.get("forbidden_modules") == ["apps.ai_agents.records"]]
     assert writer["type"] == "forbidden" and not writer.get("ignore_imports")
     package = importlib.import_module("apps.ai_agents")

@@ -17,7 +17,7 @@ from django.core.exceptions import ImproperlyConfigured
 from django.test import override_settings
 from django.utils import timezone
 
-from apps.ai_agents import guard
+from apps.ai_agents import context, guard
 from apps.ai_agents.guard import KINDS, REPLY_SCHEMA, Finding, Malformed, Problem, render
 from apps.ai_agents.registry import TOOLS, Evidence, ToolSpec, invoke_read_only
 from apps.ai_agents.tools.catalog import GET_PRODUCT_VARIANTS, SEARCH_PRODUCT
@@ -265,6 +265,7 @@ def test_the_schema_is_strict_and_its_kinds_are_the_registered_tools() -> None:
         "PRICE": ["get_price"], "REGULAR_PRICE": ["get_price"], "PROMOTION": ["get_price"],
         "PROMOTION_TERMS": ["get_price"], "STOCK": ["get_stock"]}  # fmt: skip
     jsonschema.validate(FULL, REPLY_SCHEMA)
+    assert context.REPLY_SCHEMA is REPLY_SCHEMA  # el contexto lo toma de aquí (F8-08d)
 
 
 @pytest.mark.parametrize("change", [

@@ -13,8 +13,7 @@ lo que propuso el modelo) y un problema para el reintento (solo ids, códigos y 
 se copia la franja con su texto fijo, nunca `facts`. Puro: sin base de datos y sin logs.
 
 Los detectores fuera de los placeholders y el traspaso son de F8-08f; el bucle y el reintento, de
-F8-08g. F8-08d (#1031) define un `REPLY_SCHEMA` mínimo en `context`; al unirse, lo importa de
-aquí."""
+F8-08g. `context` (F8-08d) toma de aquí `REPLY_SCHEMA`."""
 
 import re
 from collections import Counter
