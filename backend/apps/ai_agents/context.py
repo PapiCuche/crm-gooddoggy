@@ -16,7 +16,7 @@ import json
 import re
 import secrets
 import unicodedata
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
@@ -27,7 +27,7 @@ from django.core.exceptions import ImproperlyConfigured
 from django.db.models import Q
 
 from apps.ai_agents import registry
-from apps.ai_agents.guard import REPLY_SCHEMA as REPLY_SCHEMA  # F8-08e: el esquema, del guard
+from apps.ai_agents.guard import reply_schema  # F8-08e: el esquema, una copia por petición
 from apps.ai_gateway.llm import LLMRequest, Turn
 from apps.conversations import selectors
 from apps.conversations.models import Conversation
@@ -68,14 +68,14 @@ class Purpose(StrEnum):
 class Plan:
     task: str
     tools: tuple[str, ...]
-    output_schema: dict[str, Any] | None
+    output_schema: Callable[[], dict[str, Any]] | None
 
 
 PLANS = {
     Purpose.SUGGEST: Plan(
         "Propón la respuesta de quien atiende a la última petición del cliente. Para productos, "
         "precios y stock usa solo las herramientas; responde con la salida estructurada.",
-        ("search_product", "get_product_variants", "get_price", "get_stock"), REPLY_SCHEMA,
+        ("search_product", "get_product_variants", "get_price", "get_stock"), reply_schema,
     ),
     Purpose.SUMMARY: Plan(  # sin tools (decisión del orquestador en #771)
         "Resume la conversación para quien atiende, en español y en pocas líneas, en texto "
@@ -180,4 +180,5 @@ def build(ctx: TenantContext, conversation_id: UUID, purpose: Purpose) -> LLMReq
     tools = tuple(registry.declared(registry.TOOLS[name]) for name in plan.tools)
     turn = Turn("user", f"Conversación:\n{blocks}\n\n{plan.task}")
     system = SYSTEM.format(tag=tag)
-    return LLMRequest(purpose.value, system, (turn,), tools, plan.output_schema, conversation_id)
+    schema = plan.output_schema() if plan.output_schema else None
+    return LLMRequest(purpose.value, system, (turn,), tools, schema, conversation_id)

@@ -1,20 +1,16 @@
 """El Output Guard del copiloto, parte I (F8-08e; ADR-034 §9, ADR-005 Parte D).
 
-Ninguna cifra la escribe el modelo: su respuesta es una plantilla con placeholders `{{c1}}` y
-claims `{id, kind, evidence_ref, path}` (`REPLY_SCHEMA`, estricto, para `output_config.format`).
+La respuesta del modelo es una plantilla con placeholders `{{c1}}` y claims (`reply_schema()`).
 `render` valida cada claim contra la evidencia de **esta** invocación (`tool_use_id → Evidence`,
-`None` si la tool no dio `ok`): la tool da ese `kind`; el `path` existe en lo que vio el modelo
-(`Evidence.data`) y es el de su `kind`; la evidencia de precio y stock tiene como mucho
-`AI_EVIDENCE_TTL`; tras el nombre de un producto, sus claims hablan de él y de una sola variante.
-El valor se copia de la evidencia y se formatea aquí, nunca de la plantilla. Un placeholder sin
-claim válida queda como `VERIFY_MARK`, con un hallazgo (su tipo y la posición de la marca, nunca
-lo que propuso el modelo) y un problema para el reintento (solo ids, códigos y nombres de tools).
-`amount` es el precio actual; `regular_amount` solo es el «antes» con promoción (#1012). Del stock
-se copia la franja con su texto fijo, nunca `facts`. Puro: sin base de datos y sin logs.
+`None` si no dio `ok`): tool y `kind`, `path` del `kind` en `Evidence.data`, evidencia ni del futuro
+ni caducada (`AI_EVIDENCE_TTL`); y por grupos (un nombre abre uno; lo anterior al primero es suyo):
+un producto y una variante, el «antes» y la promoción de la fila del precio actual, las condiciones
+de una promoción citada. Copia el valor de la evidencia, nunca de la plantilla; si no, `VERIFY_MARK`
+con un hallazgo (tipo y posición, nunca el texto del modelo) y un problema para el reintento. Las
+posiciones son índices de `str` (code points, no UTF-16: F8-09 las convierte); los detectores de
+F8-08f miran solo lo que no está en `inserted`. Puro: sin base de datos ni logs."""
 
-Los detectores fuera de los placeholders y el traspaso son de F8-08f; el bucle y el reintento, de
-F8-08g. `context` (F8-08d) toma de aquí `REPLY_SCHEMA`."""
-
+import copy
 import re
 from collections import Counter
 from collections.abc import Mapping
@@ -28,32 +24,41 @@ from django.core.exceptions import ImproperlyConfigured
 
 from apps.ai_agents.registry import Evidence, ToolSpec
 from apps.ai_agents.tools.catalog import GET_PRODUCT_VARIANTS, SEARCH_PRODUCT
-from apps.ai_agents.tools.price import GET_PRICE
-from apps.ai_agents.tools.stock import AVAILABLE, FEW_UNITS, GET_STOCK, OUT_OF_STOCK
+from apps.ai_agents.tools.price import CUT, GET_PRICE
+from apps.ai_agents.tools.stock import AVAILABLE, FEW_UNITS, GET_STOCK, NOT_TRACKED, OUT_OF_STOCK
+from apps.conversations.models import BODY_MAX
 from core.text import VERIFY_MARK
 
 MAX_TTL = 600  # ADR-034 §9: precio y stock, 10 minutos como mucho
 MAX_CLAIMS, MAX_TEMPLATE = 40, 4000  # y como mucho MAX_CLAIMS placeholders: hallazgos acotados
+MAX_FIELD = 64  # cada campo de una claim (un `tool_use_id` tiene como mucho 64)
 CLAIM_ID = re.compile(r"c[0-9]{1,3}")
 PLACEHOLDER = re.compile(r"\{\{([^{}]*)\}\}")  # todo `{{…}}` es un placeholder: o claim o marca
 N = r"(?:0|[1-9][0-9]{0,2})"  # un índice de lista
 MONEY = re.compile(r"[0-9]+(?:\.[0-9]+)?")
 CURRENCY = re.compile(r"[A-Z]{3}")
 SYMBOLS = {"PEN": "S/", "USD": "US$"}  # otra moneda va con su código ISO 4217
-# NOT_TRACKED (no lleva stock) no tiene franja que afirmar: queda como marca
 BANDS = {AVAILABLE: "disponible", FEW_UNITS: "disponible, con pocas unidades",
          OUT_OF_STOCK: "agotado"}  # fmt: skip
-PROMOTED = ("REGULAR_PRICE", "PROMOTION")  # solo valen si la fila tiene promoción
+PROMOTED = ("REGULAR_PRICE", "PROMOTION")  # solo con promoción y de la fila del precio actual
+ROWS = ("PRICE", *PROMOTED)  # las que citan una fila de `prices`
+# Códigos que solo cambian el texto del reintento; el hallazgo va con su tipo
+FINDING = {"NOT_TRACKED": "VALUE_MISSING", "TRUNCATED": "VALUE_MISSING"}
+TEXTS = {
+    "CLAIM_ID": "una claim tiene un id inválido; usa c1, c2…",
+    "CLAIM_DUPLICATE": "la claim {claim} está repetida",
+    "CLAIM_UNUSED": "la claim {claim} no tiene placeholder",
+    "SUBJECT_MISMATCH": "la claim {claim} no es del producto, variante o fila de su grupo",
+    "NOT_TRACKED": "la claim {claim} no lleva stock: no afirmes disponibilidad",
+    "TRUNCATED": "las condiciones de la claim {claim} llegaron recortadas: no las cites",
+    "TOO_LONG": f"la respuesta renderizada pasa de {BODY_MAX} caracteres: acórtala",
+}
 
 
 @dataclass(frozen=True)
 class Kind:
     tools: tuple[ToolSpec, ...]  # la primera es la que se pide en el reintento
     path: re.Pattern[str]
-
-    @property
-    def fresh(self) -> bool:  # precio y stock caducan; el catálogo, no
-        return self.tools[0].kind != "CATALOG"
 
 
 KINDS = {
@@ -65,11 +70,11 @@ KINDS = {
     "PROMOTION_TERMS": Kind((GET_PRICE,), re.compile(rf"promotions\.{N}\.terms")),
     "STOCK": Kind((GET_STOCK,), re.compile(r"availability")),
 }  # fmt: skip
+TOP = ("reply_template", "claims", "wants_handoff")
 FIELDS = ("id", "kind", "evidence_ref", "path")
 # ADR-005 Parte D: estricto (sin campos extra) y solo con lo que admite `output_config.format`
-REPLY_SCHEMA: dict[str, Any] = {
-    "type": "object", "additionalProperties": False,
-    "required": ["reply_template", "claims", "wants_handoff"],
+_SCHEMA: dict[str, Any] = {
+    "type": "object", "additionalProperties": False, "required": list(TOP),
     "properties": {
         "reply_template": {"type": "string", "description": "La respuesta. Cada nombre, precio, "
                            "promoción o disponibilidad va como {{id}} de su claim, nunca escrito."},
@@ -89,6 +94,11 @@ REPLY_SCHEMA: dict[str, Any] = {
 }  # fmt: skip
 
 
+def reply_schema() -> dict[str, Any]:
+    """Una copia del esquema: quien la cambie (el contexto, el gateway) no cambia el guard."""
+    return copy.deepcopy(_SCHEMA)
+
+
 class Malformed(ValueError):  # no cumple el esquema o pasa los topes: no se renderiza nada
     FEEDBACK = "la respuesta no cumple el esquema de salida; responde con reply_template y claims"
 
@@ -104,7 +114,7 @@ class Claim:
 @dataclass(frozen=True)
 class Finding:
     type: str
-    start: int  # la posición de su `VERIFY_MARK` en el texto renderizado
+    start: int  # la posición de su `VERIFY_MARK` en el texto renderizado (code points)
     end: int
 
 
@@ -119,12 +129,8 @@ class Problem:
             if self.claim is None:
                 return "un placeholder no tiene claim con un id válido (c1, c2…)"
             return f"el placeholder {{{{{self.claim}}}}} no tiene claim"
-        if self.code == "CLAIM_ID":
-            return "una claim tiene un id inválido; usa c1, c2…"
-        if self.code == "CLAIM_DUPLICATE":
-            return f"la claim {self.claim} está repetida"
-        if self.code == "CLAIM_UNUSED":
-            return f"la claim {self.claim} no tiene placeholder"
+        if self.code in TEXTS:
+            return TEXTS[self.code].format(claim=self.claim)
         tool = f"llama a `{self.tool}`"
         return f"la claim {self.claim} no tiene evidencia válida ({self.code}); {tool}"
 
@@ -136,6 +142,7 @@ class Rendered:
     problems: tuple[Problem, ...]
     wants_handoff: bool
     expires_at: datetime | None  # cuándo caduca la primera evidencia de precio o stock citada
+    inserted: tuple[tuple[int, int], ...] = ()  # lo que puso el servidor: valores y marcas
 
     @property
     def ok(self) -> bool:
@@ -149,10 +156,12 @@ class Rendered:
 @dataclass(frozen=True)
 class _Cited:
     value: str
-    subject: str | None  # lo que nombra una claim de nombre (producto o variante)
-    variant: str | None  # la variante de una claim de precio o stock
+    product: str | None  # el de una claim de nombre
+    variant: str | None  # la variante nombrada, o la de la evidencia de precio o stock
     subjects: frozenset[str]
     expires: datetime | None
+    row: tuple[str, int] | None = None  # (evidence_ref, índice) de una fila de `prices`
+    promotion: str | None = None  # el `promotion_id` de esa fila o de unas condiciones
 
 
 def evidence_ttl() -> timedelta:
@@ -164,20 +173,22 @@ def evidence_ttl() -> timedelta:
 
 
 def parse(raw: object) -> tuple[str, tuple[Claim, ...], bool]:
-    """La respuesta como la exige `REPLY_SCHEMA` (también en el servidor), o `Malformed`."""
-    if type(raw) is not dict or set(raw) != set(REPLY_SCHEMA["required"]):
+    """La respuesta como la exige el esquema (también en el servidor), o `Malformed`."""
+    if type(raw) is not dict or set(raw) != set(TOP):
         raise Malformed
     template, claims, handoff = raw["reply_template"], raw["claims"], raw["wants_handoff"]
     if type(template) is not str or type(claims) is not list or type(handoff) is not bool:
         raise Malformed
-    if len(template) > MAX_TEMPLATE or len(claims) > MAX_CLAIMS:
+    if max(len(claims), len(PLACEHOLDER.findall(template))) > MAX_CLAIMS:
         raise Malformed
-    if len(PLACEHOLDER.findall(template)) > MAX_CLAIMS:
+    if len(template) > MAX_TEMPLATE:
         raise Malformed
     for claim in claims:
         if type(claim) is not dict or set(claim) != set(FIELDS):
             raise Malformed
-        if any(type(value) is not str for value in claim.values()) or claim["kind"] not in KINDS:
+        if any(type(v) is not str or len(v) > MAX_FIELD for v in claim.values()) or (
+            claim["kind"] not in KINDS  # ya es un `str`: se puede buscar
+        ):
             raise Malformed
     return template, tuple(Claim(**claim) for claim in claims), handoff
 
@@ -204,14 +215,17 @@ def _money(currency: object, amount: str) -> str | None:
 
 def _value(kind: str, row: Mapping[str, Any], leaf: str) -> str | None:
     if kind in ("PRICE", "REGULAR_PRICE"):
-        return _money(row.get("currency"), leaf)
+        money, tax = _money(row.get("currency"), leaf), row.get("tax_included")
+        if money is None or type(tax) is not bool:
+            return None
+        return money if tax else f"{money} + IGV"
     if kind == "STOCK":
         return BANDS.get(leaf)
     return leaf
 
 
 def _cite(claim: Claim, found: Evidence | None, now: datetime, ttl: timedelta) -> _Cited | str:
-    """El valor de la evidencia para `claim`, o el tipo del hallazgo."""
+    """El valor de la evidencia para `claim`, o el código del problema."""
     kind = KINDS[claim.kind]
     if found is None:
         return "EVIDENCE_MISSING"
@@ -223,24 +237,87 @@ def _cite(claim: Claim, found: Evidence | None, now: datetime, ttl: timedelta) -
     if not kind.path.fullmatch(claim.path):
         regular = claim.kind == "PRICE" and KINDS["REGULAR_PRICE"].path.fullmatch(claim.path)
         return "PRICE_NOT_CURRENT" if regular else "KIND_MISMATCH"
-    expires = found.as_of + ttl if kind.fresh else None
-    if expires is not None and now > expires:
+    expires = found.as_of + ttl if found.kind != "CATALOG" else None  # el catálogo no caduca
+    if found.as_of > now or (expires is not None and now > expires):  # ni del futuro
         return "EVIDENCE_STALE"
     row, leaf = nodes[-2], nodes[-1]
     if claim.kind in PROMOTED and row.get("promotion") is None:
         return "NO_PROMOTION"
+    if claim.kind == "STOCK" and leaf == NOT_TRACKED:
+        return "NOT_TRACKED"
+    if claim.kind == "PROMOTION_TERMS" and type(leaf) is str and leaf.endswith(CUT):
+        return "TRUNCATED"  # recortadas por `get_price`: no se insertan como si estuvieran enteras
     value = _value(claim.kind, row, leaf) if type(leaf) is str and leaf.strip() else None
     if value is None:
         return "VALUE_MISSING"
-    subject = row.get("variant_id", row.get("product_id"))
-    variant = found.data.get("variant_id")
+    if claim.kind == "PRODUCT_NAME":
+        product = row.get("product_id", found.data.get("product_id"))
+        if type(product) is not str:  # sin sujeto no se ancla nada: falla la claim
+            return "VALUE_MISSING"
+        return _Cited(value, product, row.get("variant_id"), frozenset(), None)
+    at = (claim.evidence_ref, int(claim.path.split(".")[1])) if claim.kind in ROWS else None
     subjects = frozenset(map(str, found.subjects))
-    return _Cited(value, subject, variant, subjects, expires)
+    return _Cited(value, None, found.data.get("variant_id"), subjects, expires, at,
+                  row.get("promotion_id"))  # fmt: skip
+
+
+def _groups(kinds: list[str], cited: list[_Cited | str]) -> list[tuple[Any, list[int]]]:
+    """`[((producto, variante), índices sin nombre)]`: cada nombre abre un grupo, salvo otro del
+    mismo producto sin variante; lo anterior al primer nombre es de su grupo."""
+    groups: list[tuple[Any, list[int]]] = [((None, None), [])]
+    named = False
+    for at, kind in enumerate(kinds):
+        if kind != "PRODUCT_NAME":
+            groups[-1][1].append(at)
+            continue
+        found = cited[at]
+        head = (found.product, found.variant) if isinstance(found, _Cited) else (None, None)
+        if not named:
+            groups[-1] = (head, groups[-1][1])
+        elif head[1] is not None or head[0] is None or head[0] != groups[-1][0][0]:
+            groups.append((head, []))
+        named = True
+    return groups
+
+
+def _coherent(kinds: list[str], cited: list[_Cited | str]) -> None:
+    """Cambia por `SUBJECT_MISMATCH` lo que no es del sujeto de su grupo (ADR-005 Parte D)."""
+
+    def valid(at: int, *wanted: str) -> _Cited | None:
+        found = cited[at]
+        return found if isinstance(found, _Cited) and kinds[at] in wanted else None
+
+    for (product, variant), members in _groups(kinds, cited):
+        for at in members:
+            if (found := valid(at, *KINDS)) is None:
+                continue
+            if (product is not None and product not in found.subjects) or (
+                variant is not None and found.variant != variant
+            ):
+                cited[at] = "SUBJECT_MISMATCH"
+            else:
+                variant = found.variant
+        prices = [at for at in members if valid(at, "PRICE")]
+        for at in members:
+            if (found := valid(at, *PROMOTED)) is None:
+                continue
+            near = [p for p in prices if p < at][-1:] or [p for p in prices if p > at][:1]
+            pair = valid(near[0], "PRICE") if near else None
+            alone = pair is None and kinds[at] == "REGULAR_PRICE"  # un «antes» sin «ahora»
+            if alone or (pair is not None and pair.row != found.row):
+                cited[at] = "SUBJECT_MISMATCH"
+        rows = [valid(at, *ROWS) for at in members]
+        promotions = {found.promotion for found in rows if found is not None} - {None}
+        for at in members:
+            if (found := valid(at, "PROMOTION_TERMS")) and found.promotion not in promotions:
+                cited[at] = "SUBJECT_MISMATCH"
 
 
 def render(raw: object, evidence: Mapping[str, Evidence | None], now: datetime) -> Rendered:
-    """El texto con los valores copiados de `evidence`, o `Malformed`."""
+    """El texto con los valores copiados de `evidence`, o `Malformed`. `now` con zona horaria."""
     ttl = evidence_ttl()
+    if now.utcoffset() is None:
+        raise ValueError("render: `now` sin zona horaria")
     template, claims, handoff = parse(raw)
     problems: list[Problem] = []
     counts = Counter(item.id for item in claims)
@@ -252,45 +329,41 @@ def render(raw: object, evidence: Mapping[str, Evidence | None], now: datetime) 
             problems.append(Problem("CLAIM_DUPLICATE", item.id))
         else:
             by_id[item.id] = item
+    matches = list(PLACEHOLDER.finditer(template))
+    placed = [by_id.get(match.group(1)) for match in matches]
+    cited: list[_Cited | str] = [  # primero todas; después, los grupos
+        "CLAIM_MISSING" if c is None else _cite(c, evidence.get(c.evidence_ref), now, ttl)
+        for c in placed
+    ]
+    _coherent([c.kind if c else "" for c in placed], cited)
     out: list[str] = []
     findings: list[Finding] = []
-    used: set[str] = set()
-    anchor: str | None = None  # lo que nombró la última claim de nombre
-    variant: str | None = None  # la variante de las claims que la siguen
+    inserted: list[tuple[int, int]] = []
     expires: datetime | None = None
     pos = 0
-    for match in PLACEHOLDER.finditer(template):
+    for match, claim, found in zip(matches, placed, cited, strict=True):
         out.append(template[pos : match.start()])
-        pos, key = match.end(), match.group(1)
-        cited: _Cited | str
-        if (claim := by_id.get(key)) is None:
-            cited = "CLAIM_MISSING"
+        pos, start = match.end(), sum(map(len, out))
+        piece = found.value if isinstance(found, _Cited) else VERIFY_MARK
+        out.append(piece)
+        inserted.append((start, start + len(piece)))
+        if isinstance(found, _Cited):
+            if found.expires is not None:
+                expires = found.expires if expires is None else min(expires, found.expires)
+            continue
+        findings.append(Finding(FINDING.get(found, found), start, start + len(piece)))
+        if claim is None:  # el id solo si tiene la forma `c<n>`
+            key = match.group(1)
+            problems.append(Problem(found, key if CLAIM_ID.fullmatch(key) else None))
         else:
-            used.add(key)
-            cited = _cite(claim, evidence.get(claim.evidence_ref), now, ttl)
-            if claim.kind == "PRODUCT_NAME":  # empieza otro producto, válido o no
-                anchor = cited.subject if isinstance(cited, _Cited) else None
-                variant = None
-            elif isinstance(cited, _Cited):
-                if (anchor is not None and anchor not in cited.subjects) or (
-                    variant is not None and cited.variant != variant
-                ):
-                    cited = "SUBJECT_MISMATCH"
-                else:
-                    variant = cited.variant
-        if isinstance(cited, _Cited):
-            out.append(cited.value)
-            if cited.expires is not None:
-                expires = cited.expires if expires is None else min(expires, cited.expires)
-        else:
-            start = sum(map(len, out))
-            out.append(VERIFY_MARK)
-            findings.append(Finding(cited, start, start + len(VERIFY_MARK)))
-            if claim is None:  # el id solo si tiene la forma `c<n>`
-                problems.append(Problem(cited, key if CLAIM_ID.fullmatch(key) else None))
-            else:
-                problems.append(Problem(cited, claim.id, KINDS[claim.kind].tools[0].name))
+            problems.append(Problem(found, claim.id, KINDS[claim.kind].tools[0].name))
     out.append(template[pos:])
+    used = {claim.id for claim in placed if claim is not None}
     problems += [Problem("CLAIM_UNUSED", key) for key in by_id if key not in used]
+    text = "".join(out)
+    if len(text) > BODY_MAX:  # nunca se corta en silencio: no sale más que la marca
+        text, expires = VERIFY_MARK, None
+        findings, inserted = [Finding("TOO_LONG", 0, len(VERIFY_MARK))], [(0, len(VERIFY_MARK))]
+        problems.append(Problem("TOO_LONG"))
     unique = tuple(dict.fromkeys(problems))
-    return Rendered("".join(out), tuple(findings), unique, handoff, expires)
+    return Rendered(text, tuple(findings), unique, handoff, expires, tuple(inserted))
