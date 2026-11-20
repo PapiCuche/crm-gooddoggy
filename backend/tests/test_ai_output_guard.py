@@ -418,8 +418,9 @@ def test_promotion_terms_go_with_the_nearest_cited_row_and_its_promotion() -> No
     assert marked("{{c4}}: {{c2}}", *claims[1::2], e=e) == []  # sin una anterior, la siguiente
     assert marked("{{c1}} ({{c4}}) y {{c2}} ({{c3}})", *claims, e=e) == ["SUBJECT_MISMATCH"] * 2
     price_a, price_b = (claim(f"c{n + 5}", "PRICE", "e", f"prices.{n}.amount") for n in (0, 1))
-    assert codes("{{c5}} ({{c4}}) y {{c6}} ({{c3}})", price_a, price_b, terms_a, terms_b, e=e) == [
-        "SUBJECT_MISMATCH", "PRICE_TWICE"]  # fmt: skip
+    prices_ = (price_a, price_b, terms_a, terms_b)  # dos listas de una llamada: cada una lo suyo
+    assert marked("{{c5}} ({{c3}}) y {{c6}} ({{c4}})", *prices_, e=e) == []
+    assert marked("{{c5}} ({{c4}}) y {{c6}} ({{c3}})", *prices_, e=e) == ["SUBJECT_MISMATCH"] * 2
     plain = claim("c1", "PRICE", "e", "prices.1.amount")  # la otra lista, sin promoción
     terms = claim("c2", "PROMOTION_TERMS", "e", "promotions.0.terms")
     assert marked("{{c1}} ({{c2}})", plain, terms, e=EVIDENCE["tu_p"]) == ["SUBJECT_MISMATCH"]
@@ -427,22 +428,31 @@ def test_promotion_terms_go_with_the_nearest_cited_row_and_its_promotion() -> No
     assert marked("{{c1}} ({{c2}})", plain, terms, e=bare) == ["SUBJECT_MISMATCH"]
 
 
-def test_one_current_price_per_variant_so_two_never_make_a_discount() -> None:
+def test_prices_of_a_variant_come_from_one_get_price_call_and_each_before_from_its_row() -> None:
+    """Varias listas de una llamada sí (D-F8-06; «antes/ahora» con ellas lo marca F8-08f, #1023);
+    otra llamada para la misma variante no: tras un cambio de precio sería un descuento falso."""
     now_a, now_b = (claim(f"c{n + 1}", "PRICE", "tu_p", f"prices.{n}.amount") for n in (0, 1))
     done = render(reply("Antes {{c1}}, ahora {{c2}}", now_a, now_b), EVIDENCE, NOW)
+    assert done.ok and done.text == "Antes S/ 1,249.90, ahora US$ 57.50"  # la redacción: #1023
+    later = claim("c2", "PRICE", "n", "prices.0.amount")  # otra llamada, tras un cambio de precio
+    n = priced({"amount": "999.00"})
+    done = render(reply("Antes {{c1}}, ahora {{c2}}", now_a, later), {**EVIDENCE, "n": n}, NOW)
     assert done.text == "Antes S/ 1,249.90, ahora [verificar]"
     assert marks(done) == ["SUBJECT_MISMATCH"]
-    assert done.feedback() == "la claim c2 es otro precio actual de una variante ya citada: da uno"
-    later = claim("c2", "PRICE", "n", "prices.0.amount")  # otra evidencia tras un cambio de precio
-    assert codes("Antes {{c1}}, ahora {{c2}}", now_a, later, n=priced({"amount": "999.00"})) == [
-        "PRICE_TWICE"]  # fmt: skip
+    assert done.feedback() == "la claim c2 es de otra consulta de precio de una variante ya citada"
     big = claim("c3", "PRODUCT_NAME", "tu_v", "variants.0.name")  # otro nombre no lo reinicia
-    assert codes("El {{c3}} costaba {{c1}}; el {{c3}} cuesta {{c2}}", big, now_a, now_b) == [
+    assert codes("El {{c3}} costaba {{c1}}; el {{c3}} cuesta {{c2}}", big, now_a, later, n=n) == [
         "PRICE_TWICE"]  # fmt: skip
     same = claim("c4", "PRICE", "tu_p", "prices.0.amount")  # la misma fila: el mismo precio
     assert marked("{{c1}}, o sea {{c4}} ({{c1}})", now_a, same) == []
-    # el «antes» es de la fila del precio que queda, no de la del segundo
-    regular_b = claim("c3", "REGULAR_PRICE", "e", "prices.1.regular_amount")
+    # cada «antes» con el precio de su fila, el anterior antes que el siguiente
     a, b = ({**now, "evidence_ref": "e"} for now in (now_a, now_b))
-    assert codes("{{c1}} y {{c2}}, antes {{c3}}", a, b, regular_b, e=two_promotions()) == [
+    regular_a, regular_b = (claim(f"c{n + 3}", "REGULAR_PRICE", "e", f"prices.{n}.regular_amount")
+                            for n in (0, 1))  # fmt: skip
+    rows, e = (a, b, regular_a, regular_b), two_promotions()
+    assert marked("{{c1}}, antes {{c3}}; {{c2}}, antes {{c4}}", *rows, e=e) == []
+    assert marked("{{c1}} y {{c2}}, antes {{c3}}", *rows[:3], e=e) == ["SUBJECT_MISMATCH"]
+    # ni con el de la otra llamada, que no queda
+    regular_n = claim("c3", "REGULAR_PRICE", "n", "prices.0.regular_amount")
+    assert codes("{{c1}} y {{c2}}, antes {{c3}}", now_a, later, regular_n, n=n) == [
         "PRICE_TWICE", "SUBJECT_MISMATCH"]  # fmt: skip

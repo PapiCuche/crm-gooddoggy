@@ -5,11 +5,11 @@ La respuesta del modelo es una plantilla con placeholders `{{c1}}` y claims (`re
 `None` si no dio `ok`): tool y `kind`, `path` del `kind` en `Evidence.data`, evidencia ni del futuro
 ni caducada (`AI_EVIDENCE_TTL`); y por grupos (un nombre abre uno; lo anterior al primero es suyo):
 un producto y una variante, el «antes» y la promoción de la fila del precio actual, las condiciones
-de la fila citada más cercana; y un solo precio actual por variante. Copia el valor de la
-evidencia, nunca de la plantilla; si no, `VERIFY_MARK` con un hallazgo (tipo y posición, nunca el
-texto del modelo) y un problema para el reintento. Las posiciones son índices de `str` (code
-points, no UTF-16: F8-09 las convierte); los detectores de F8-08f miran solo lo que no está en
-`inserted`. Puro: sin base de datos ni logs."""
+de la fila citada más cercana; y los precios de una variante, de una sola consulta. Copia el valor
+de la evidencia, nunca de la plantilla; si no, `VERIFY_MARK` con un hallazgo (tipo y posición,
+nunca el texto del modelo) y un problema para el reintento. Las posiciones son índices de `str`
+(code points, no UTF-16: F8-09 las convierte); los detectores de F8-08f miran solo lo que no está
+en `inserted`. Puro: sin base de datos ni logs."""
 
 import copy
 import re
@@ -53,7 +53,7 @@ TEXTS = {
     "SUBJECT_MISMATCH": "la claim {claim} no es del producto, variante o fila de su grupo",
     "NOT_TRACKED": "la claim {claim} no lleva stock: no afirmes disponibilidad",
     "TRUNCATED": "las condiciones de la claim {claim} llegaron recortadas: no las cites",
-    "PRICE_TWICE": "la claim {claim} es otro precio actual de una variante ya citada: da uno",
+    "PRICE_TWICE": "la claim {claim} es de otra consulta de precio de una variante ya citada",
     "TOO_LONG": f"la respuesta renderizada pasa de {BODY_MAX} caracteres: acórtala",
 }
 
@@ -291,8 +291,9 @@ def _near(at: int, among: list[int]) -> int | None:
 
 def _coherent(kinds: list[str], cited: list[_Cited | str]) -> None:
     """Cambia por `SUBJECT_MISMATCH` lo que no es del sujeto de su grupo (ADR-005 Parte D), y por
-    `PRICE_TWICE` otro precio actual de una variante ya citada: «antes X, ahora Y» con dos listas
-    o dos evidencias sería un descuento que no existe."""
+    `PRICE_TWICE` el precio de una variante ya citada que viene de otra llamada a `get_price`:
+    «antes X, ahora Y» tras un cambio de precio sería un descuento que no existe. Varias listas de
+    una misma llamada sí (D-F8-06); cómo se redactan lo miran los detectores (F8-08f)."""
 
     def valid(at: int | None, *wanted: str) -> _Cited | None:
         if at is None:  # sin fila con la que emparejar
@@ -300,7 +301,7 @@ def _coherent(kinds: list[str], cited: list[_Cited | str]) -> None:
         found = cited[at]
         return found if isinstance(found, _Cited) and kinds[at] in wanted else None
 
-    current: dict[str | None, tuple[str, int] | None] = {}  # variante → fila de su precio actual
+    current: dict[str | None, str | None] = {}  # variante → la llamada de su primer precio
     for (product, variant), members in _groups(kinds, cited):
         for at in members:
             if (found := valid(at, *KINDS)) is None:
@@ -314,8 +315,9 @@ def _coherent(kinds: list[str], cited: list[_Cited | str]) -> None:
         for at in members:  # en todo el texto, no solo en el grupo: un nombre no lo reinicia
             if (found := valid(at, "PRICE")) is None:
                 continue
-            if current.setdefault(found.variant, found.row) != found.row:
-                cited[at] = "PRICE_TWICE"  # la misma fila repetida sí: es el mismo precio
+            call = found.row[0] if found.row else None  # el `tool_use_id` de su `get_price`
+            if current.setdefault(found.variant, call) != call:
+                cited[at] = "PRICE_TWICE"
         prices = [at for at in members if valid(at, "PRICE")]
         for at in members:
             if (found := valid(at, *PROMOTED)) is None:
