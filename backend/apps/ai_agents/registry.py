@@ -8,12 +8,19 @@ registro se cierra y cada llamada vuelve a comprobar su tool (F8-07e). `invoke` 
 sin devolverla, exige el permiso, comprueba la forma de la salida y devuelve el sobre
 `{ok, data | error, meta}` para el modelo y la evidencia, que se queda en el servidor (con sus
 `facts`, F8-07d: lo exacto que el modelo no ve, como el stock). El log lleva solo la tool, el
-código y la duración."""
+código y la duración.
+
+F8-08c: el copiloto llama `invoke_read_only`, que abre para cada llamada su propio `tenant_scope`
+corto con `SET TRANSACTION READ ONLY`: PostgreSQL rechaza cualquier escritura de datos, `nextval`
+o un objeto grande, se escriba como se escriba el SQL. `invoke` falla si su transacción no es de
+solo lectura. La evidencia guarda además lo que vio el modelo (`data`), para que el Output Guard
+copie de ahí el valor de una claim."""
 
 import json
 import re
 import time
 from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
@@ -21,15 +28,21 @@ from types import MappingProxyType
 from typing import Any
 from uuid import UUID
 
-from django.db import connections
+from django.db import connections, transaction
 
-from apps.access.selectors import ExecutionContext, definition, has_permission
+from apps.access.selectors import (
+    AccessDenied,
+    ExecutionContext,
+    definition,
+    execution_context,
+    has_permission,
+)
 from apps.ai_agents.fields import Field, Invalid
 from apps.ai_gateway import llm
 from core.ids import new_id
 from core.observability.logging import get_logger
-from core.tenancy.context import ActorType
-from core.tenancy.scope import require_scope
+from core.tenancy.context import ActorType, TenantContext, TenantContextError, current
+from core.tenancy.scope import require_scope, tenant_scope
 
 logger = get_logger(__name__)
 
@@ -79,6 +92,20 @@ def _no_facts() -> Mapping[str, int | None]:
     return MappingProxyType({})
 
 
+def _no_data() -> Mapping[str, Any]:
+    return MappingProxyType({})
+
+
+def _frozen(value: Any) -> Any:
+    """Una copia de solo lectura a cualquier profundidad: un dict, un `MappingProxyType`; una
+    lista, una tupla. Las hojas (`str`, `int`…) ya lo son."""
+    if isinstance(value, dict):
+        return MappingProxyType({key: _frozen(inner) for key, inner in value.items()})
+    if isinstance(value, list):
+        return tuple(_frozen(inner) for inner in value)
+    return value
+
+
 @dataclass(frozen=True)
 class Found:
     data: dict[str, Any]
@@ -98,6 +125,9 @@ class Evidence:  # en el servidor: no se serializa hacia el modelo
     facts: Mapping[str, int | None] = field(
         default_factory=_no_facts, repr=False, compare=False, hash=False
     )
+    # Lo que vio el modelo (el `data` del sobre, F8-08c): de ahí copia el Output Guard el valor de
+    # una claim, nunca del texto del modelo. Igual de cerrado que `facts`.
+    data: Mapping[str, Any] = field(default_factory=_no_data, repr=False, compare=False, hash=False)
 
 
 @dataclass(frozen=True)
@@ -110,7 +140,8 @@ class ToolSpec:
     audience: Audience
     permission: str
     kind: str  # el tipo de evidencia: CATALOG, PRICE, STOCK
-    handler: Callable[[ExecutionContext, dict[str, Any]], Found] = field(repr=False)
+    # Con el `as_of` de la evidencia (F8-08c): lo que depende del instante se lee en ese instante
+    handler: Callable[[ExecutionContext, dict[str, Any], datetime], Found] = field(repr=False)
     # Antes de leer nada (F8-07d): una configuración inválida falla cerrado, sin consultas
     precheck: Callable[[], object] = field(default=lambda: None, repr=False)
 
@@ -242,13 +273,21 @@ def _failed(code: str) -> Invocation:
 
 
 def _now(ectx: ExecutionContext) -> datetime:
+    """El `as_of`, si la transacción es de solo lectura; si no, un fallo nuestro (F8-08c)."""
     with connections[require_scope(ectx.tenant)].cursor() as cursor:
-        cursor.execute("SELECT clock_timestamp()")
-        now: datetime = cursor.fetchone()[0]
-    return now
+        cursor.execute("SELECT clock_timestamp(), current_setting('transaction_read_only')")
+        now, mode = cursor.fetchone()
+    if mode != "on":
+        raise RuntimeError("una tool solo corre en una transacción de solo lectura")
+    stamp: datetime = now
+    return stamp
 
 
-def _run(spec: ToolSpec | None, ectx: ExecutionContext, raw: object) -> Invocation:
+def _person(ectx: ExecutionContext) -> bool:
+    return ectx.tenant.actor_type == ActorType.USER and ectx.tenant.user_id is not None
+
+
+def _run(spec: ToolSpec | None, ectx: ExecutionContext | None, raw: object) -> Invocation:
     try:
         if spec is None:
             raise ToolRejected("desconocida")
@@ -260,18 +299,23 @@ def _run(spec: ToolSpec | None, ectx: ExecutionContext, raw: object) -> Invocati
         args = _clean(spec, raw)
     except Invalid:
         return _failed("INVALID_INPUT")
-    person = ectx.tenant.actor_type == ActorType.USER and ectx.tenant.user_id is not None
-    if not (person and has_permission(ectx, spec.permission)):  # la persona, nunca SYSTEM
+    # la persona con su membresía activa, nunca SYSTEM
+    if ectx is None or not _person(ectx) or not has_permission(ectx, spec.permission):
         return _failed("FORBIDDEN")
     as_of = _now(ectx)
     try:
-        found = spec.handler(ectx, args)
+        found: Found | None = spec.handler(ectx, args, as_of)
     except NotFound:
+        found = None
+    _now(ectx)  # sigue de solo lectura: un `COMMIT` en la tool habría abierto otra transacción
+    if found is None:
         return _failed("NOT_FOUND")
     if not _conforms(found.data, spec.output):  # un fallo nuestro: no sale nada
         raise RuntimeError(f"{spec.name}: la salida no tiene la forma declarada")
     facts = MappingProxyType(dict(found.facts))  # una copia: el handler ya no la cambia
-    evidence = Evidence(new_id(), spec.kind, spec.name, as_of, found.subjects, facts)
+    evidence = Evidence(
+        new_id(), spec.kind, spec.name, as_of, found.subjects, facts, _frozen(found.data)
+    )
     meta = {"evidence_id": str(evidence.evidence_id), "kind": spec.kind,
             "as_of": as_of.isoformat()}  # fmt: skip
     text = _dump({"ok": True, "data": found.data, "meta": meta})
@@ -280,10 +324,40 @@ def _run(spec: ToolSpec | None, ectx: ExecutionContext, raw: object) -> Invocati
     return Invocation(True, text, evidence)
 
 
-def invoke(ectx: ExecutionContext, call: llm.ToolCall) -> Invocation:
-    """Una llamada del modelo a una tool, en el `tenant_scope` de `ectx`."""
+def invoke(ectx: ExecutionContext | None, call: llm.ToolCall) -> Invocation:
+    """Una llamada del modelo a una tool, en el `tenant_scope` de `ectx`, que tiene que ser de solo
+    lectura. Sin `ectx` (sin membresía activa), `FORBIDDEN`."""
     spec, start = TOOLS.get(call.name), time.monotonic()
     done = _run(spec, ectx, call.input)
     logger.info("ai.tool_invoked", tool=spec.name if spec else "unknown", outcome=done.code,
                 ms=round((time.monotonic() - start) * 1000))  # fmt: skip
     return done
+
+
+@contextmanager
+def read_only_scope(tenant: TenantContext) -> Iterator[ExecutionContext | None]:
+    """Un `tenant_scope` propio de `tenant`, de solo lectura antes de leer nada más (pasar a solo
+    lectura tras las `set_config` del scope se admite; volver a lectura y escritura, no), con los
+    permisos de la persona leídos en él; `None` si no tiene membresía activa (o es SYSTEM). Nunca
+    dentro de otro scope: se quedaría en esa transacción y la dejaría de solo lectura."""
+    if current() is not None:
+        raise TenantContextError("las tools abren su propio tenant_scope de solo lectura")
+    with tenant_scope(tenant):
+        alias = require_scope(tenant)
+        try:
+            with connections[alias].cursor() as cursor:
+                cursor.execute("SET TRANSACTION READ ONLY")
+            try:
+                ectx: ExecutionContext | None = execution_context(tenant)
+            except AccessDenied:
+                ectx = None
+            yield ectx
+        finally:  # nunca confirma: lo que un `COMMIT` en la tool o un `on_commit` dejó, se deshace
+            transaction.set_rollback(True, using=alias)
+
+
+def invoke_read_only(tenant: TenantContext, call: llm.ToolCall) -> Invocation:
+    """`invoke` en su propio `tenant_scope` corto de solo lectura (F8-08c), fuera de cualquier
+    otra transacción: lo que el copiloto usa entre dos llamadas al modelo (ADR-034 §7)."""
+    with read_only_scope(tenant) as ectx:
+        return invoke(ectx, call)

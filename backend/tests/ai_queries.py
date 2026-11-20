@@ -2,6 +2,12 @@
 directa con el ORM ni SQL, así que se capturan todas y se buscan las que escriben, bloquean o
 cambian la sesión. F8-07 no admite ninguna; F8-08 admitirá solo las de `ai_*` y `audit_logs`.
 
+Desde F8-08c las tools corren en una transacción de solo lectura (`registry.read_only_scope`, el
+mismo camino en las pruebas que en el copiloto): las escrituras de datos, `nextval` y los objetos
+grandes los rechaza PostgreSQL, se escriban como se escriban. Esta búsqueda queda para lo que esa
+transacción admite: candados consultivos, `set_config` de sesión, `LISTEN`… y lo que la
+terminaría (`COMMIT`, `ROLLBACK`, `BEGIN`…). Lo que escribe se sigue marcando: otra barrera.
+
 Qué no ve (F8-07e): lo que corre dentro del servidor (funciones, disparadores, reglas), otros
 procesos (los workers de Celery) y lo que se manda a libpq sin un cursor de psycopg. Ante la duda
 marca: un `set_config` cuyo tercer argumento no es el literal `true` (también un parámetro que
@@ -22,7 +28,9 @@ WRITES = re.compile(
     r"|\bfor\s+(key\s+)?share\b|\bpg_\w*advisory|\bcomment\s+on\b|\bsecurity\s+label\b"
     r"|\bset_config\s*\((?![^()]*,[^(),]*,\s*true\s*\))"  # sin `true`: queda en la sesión
     # al empezar una sentencia: lo que cambia la sesión (`SET LOCAL` y los de la transacción, no)
-    r"|(^|;)\s*(set\b(?!\s+(local|transaction|constraints)\b)|reset\b|discard\b|listen\b)",
+    r"|(^|;)\s*(set\b(?!\s+(local|transaction|constraints)\b)|reset\b|discard\b|listen\b"
+    # y lo que termina la transacción de solo lectura (`ROLLBACK TO` un savepoint, no)
+    r"|commit\b|end\b|abort\b|begin\b|start\b|rollback\b(?!\s+((work|transaction)\s+)?to\b))",
     re.IGNORECASE,
 )  # `update` también caza `FOR UPDATE` y `FOR NO KEY UPDATE`; `into`, `SELECT … INTO`
 LITERAL = re.compile(r"\b[Ee]'(?:[^'\\]|\\.|'')*'|'(?:[^']|'')*'")  # un texto no es SQL

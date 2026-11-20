@@ -3,9 +3,10 @@
 variante; un producto sin ninguna variante así no existe para la IA. Solo nombre y atributos
 públicos: ni la descripción larga, ni SKU, código de barras, costos o notas. La búsqueda mira el
 nombre, la descripción corta y la marca y la categoría vivas, sin distinguir mayúsculas ni tildes
-(F8-07e), y devuelve menos filas si no caben en el sobre."""
+(F8-07e), y las dos devuelven menos filas si no caben en el sobre (F8-08c)."""
 
 import unicodedata
+from datetime import datetime
 from typing import Any
 
 from django.db.models import CharField, F, Func, Q, QuerySet, Value
@@ -54,7 +55,7 @@ def _plain(field: str) -> Func:
                 output_field=CharField())  # fmt: skip
 
 
-def _search(ectx: ExecutionContext, args: dict[str, Any]) -> Found:
+def _search(ectx: ExecutionContext, args: dict[str, Any], as_of: datetime) -> Found:
     wanted, match = args["query"].translate(UNACCENT), Q()
     found = _published().alias(**{f"plain_{n}": _plain(field) for n, field in enumerate(SEARCHED)})
     for n, live in enumerate(SEARCHED.values()):  # `icontains` escapa `%` y `_`: son literales
@@ -68,7 +69,7 @@ def _search(ectx: ExecutionContext, args: dict[str, Any]) -> Found:
     return Found({"products": data}, tuple(p.pk for p in rows[: len(data)]))
 
 
-def _product_variants(ectx: ExecutionContext, args: dict[str, Any]) -> Found:
+def _product_variants(ectx: ExecutionContext, args: dict[str, Any], as_of: datetime) -> Found:
     product = _published().filter(pk=args["product_id"]).first()
     if product is None:
         raise NotFound
@@ -78,7 +79,9 @@ def _product_variants(ectx: ExecutionContext, args: dict[str, Any]) -> Found:
     data = [{"variant_id": str(v.pk), "name": v.name, "label": v.label,
              "condition": v.condition, "is_default": v.is_default} for v in rows]  # fmt: skip
     found = {"product_id": str(product.pk), "name": product.name, "variants": data}
-    return Found(found, (product.pk, *(v.pk for v in rows)))
+    while len(data) > 1 and not fits(found, "CATALOG"):  # F8-08c: menos filas, no ninguna
+        data.pop()
+    return Found(found, (product.pk, *(v.pk for v in rows[: len(data)])))
 
 
 SEARCH_PRODUCT = register(ToolSpec(
@@ -92,7 +95,7 @@ SEARCH_PRODUCT = register(ToolSpec(
 GET_PRODUCT_VARIANTS = register(ToolSpec(
     name="get_product_variants", permission="products.view", handler=_product_variants,
     description="Las variantes vendibles de un producto publicado (de `search_product`), "
-    f"como mucho {MAX_VARIANTS}, sin precio ni stock.",
+    f"como mucho {MAX_VARIANTS} (menos si no caben), sin precio ni stock.",
     fields={"product_id": Uuid("El `product_id` que devolvió `search_product`")},
     output={"product_id": str, "name": str, "variants": [VARIANT]}, risk=Risk.READ,
     audience=Audience.PUBLIC_SAFE, kind="CATALOG",
