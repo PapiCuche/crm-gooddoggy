@@ -449,6 +449,9 @@ AI_TOOL_TOKENS = 1000  # margen de la reserva por los tokens que añade la API a
 AI_IMAGE_TOKENS = 4784
 AI_TURN_LIMITS = {"turns": 100, "blocks": 400, "thinking": 100, "images": 20,
                   "image_chars": 2_000_000, "body_bytes": 8_000_000}  # fmt: skip
+# F8-07d (decisión del propietario, #770): «pocas unidades» es de 1 a este número; `get_stock`
+# falla cerrado si no es un entero >= 1.
+AI_STOCK_FEW_UNITS = 3
 # Correo saliente (ADR-019): SMTP por entorno, sin proveedor fijado. Solo `core.mail` lo usa.
 # El backend por defecto de Django no envía nada: lo que no pasa por `core.mail` (el aviso a
 # `ADMINS` de `AdminEmailHandler`, `django.core.mail.send_mail`) no abre una conexión SMTP.
