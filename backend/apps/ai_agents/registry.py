@@ -1,17 +1,12 @@
 """El Tool Registry del copiloto (F8-07a; ADR-005 Parte C, ADR-034 §6, §11).
 
-Las tools se registran en código y se comprueban **al cargar**: solo `READ` y `PUBLIC_SAFE`, sin
-argumentos de identidad (la organización, el contacto y la conversación salen del contexto, nunca
-del modelo), sin claves de salida de costos, márgenes, listas internas o ubicaciones, y con un
-permiso no sensible del catálogo. Una tool que no cumple impide arrancar Django.
-
-`invoke` corre con el `ExecutionContext` de **la persona** que usa el copiloto, dentro del
-`tenant_scope` de su organización: valida la entrada sin devolverla nunca, exige el permiso de la
-tool, lee con selectores y servicios ya existentes y comprueba que la salida tenga exactamente la
-forma declarada. Devuelve el sobre `{ok, data | error, meta}` que va al modelo y la evidencia, que
-se queda en el servidor (el Output Guard la cita; F8-08 la guarda en `ai_actions`). El log lleva
-solo la tool, el código y la duración.
-"""
+Las tools se registran en código y se comprueban **al cargar** (si no, Django no arranca): solo
+`READ` y `PUBLIC_SAFE`, sin argumentos de identidad, con una salida cerrada y sin claves de
+costos, márgenes, listas internas o ubicaciones, y con un permiso no sensible. Tras arrancar, el
+registro se cierra. `invoke` corre con el `ExecutionContext` de **la persona** en el
+`tenant_scope` de su organización: valida la entrada sin devolverla, exige el permiso, comprueba
+la forma de la salida y devuelve el sobre `{ok, data | error, meta}` para el modelo y la evidencia,
+que se queda en el servidor. El log lleva solo la tool, el código y la duración."""
 
 import json
 import re
@@ -20,6 +15,7 @@ from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
+from types import MappingProxyType
 from typing import Any
 from uuid import UUID
 
@@ -38,10 +34,15 @@ logger = get_logger(__name__)
 MAX_BYTES = 8192  # el sobre en UTF-8; si no cabe, `RESULT_TOO_LARGE` (nunca un JSON cortado)
 MAX_FIELDS = 4
 NAME = re.compile(r"[a-z][a-z0-9_]{2,40}")
-WHO = "organization|org|tenant|contact|conversation|customer|user|membership|actor"
-IDENTITY = re.compile(rf"(^|_)({WHO})(_|$)")  # la identidad sale del contexto, nunca del modelo
-HIDDEN = "cost|margin|internal|on_hand|reserved|warehouse|location|note|supplier|sku|barcode"
-FORBIDDEN = re.compile(HIDDEN)  # en cualquier clave de salida, a cualquier profundidad
+CAMEL = re.compile(r"([a-z0-9])([A-Z])")
+# Se buscan en la clave normalizada (minúsculas, camelCase partido, sin separadores): `orgId`,
+# `OrganizationID` y `tenantid` son identidad; `unitCost`, `BarCode` y `SKU`, salida prohibida.
+WHO = ("org", "tenant", "contact", "conversation", "customer", "user", "member", "actor",
+       "branch", "account", "phone", "email")  # fmt: skip
+SECRET = ("cost", "margin", "internal", "onhand", "reserved", "warehouse", "location", "note",
+          "supplier", "sku", "barcode", "purchase", "stock", "description")  # fmt: skip
+CODES = frozenset({"ean", "gtin", "upc"})  # cortos: solo como palabra entera
+LEAVES = (str, int, float, bool, type(None))  # una hoja abierta (dict, list…) dejaría pasar todo
 
 
 class Risk(StrEnum):
@@ -103,16 +104,35 @@ class Invocation:
         return llm.ToolResult(tool_use_id, (llm.Text(self.text),), is_error=not self.ok)
 
 
-TOOLS: dict[str, ToolSpec] = {}
+_TOOLS: dict[str, ToolSpec] = {}
+TOOLS = MappingProxyType(_TOOLS)  # solo lectura; `register` la llena hasta `freeze()`
+_open = True
+
+
+def _words(key: str) -> list[str]:
+    return [w for w in re.split(r"[^a-z0-9]+", CAMEL.sub(r"\1_\2", key).lower()) if w]
+
+
+def _identity(name: str) -> bool:
+    return any(who in "".join(_words(name)) for who in WHO)
+
+
+def _secret(key: str) -> bool:
+    """La descripción corta es pública; la larga, no."""
+    joined = re.sub(r"(^|_)short_description(?=_|$)", "_", "_".join(_words(key)))
+    return bool(CODES & set(_words(key))) or any(w in joined.replace("_", "") for w in SECRET)
 
 
 def _keys(shape: object) -> Iterator[str]:
+    """Las claves de una forma, a cualquier profundidad; `ToolRejected` si no es cerrada."""
     if isinstance(shape, Mapping):
         for key, inner in shape.items():
-            yield key
+            yield key if type(key) is str else ""
             yield from _keys(inner)
-    elif isinstance(shape, list):
+    elif type(shape) is list and len(shape) == 1:
         yield from _keys(shape[0])
+    elif not (shape in LEAVES or type(shape) is tuple and shape and set(shape) <= set(LEAVES)):
+        raise ToolRejected("salida")
 
 
 def check(spec: ToolSpec) -> None:
@@ -121,9 +141,9 @@ def check(spec: ToolSpec) -> None:
         raise ToolRejected("solo READ y PUBLIC_SAFE")
     if not NAME.fullmatch(spec.name) or spec.name in TOOLS:
         raise ToolRejected("nombre")
-    if not 0 < len(spec.fields) <= MAX_FIELDS or any(IDENTITY.search(n) for n in spec.fields):
+    if not 0 < len(spec.fields) <= MAX_FIELDS or any(_identity(n) for n in spec.fields):
         raise ToolRejected("argumentos")
-    if any(FORBIDDEN.search(key) for key in _keys(spec.output)):
+    if any(not key or _secret(key) for key in _keys(spec.output)):
         raise ToolRejected("salida")
     try:
         sensitive = definition(spec.permission).is_sensitive
@@ -134,9 +154,16 @@ def check(spec: ToolSpec) -> None:
 
 
 def register(spec: ToolSpec) -> ToolSpec:
+    if not _open:  # tras arrancar no entra ninguna
+        raise ToolRejected("registro cerrado")
     check(spec)
-    TOOLS[spec.name] = spec
+    _TOOLS[spec.name] = spec
     return spec
+
+
+def freeze() -> None:
+    global _open
+    _open = False
 
 
 def declared(spec: ToolSpec) -> llm.Tool:
@@ -179,7 +206,7 @@ def _now(ectx: ExecutionContext) -> datetime:
 
 
 def _run(spec: ToolSpec | None, ectx: ExecutionContext, raw: object) -> Invocation:
-    if spec is None:
+    if spec is None or spec.risk is not Risk.READ or spec.audience is not Audience.PUBLIC_SAFE:
         return _failed("UNKNOWN_TOOL")
     try:
         args = _clean(spec, raw)

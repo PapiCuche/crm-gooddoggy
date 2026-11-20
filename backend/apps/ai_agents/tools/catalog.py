@@ -55,31 +55,18 @@ def _product_variants(ectx: ExecutionContext, args: dict[str, Any]) -> Found:
     return Found(found, (product.pk, *(v.pk for v in rows)))
 
 
-SEARCH_PRODUCT = register(
-    ToolSpec(
-        name="search_product",
-        description="Busca productos publicados del catálogo por nombre o descripción corta. "
-        f"Devuelve como mucho {MAX_PRODUCTS}, sin precio ni stock.",
-        fields={"query": Query("Lo que busca el cliente: nombre, marca o tipo de producto")},
-        output={"products": [ROW]},
-        risk=Risk.READ,
-        audience=Audience.PUBLIC_SAFE,
-        permission="products.view",
-        kind="CATALOG",
-        handler=_search,
-    )
-)
-GET_PRODUCT_VARIANTS = register(
-    ToolSpec(
-        name="get_product_variants",
-        description="Las variantes vendibles de un producto publicado (de `search_product`), "
-        f"como mucho {MAX_VARIANTS}, sin precio ni stock.",
-        fields={"product_id": Uuid("El `product_id` que devolvió `search_product`")},
-        output={"product_id": str, "name": str, "variants": [VARIANT]},
-        risk=Risk.READ,
-        audience=Audience.PUBLIC_SAFE,
-        permission="products.view",
-        kind="CATALOG",
-        handler=_product_variants,
-    )
-)
+SEARCH_PRODUCT = register(ToolSpec(
+    name="search_product", permission="products.view", handler=_search,
+    description="Busca productos publicados del catálogo por nombre o descripción corta. "
+    f"Devuelve como mucho {MAX_PRODUCTS}, sin precio ni stock.",
+    fields={"query": Query("Lo que busca el cliente: nombre, marca o tipo de producto")},
+    output={"products": [ROW]}, risk=Risk.READ, audience=Audience.PUBLIC_SAFE, kind="CATALOG",
+))  # fmt: skip
+GET_PRODUCT_VARIANTS = register(ToolSpec(
+    name="get_product_variants", permission="products.view", handler=_product_variants,
+    description="Las variantes vendibles de un producto publicado (de `search_product`), "
+    f"como mucho {MAX_VARIANTS}, sin precio ni stock.",
+    fields={"product_id": Uuid("El `product_id` que devolvió `search_product`")},
+    output={"product_id": str, "name": str, "variants": [VARIANT]}, risk=Risk.READ,
+    audience=Audience.PUBLIC_SAFE, kind="CATALOG",
+))  # fmt: skip

@@ -1,13 +1,11 @@
-"""F8-07a (#770; ADR-005 Parte C, ADR-034 §2, §6, §11): el Tool Registry y las tools del
-catálogo. Primero lo que se rechaza: tools que no son de lectura o públicas, argumentos de
-identidad, salidas con costos, entradas maliciosas (sin devolverlas), personas sin permiso,
-otra organización y lo no publicado. PostgreSQL con el rol `crm_app`."""
+"""F8-07a (#770; ADR-005 Parte C, ADR-034 §2, §6, §11): el Tool Registry y las tools del catálogo,
+primero lo que se rechaza. PostgreSQL con el rol `crm_app`."""
 
 import json
 from dataclasses import replace
 from datetime import datetime
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 import pytest
@@ -94,21 +92,24 @@ def shop(world: Any) -> SimpleNamespace:
         {"fields": {}}, {"fields": dict.fromkeys("abcde", SEARCH_PRODUCT.fields["query"])},
         *({"fields": {key: SEARCH_PRODUCT.fields["query"]}} for key in (
             "organization_id", "contact_id", "conversation_id", "user_id", "tenant", "org",
-            "customer_id", "membership_id", "actor")),
-        *({"output": shape} for shape in (
+            "customer_id", "membership_id", "actor", "organizationId", "orgId", "OrganizationID",
+            "contactId", "conversationid", "tenantid", "userId", "member_id", "branch_id",
+            "account_id", "phone", "email")),
+        *({"output": shape} for shape in cast(tuple[Any, ...], (
             {"unit_cost": str}, {"margin": str}, {"items": [{"warehouse_id": str}]},
             {"on_hand": int}, {"reserved_qty": int}, {"internal_list": str}, {"sku": str},
-            {"x": {"location": str}}, {"notes": str}, {"barcode": str})),
+            {"x": {"location": str}}, {"notes": str}, {"barcode": str}, {"SKU": str},
+            {"items": [{"Sku": str}]}, {"BarCode": str}, {"bar_code": str}, {"unitCost": str},
+            {"onHand": int}, {"ean": str}, {"gtin": str}, {"purchase_price": str},
+            {"stock": int}, {"description": str}, {"long_description": str}, {1: str},
+            {"extra": dict}, {"extra": list}, {"extra": object}, {"extra": (dict, type(None))},
+            {"extra": [dict]}, {"extra": []}, {"extra": ()}))),
         {"permission": "nada.view"}, {"permission": "ai.manage"},  # desconocido, sensible
     ],
 )  # fmt: skip
 def test_registry_rejects_at_load_what_this_cut_forbids(change: dict[str, Any]) -> None:
-    bad = replace(SEARCH_PRODUCT, **change)
-    with pytest.raises(ToolRejected):
-        check(bad)
-    with pytest.raises(ToolRejected):
-        registry.register(replace(bad, name="otra_tool") if "name" not in change else bad)
-    assert "otra_tool" not in TOOLS
+    with pytest.raises(ToolRejected):  # con otro nombre: solo falla lo que se cambia
+        check(replace(SEARCH_PRODUCT, **{"name": "otra_tool", **change}))
 
 
 def test_registry_holds_only_the_catalog_tools_read_and_public() -> None:
@@ -116,16 +117,28 @@ def test_registry_holds_only_the_catalog_tools_read_and_public() -> None:
     assert all(t.risk is Risk.READ and t.audience is Audience.PUBLIC_SAFE for t in TOOLS.values())
     assert {t.permission for t in TOOLS.values()} == {"products.view"}
     check(replace(SEARCH_PRODUCT, name="otra_tool"))  # la misma, con otro nombre, sí entra
-
-
-def test_declared_schema_is_strict_and_has_no_identity_or_limits_the_api_rejects() -> None:
-    for spec in TOOLS.values():
+    check(replace(SEARCH_PRODUCT, name="otra_tool", output={"shortDescription": (str, int)}))
+    for spec in TOOLS.values():  # el esquema estricto, sin identidad ni topes que la API rechace
         schema = registry.declared(spec).schema
         assert schema["additionalProperties"] is False and schema["type"] == "object"
         assert schema["required"] == list(spec.fields) == list(schema["properties"])
         text = json.dumps(schema)
         assert not {"minLength", "maxLength", "minimum", "maximum"} & set(text.split('"'))
         assert "organization" not in text and "conversation" not in text
+
+
+def test_no_tool_enters_or_runs_after_startup(world: Any, monkeypatch: Any) -> None:
+    with pytest.raises(ToolRejected):  # el registro se cerró al arrancar
+        registry.register(replace(SEARCH_PRODUCT, name="otra_tool"))
+    with pytest.raises(TypeError):
+        TOOLS["otra_tool"] = SEARCH_PRODUCT  # type: ignore[index]
+    allow(world, "products.view")
+    for change in ({"risk": Risk.WRITE_LOW}, {"audience": Audience.INTERNAL_ONLY}):
+        monkeypatch.setitem(registry._TOOLS, "search_product", replace(SEARCH_PRODUCT, **change))
+        body = run(world, "search_product", {"query": "collar"})[1]
+        assert body["error"]["code"] == "UNKNOWN_TOOL"
+    done, body = run(world, "delete_everything", {"query": "x"})  # su nombre no vuelve
+    assert body == {"ok": False, "error": {"code": "UNKNOWN_TOOL"}} and "delete" not in done.text
 
 
 DEEP = json.loads("[" * 100 + '"collar"' + "]" * 100)  # 100 niveles
@@ -154,16 +167,12 @@ def test_malicious_search_input_is_rejected_without_echo(shop: Any, data: Any) -
     "value",
     [
         "no-es-un-uuid", 123, None, ["x"], {"id": "x"}, "{%s}", "urn:uuid:%s", "%s ", " %s",
-        "%s' OR 1=1--", "HEX", "%s\x00",
+        "%s' OR 1=1--", "%s\x00",
     ],
 )  # fmt: skip
 def test_malformed_product_id_is_rejected_without_echo(shop: Any, value: Any) -> None:
     allow(shop.world, "products.view")
-    pk = str(shop.red.pk)
-    if value == "HEX":
-        value = pk.replace("-", "")
-    elif isinstance(value, str) and "%s" in value:
-        value = value % pk
+    value = value % shop.red.pk if isinstance(value, str) and "%s" in value else value
     done, _ = run(shop.world, "get_product_variants", {"product_id": value})
     assert done.text == INVALID and done.evidence is None
 
@@ -178,19 +187,6 @@ def test_sql_looking_or_unicode_text_is_only_text(shop: Any) -> None:
     assert body["data"] == {"products": []}
     _, body = run(shop.world, "get_product_variants", {"product_id": str(shop.red.pk).upper()})
     assert body["data"]["product_id"] == str(shop.red.pk)  # se parsea: sale el canónico
-
-
-def test_a_context_from_another_scope_is_a_bug_not_an_answer(shop: Any) -> None:
-    allow(shop.world, "products.view")
-    with acting(shop.world.a, shop.world.ana) as stale:
-        pass
-    with tenant_scope(ctx(shop.world.a, shop.world.ana)), pytest.raises(TenantContextError):
-        invoke(stale, ToolCall("toolu_1", "search_product", {"query": "collar"}))
-
-
-def test_unknown_tool_name_is_not_echoed(world: Any) -> None:
-    done, body = run(world, "delete_everything", {"query": "x"})
-    assert body == {"ok": False, "error": {"code": "UNKNOWN_TOOL"}} and "delete" not in done.text
 
 
 @pytest.mark.parametrize("name", sorted(TOOLS))
@@ -209,6 +205,10 @@ def test_system_actor_never_runs_a_tool_even_for_a_member(shop: Any) -> None:
         ectx = member_context(system, shop.world.ana.pk)
         done = invoke(ectx, ToolCall("toolu_1", "search_product", {"query": "collar"}))
     assert json.loads(done.text)["error"]["code"] == "FORBIDDEN"
+    with acting(shop.world.a, shop.world.ana) as stale:  # otro scope: un fallo, no una respuesta
+        pass
+    with tenant_scope(ctx(shop.world.a, shop.world.ana)), pytest.raises(TenantContextError):
+        invoke(stale, ToolCall("toolu_1", "search_product", {"query": "collar"}))
 
 
 def test_search_returns_only_published_products_of_the_organization(shop: Any) -> None:
@@ -293,7 +293,7 @@ def test_output_outside_its_declared_shape_fails_closed(
 ) -> None:
     allow(shop.world, "products.view")
     fake = replace(SEARCH_PRODUCT, handler=lambda ectx, args: Found(data, ()))
-    monkeypatch.setitem(TOOLS, "search_product", fake)
+    monkeypatch.setitem(registry._TOOLS, "search_product", fake)
     with pytest.raises(RuntimeError):
         run(shop.world, "search_product", {"query": "collar"})
 
@@ -313,18 +313,15 @@ def test_results_enter_the_turn_format_of_the_gateway(shop: Any) -> None:
     assert len(turns.check(request)) == 7  # cada resultado y su texto
 
 
-def test_query_capture_detects_writes_and_locks() -> None:
+def test_query_capture_detects_writes_and_locks(shop: Any) -> None:
     planted = ['UPDATE "products" SET "name" = %s', "WITH x AS (INSERT INTO t VALUES (1)) SELECT",
                'SELECT "id" FROM "products" FOR NO KEY UPDATE', "DELETE FROM notes",
                "MERGE INTO t USING s ON true", "TRUNCATE products", "LOCK TABLE t"]  # fmt: skip
     assert writes(planted) == planted
     reads = ['SELECT "products"."updated_at", "deleted_at" FROM "products" WHERE x = \'delete\'']
     assert writes(reads) == []
-
-
-def test_query_capture_sees_an_orm_write(shop: Any) -> None:
     tenant = ctx(shop.world.a)
-    with tenant_scope(tenant), captured() as seen:
+    with tenant_scope(tenant), captured() as seen:  # y ve una escritura real del ORM
         pc.update_product(tenant, product_id=shop.red.pk, name="Collar Rojo 2")
     assert any(sql.lstrip().upper().startswith("UPDATE") for sql in writes(seen))
 

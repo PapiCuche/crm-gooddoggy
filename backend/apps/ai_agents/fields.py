@@ -1,9 +1,7 @@
-"""Los campos de entrada de una tool (F8-07a; ADR-005 Parte C, ADR-034 §6). El modelo recibe su
-JSON Schema, pero la frontera es esta validación: el modo estricto del proveedor no se da por
-bueno. `Invalid` no lleva mensaje: nada de la entrada vuelve al modelo ni al log.
-
-El esquema no lleva `minLength`, `maxLength`, `minimum` ni `maximum` (el modo estricto de la API
-los rechaza): los topes van en la descripción y los aplica `clean`."""
+"""Los campos de entrada de una tool (F8-07a; ADR-005 Parte C, ADR-034 §6). La frontera es esta
+validación, no el modo estricto del proveedor. `Invalid` no lleva mensaje: nada de la entrada
+vuelve al modelo ni al log. Sin `minLength`, `maxLength`, `minimum` ni `maximum` en el esquema
+(la API los rechaza en modo estricto): los topes van en la descripción y los aplica `clean`."""
 
 import re
 import unicodedata
@@ -43,8 +41,7 @@ class Uuid:
 
 @dataclass(frozen=True)
 class Query:
-    """Texto de búsqueda de una línea: NFKC, sin caracteres invisibles ni de marcado, con los
-    espacios interiores colapsados, de `low` a `high` caracteres."""
+    """Una línea en NFKC, sin caracteres invisibles ni de marcado, de `low` a `high` caracteres."""
 
     description: str
     low: int = 2
