@@ -113,10 +113,11 @@ def test_registry_rejects_at_load_what_this_cut_forbids(change: dict[str, Any]) 
         check(replace(SEARCH_PRODUCT, **{"name": "otra_tool", **change}))
 
 
-def test_registry_holds_only_the_catalog_and_stock_tools_read_and_public() -> None:
-    assert set(TOOLS) == {*CATALOG, "get_stock"}  # F8-07d: get_stock
+def test_registry_holds_only_the_catalog_price_and_stock_tools_read_and_public() -> None:
+    assert set(TOOLS) == {*CATALOG, "get_price", "get_stock"}  # F8-07c y F8-07d
     assert all(t.risk is Risk.READ and t.audience is Audience.PUBLIC_SAFE for t in TOOLS.values())
-    assert {t.permission for t in TOOLS.values()} == {"products.view", "inventory.view"}
+    assert {t.permission for t in TOOLS.values()} == {"products.view", "prices.view",
+                                                      "inventory.view"}  # fmt: skip
     check(replace(SEARCH_PRODUCT, name="otra_tool"))  # la misma, con otro nombre, sí entra
     check(replace(SEARCH_PRODUCT, name="otra_tool", output={"shortDescription": (str, int)}))
     for spec in TOOLS.values():  # el esquema estricto, sin identidad ni topes que la API rechace
