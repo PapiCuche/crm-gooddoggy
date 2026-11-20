@@ -37,7 +37,14 @@ function unreachable(error: unknown): never {
   throw new ApiError(0, "NETWORK_ERROR");
 }
 
-export async function apiFetch<T>(url: string, options: RequestInit = {}): Promise<T> {
+// `onStatus`: el código de una respuesta correcta, para quien distingue un 200 de un 201 (invitar
+// otra vez a un correo pendiente renueva su invitación: 200). No llega a `fetch`.
+export type ApiFetchOptions = RequestInit & { onStatus?: (status: number) => void };
+
+export async function apiFetch<T>(
+  url: string,
+  { onStatus, ...options }: ApiFetchOptions = {},
+): Promise<T> {
   const method = (options.method ?? "GET").toUpperCase();
   const headers = new Headers(options.headers);
   headers.set("Accept", "application/json");
@@ -79,5 +86,6 @@ export async function apiFetch<T>(url: string, options: RequestInit = {}): Promi
       /^[1-9]\d{0,8}$/.test(wait) ? Number(wait) : undefined,
     );
   }
+  onStatus?.(response.status);
   return body as T;
 }

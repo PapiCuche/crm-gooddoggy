@@ -13,13 +13,14 @@ import {
   invitationsList,
   rolesList,
 } from "@/lib/api/client";
-import type { Invitation, InvitationStatusEnum, Role } from "@/lib/api/model";
+import type { DeliveryEnum, Invitation, InvitationStatusEnum, Role } from "@/lib/api/model";
 import type { ApiError } from "@/lib/http";
 import { text } from "@/lib/message-text";
 import { cn } from "@/lib/utils";
 
 import messages from "../../../messages/es-PE.json";
 import { InvitationCreate } from "./invitation-create";
+import { InvitationResendAction, MAX_SENDS } from "./invitation-resend-action";
 import { InvitationRevokeAction } from "./invitation-revoke-action";
 
 // Los estados son un enum del contrato: si gana uno y el catálogo no, no compila. Uno que esta
@@ -29,10 +30,16 @@ const named = (code: unknown) => text(STATUSES, String(code)) ?? String(code);
 // El tono, igual: por propiedades propias. `TONE["constructor"]` no es un texto ni es `undefined`.
 const TONE = { ACCEPTED: "text-success", PENDING: "" };
 const tone = (code: unknown) => text(TONE, String(code)) ?? "text-muted";
+// Si salió el correo del último enlace (F2-130e), con la misma regla.
+const DELIVERIES: Record<DeliveryEnum, string> = messages.invitations.delivery;
+const delivered = (code: unknown) => text(DELIVERIES, String(code)) ?? String(code);
+const MAIL_TONE = { SENT: "text-success", NOT_DELIVERED: "text-danger" };
+const mailTone = (code: unknown) => text(MAIL_TONE, String(code)) ?? "text-muted";
 
 // Invitaciones (F2-83): lo que devuelve `GET /api/v1/o/{slug}/invitations/`, de la más reciente
 // a la más antigua. La lista, sus estados y su foco son los de `CursorList`. Quién puede verlas
-// lo decide la API. Encima, «Invitar» (F2-84); en cada fila pendiente o caducada, «Revocar» (F2-85).
+// lo decide la API. Encima, «Invitar» (F2-84); en cada fila pendiente o caducada, «Reenviar»
+// (F2-130f) y «Revocar» (F2-85). Cada fila dice cuándo salió su correo y cuántas veces.
 export function InvitationsList() {
   const t = useTranslations("invitations");
   const format = useFormatter();
@@ -67,6 +74,8 @@ export function InvitationsList() {
   const listKey = [...getInvitationsListQueryKey(organization.slug), "pages"];
   const names = seesRoles && roles.data ? new Map(roles.data.map((r) => [r.id, r.name])) : null;
   const day = (when: string) => format.dateTime(new Date(when), { dateStyle: "medium" });
+  const moment = (when: string) =>
+    format.dateTime(new Date(when), { dateStyle: "medium", timeStyle: "short" });
 
   return (
     <CursorList<Invitation>
@@ -77,7 +86,7 @@ export function InvitationsList() {
       fetchPage={(cursor, signal) =>
         invitationsList(organization.slug, cursor ? { cursor } : undefined, { signal })
       }
-      notice={
+      notice={(rows) => (
         <>
           {invites ? (
             <InvitationCreate
@@ -93,6 +102,8 @@ export function InvitationsList() {
               onDone={() => setNotice(null)}
             />
           ) : null}
+          {/* «Enviada» es lo que confirma el servidor de correo, no la bandeja de entrada. */}
+          {rows.length ? <p className="text-muted text-sm">{t("deliveryHelp")}</p> : null}
           {notice?.stale ? (
             <p role="alert" className="text-danger wrap-anywhere">
               {notice.text}
@@ -108,7 +119,7 @@ export function InvitationsList() {
             </p>
           ) : null}
         </>
-      }
+      )}
       empty={<p className="text-muted">{t("empty")}</p>}
       rowClassName="grid gap-x-4 gap-y-2 sm:grid-cols-[minmax(0,2fr)_minmax(0,2fr)_minmax(0,1fr)] sm:items-start"
     >
@@ -152,15 +163,37 @@ export function InvitationsList() {
               </span>
             ) : null}
           </p>
+          <p className="flex flex-wrap gap-x-4 text-sm sm:col-span-3">
+            <span className={cn("font-medium wrap-anywhere", mailTone(invitation.delivery))}>
+              {t("mail", { state: delivered(invitation.delivery) })}
+            </span>
+            {invitation.sent_at ? (
+              <span className="text-muted">
+                {t("lastSent", { date: moment(invitation.sent_at) })}
+              </span>
+            ) : null}
+            <span className="text-muted">
+              {t("sends", { count: invitation.send_count, max: MAX_SENDS })}
+            </span>
+          </p>
           {revokes ? (
-            <InvitationRevokeAction
-              slug={organization.slug}
-              invitation={invitation}
-              listKey={listKey}
-              onAsk={() => setNotice(null)}
-              onSettle={settle}
-              onLost={() => list.current?.focusHeading()}
-            />
+            <div className="flex flex-wrap items-start gap-2 empty:hidden sm:col-span-3">
+              <InvitationResendAction
+                slug={organization.slug}
+                invitation={invitation}
+                listKey={listKey}
+                onAsk={() => setNotice(null)}
+                onSettle={settle}
+              />
+              <InvitationRevokeAction
+                slug={organization.slug}
+                invitation={invitation}
+                listKey={listKey}
+                onAsk={() => setNotice(null)}
+                onSettle={settle}
+                onLost={() => list.current?.focusHeading()}
+              />
+            </div>
           ) : null}
         </>
       )}

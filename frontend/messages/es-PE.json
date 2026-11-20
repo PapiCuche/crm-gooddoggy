@@ -462,6 +462,15 @@
       "REVOKED": "Revocada",
       "EXPIRED": "Caducada"
     },
+    "mail": "Correo: {state}",
+    "delivery": {
+      "NOT_SENT": "sin enviar",
+      "SENT": "enviada",
+      "NOT_DELIVERED": "no entregada"
+    },
+    "deliveryHelp": "«Enviada» quiere decir que el servidor de correo aceptó el mensaje; no confirma que haya llegado a la bandeja de entrada. «No entregada»: no consta que el servidor lo aceptara. «Sin enviar»: el correo aún no sale.",
+    "lastSent": "Último envío: {date}",
+    "sends": "Envíos: {count} de {max}",
     "create": {
       "open": "Invitar",
       "title": "Nueva invitación",
@@ -484,7 +493,29 @@
       "submit": "Invitar",
       "busy": "Invitando…",
       "cancel": "Cancelar",
-      "done": "Invitación a {email} registrada. En unos minutos le llegará el correo con el enlace."
+      "done": "Invitación a {email} registrada. En unos minutos le llegará el correo con el enlace.",
+      "renewed": "{email} ya tenía una invitación pendiente: la renovamos con estos roles. El enlace anterior ya no vale y en unos minutos le llegará un correo nuevo.",
+      "soonUntil": "Ese correo recibió una invitación hace menos de 15 minutos. Desde las {when} podrás invitarlo otra vez.",
+      "sendLimit": "La invitación de ese correo ya se envió 5 veces, el máximo. Revócala e invita de nuevo.",
+      "addressLimit": "Ese correo ya recibió 3 invitaciones en las últimas 24 horas. Inténtalo más tarde.",
+      "addressLimitUntil": "Ese correo ya recibió 3 invitaciones en las últimas 24 horas. Desde el {when} podrás invitarlo otra vez."
+    },
+    "resend": {
+      "open": "Reenviar",
+      "label": "Reenviar la invitación de {email}",
+      "busy": "Reenviando…",
+      "done": "Reenvío pedido para {email}. El enlace anterior ya no vale y en unos minutos le llegará un correo nuevo.",
+      "maxed": "Ya se envió 5 veces, el máximo. Para enviarla otra vez, revócala e invita de nuevo.",
+      "soon": "Se envió hace menos de 15 minutos. Desde las {when} podrás reenviarla.",
+      "just": "Acabas de pedir el reenvío. Desde las {when} podrás volver a reenviarla.",
+      "daily": "Ese correo ya recibió 3 invitaciones en 24 horas. Desde el {when} podrás reenviarla.",
+      "soonLater": "Ese correo recibió una invitación hace menos de 15 minutos. Inténtalo más tarde.",
+      "dailyLater": "Ese correo ya recibió 3 invitaciones en 24 horas. Inténtalo más tarde.",
+      "roleGone": "Un rol de esta invitación ya no existe. Revócala e invita otra vez con otros roles.",
+      "member": "Ese correo ya es miembro de la organización.",
+      "denied": "No tienes permiso para reenviar esta invitación.",
+      "stale": "La invitación de {email} ya no está disponible. Revisa la lista.",
+      "settled": "La invitación de {email} ya no estaba pendiente. Revisa la lista."
     },
     "revoke": {
       "open": "Revocar",
