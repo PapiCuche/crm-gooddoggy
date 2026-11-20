@@ -1,7 +1,7 @@
 "use client";
 
 import { type QueryKey, useQueryClient } from "@tanstack/react-query";
-import { useTranslations } from "next-intl";
+import { useFormatter, useTranslations } from "next-intl";
 import { useEffect, useRef, useState } from "react";
 
 import { FieldsForm } from "@/components/forms/fields-form";
@@ -32,9 +32,12 @@ export function InvitationCreate({
   onDone: () => void; // quedó registrada: lo que «Revocar» dijo de ese correo ya no aplica
 }) {
   const t = useTranslations("invitations.create");
+  const format = useFormatter();
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
-  const [done, setDone] = useState<string | null>(null);
+  const [done, setDone] = useState<{ email: string; renewed: boolean } | null>(null);
+  // Invitar otra vez a un correo con invitación pendiente la renueva: la API responde 200, no 201.
+  const renewed = useRef(false);
   // Los roles elegidos, por identificador. No llegan al DOM: las casillas no llevan `value`.
   const [chosen, setChosen] = useState<readonly string[]>([]);
   const [refused, setRefused] = useState<"rolesRequired" | "rolesTooMany" | null>(null);
@@ -45,10 +48,12 @@ export function InvitationCreate({
   const firstRole = useRef<HTMLInputElement>(null);
   // `networkMode`: sin red falla y se dice; una escritura no queda en cola para después.
   const invite = useInvitationsCreate({
+    request: { onStatus: (status) => void (renewed.current = status === 200) },
     mutation: {
       networkMode: "always",
       onSuccess: (made) => {
-        setDone(made.email); // el correo que guardó la API, no el que se escribió
+        // El correo que guardó la API, no el que se escribió.
+        setDone({ email: made.email, renewed: renewed.current });
         setOpen(false);
         onDone();
         // La invitación nueva va al principio de la lista, que puede tener más páginas: se
@@ -96,8 +101,25 @@ export function InvitationCreate({
   function explained(error: ApiError) {
     if (error.code === "ALREADY_MEMBER") return { field: "email" as const, text: t("member") };
     if (error.code === "INVITATION_PENDING") return { field: "email" as const, text: t("pending") };
+    // Hasta cuándo, si la API lo dijo (`Retry-After`).
+    const until = (seconds: number, day: boolean) =>
+      format.dateTime(new Date(Date.now() + seconds * 1000), {
+        ...(day ? { dateStyle: "medium" as const } : {}),
+        timeStyle: "short",
+      });
+    const wait = error.retryAfter;
     if (error.code === "INVITATION_SEND_TOO_SOON")
-      return { field: "email" as const, text: t("soon") };
+      return {
+        field: "email" as const,
+        text: wait ? t("soonUntil", { when: until(wait, false) }) : t("soon"),
+      };
+    if (error.code === "INVITATION_ADDRESS_LIMIT")
+      return {
+        field: "email" as const,
+        text: wait ? t("addressLimitUntil", { when: until(wait, true) }) : t("addressLimit"),
+      };
+    if (error.code === "INVITATION_SEND_LIMIT")
+      return { field: "email" as const, text: t("sendLimit") };
     if (error.code === "INVITATION_LIMIT") return { text: t("limit") };
     if (error.code === "RATE_LIMITED") return { text: t("daily") };
     const fields = error.code === "VALIDATION_ERROR" ? (error.fields ?? {}) : {};
@@ -176,7 +198,7 @@ export function InvitationCreate({
       )}
       {/* Siempre montado: un lector de pantalla anuncia el resultado cuando cambia. */}
       <p role="status" className={done ? "text-sm wrap-anywhere" : "sr-only"}>
-        {done ? t("done", { email: done }) : ""}
+        {done ? t(done.renewed ? "renewed" : "done", { email: done.email }) : ""}
       </p>
     </div>
   );

@@ -130,7 +130,7 @@ export function InvitationRevokeAction({
   return (
     <div
       ref={root}
-      className="flex flex-col items-start gap-2 sm:col-span-3"
+      className="flex flex-col items-start gap-2"
       // Enter mantenido repite la pulsación: reabriría la confirmación o reenviaría sin parar.
       onKeyDown={(event) => event.repeat && event.key === "Enter" && event.preventDefault()}
     >

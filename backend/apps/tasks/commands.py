@@ -21,7 +21,7 @@ from apps.organizations.selectors import lock_active_member
 from apps.tasks.models import Task, TaskSource, TaskStatus, TaskType
 from core.tenancy.context import TenantContext
 from core.tenancy.scope import require_scope
-from core.text import line
+from core.text import line, shows_all
 
 TITLE_MAX, REASON_MAX, DESCRIPTION_MAX = 200, 500, 5000
 _FIELDS = frozenset(
@@ -85,6 +85,8 @@ def _text(value: Any, what: str, limit: int, *, lines: bool = False) -> str:
         text = "\n".join(line(part, limit) for part in value.splitlines()).strip()
         if len(text) > limit:
             raise ValueError(f"{what}: hasta {limit} caracteres")
+        if not shows_all(text):  # el tope de lo oculto es del valor, no solo de cada línea
+            raise ValueError(f"{what}: solo texto imprimible")
         return text
     return line(value, limit)
 
