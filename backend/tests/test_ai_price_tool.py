@@ -4,6 +4,7 @@ mucho 3, con su nombre y la predeterminada primero; nunca costos, listas interna
 Primero lo que se rechaza. PostgreSQL con el rol `crm_app`."""
 
 from datetime import timedelta
+from decimal import Decimal
 from types import SimpleNamespace
 from typing import Any
 from uuid import UUID, uuid4
@@ -16,7 +17,7 @@ from apps.ai_agents.tools import price
 from apps.ai_gateway.llm import ToolCall
 from apps.catalog.models import ProductVariant
 from apps.pricing import services
-from apps.pricing.models import INTERNAL, WHOLESALE, PriceList
+from apps.pricing.models import INTERNAL, WHOLESALE, PriceList, ProductPrice
 from core.tenancy.scope import tenant_scope
 from tests.ai_queries import captured, writes
 from tests.logs import log_text
@@ -104,13 +105,17 @@ def test_a_malformed_variant_id_or_an_extra_argument_is_rejected(store: Any) -> 
 
 def test_unpublished_foreign_and_missing_variants_are_the_same_not_found(store: Any) -> None:
     allow(store.world, "prices.view", "prices.manage")
+    shop = store.shop
     with tenant_scope(ctx(store.world.a)):
         hidden = list(ProductVariant.objects.filter(label__in=["Mini", "Secreta", "Vieja"]))
-    secret = next(v for v in hidden if v.label == "Secreta")  # con precio: no basta
-    row(store.world.a, (secret.pk, store.lists["REG"]), "11.00", timezone.now())
+        # la variante está bien, el producto no: borrador, oculto, terminado, borrado, sin variante
+        hidden += [ProductVariant.objects.get(product=p) for p in (
+            shop.draft, shop.hidden, shop.ended, shop.gone, shop.bare)]  # fmt: skip
+    for variant in hidden:  # con precio: no basta
+        row(store.world.a, (variant.pk, store.lists["REG"]), "11.00", timezone.now())
     texts = {ask(store, v)[0].text for v in (*hidden, store.foreign)}
     texts.add(run(store.world, "get_price", {"variant_id": str(uuid4())})[0].text)
-    assert texts == {NOT_FOUND} and len(hidden) == 3
+    assert texts == {NOT_FOUND} and len(hidden) == 8
 
 
 def test_up_to_three_marked_lists_with_their_name_and_the_default_first(store: Any) -> None:
@@ -151,6 +156,20 @@ def test_a_list_without_a_price_for_the_variant_is_left_out(store: Any) -> None:
     allow(store.world, "prices.view")
     listed(store.world.a, "VAC", "Vacia", sort_order=0)  # entra en las 3, sin precio
     assert names(store) == [("Precio Publico", "49.90"), ("Oferta Web", "55.00")]
+
+
+def test_a_price_without_tax_says_so(store: Any) -> None:
+    allow(store.world, "prices.view")
+    net = listed(store.world.a, "NET", "Sin IGV", sort_order=0)
+    with tenant_scope(ctx(store.world.a)):
+        ProductPrice.objects.create(variant_id=store.shop.big.pk, price_list_id=net,
+                                    amount=Decimal("50.85"), currency="PEN", tax_included=False,
+                                    starts_at=timezone.now() - timedelta(days=1),
+                                    change_reason="Semilla del test")  # fmt: skip
+    rows = ask(store, store.shop.big)[1]["data"]["prices"]
+    assert [(p["price_list"], p["amount"], p["tax_included"]) for p in rows] == [
+        ("Precio Publico", "49.90", True), ("Sin IGV", "50.85", False),
+        ("Oferta Web", "55.00", True)]  # fmt: skip
 
 
 def test_the_engine_refuses_a_list_that_was_not_marked_even_if_selected(
