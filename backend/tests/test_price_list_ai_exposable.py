@@ -17,6 +17,7 @@ from django.utils import timezone
 
 from apps.access.selectors import AccessDenied
 from apps.pricing import price_lists as commands
+from apps.pricing import services
 from apps.pricing.models import PriceList
 from core.api.step_up import STEP_UP_REQUIRED
 from core.tenancy.scope import tenant_scope
@@ -67,25 +68,20 @@ def audit(migrator: DB) -> list[tuple[Any, ...]]:
 
 @pytest.fixture
 def shop(crm: SimpleNamespace) -> SimpleNamespace:
-    """En A: REGULAR, MAYORISTA e INTERNA (las dos formas de la interna); en B: AJENA. bea tiene
-    `prices.manage` y `prices.view`, no `ai.manage`."""
+    """En A: REGULAR, MAYORISTA, las dos internas y BORRADA; en B: AJENA. bea: `prices.manage`."""
     give(crm.a, crm.m["bea"], {"prices.view": None, "prices.manage": None})
-    lists = {
-        "regular": made(crm.a, "REGULAR"),
-        "wholesale": made(crm.a, "MAYORISTA", required_permission="prices.view_wholesale"),
-        "internal": made(crm.a, "INTERNA", required_permission="prices.view_internal"),
-        "internal_kind": made(crm.a, "STAFF", kind="INTERNAL"),
-        "deleted": made(crm.a, "BORRADA", deleted_at=timezone.now()),
-        "foreign": made(crm.b, "AJENA"),
-    }
+    lists = {"regular": made(crm.a, "REGULAR"), "foreign": made(crm.b, "AJENA"),
+             "wholesale": made(crm.a, "MAYORISTA", required_permission="prices.view_wholesale"),
+             "internal": made(crm.a, "INTERNA", required_permission="prices.view_internal"),
+             "internal_kind": made(crm.a, "STAFF", kind="INTERNAL"),
+             "deleted": made(crm.a, "BORRADA", deleted_at=timezone.now())}  # fmt: skip
     return SimpleNamespace(**vars(crm), lists=lists)
 
 
 def test_only_ai_manage_with_a_recent_second_factor_changes_it(
     shop: SimpleNamespace, migrator: DB
 ) -> None:
-    """`prices.manage` no basta, sin permiso nunca `STEP_UP_REQUIRED`, y sin el segundo factor el
-    Owner tampoco: nada cambia ni se audita hasta que vuelve con él."""
+    """`prices.manage` no basta; sin permiso, nunca `STEP_UP_REQUIRED`; sin código, nada cambia."""
     regular, yes = shop.lists["regular"], {"ai_exposable": True}
     for who in (shop.vera, shop.sam, shop.bea):  # bea gestiona precios: no decide la IA
         for client in (plain(who), signed(who)):
@@ -102,13 +98,9 @@ def test_only_ai_manage_with_a_recent_second_factor_changes_it(
     give(shop.a, shop.m["bea"], {"ai.manage": None})
     late = expose(plain(shop.bea), regular, {"ai_exposable": False})
     assert (late.status_code, late.json()["code"]) == (403, STEP_UP_REQUIRED)
-    assert (
-        expose(signed(shop.bea), regular, {"ai_exposable": False}).json()["ai_exposable"] is False
-    )
+    assert expose(signed(shop.bea), regular, {"ai_exposable": False}).status_code == 200
     with tenant_scope(ctx(shop.a, shop.sam)) as tenant, pytest.raises(AccessDenied):
-        commands.set_ai_exposable(
-            tenant, price_list_id=regular, exposable=True
-        )  # el comando también
+        commands.set_ai_exposable(tenant, price_list_id=regular, exposable=True)  # fmt: skip
     assert exposed(migrator) == []
 
 
@@ -139,14 +131,8 @@ def test_the_body_the_internal_list_and_lists_out_of_reach_are_refused(
 ) -> None:
     settings.AI_ACCOUNT_THROTTLE = (60, 600)  # cada intento cuenta en el tope
     ana, regular = signed(shop.ana), shop.lists["regular"]
-    for body in (
-        {},
-        {"ai_exposable": "true"},
-        {"ai_exposable": 1},
-        {"ai_exposable": None},
-        [True],
-        "true",
-    ):
+    for body in ({}, {"ai_exposable": "true"}, {"ai_exposable": 1}, {"ai_exposable": None},
+                 [True], "true"):  # fmt: skip
         refused = expose(ana, regular, body)
         assert refused.status_code == 400, body
         assert refused.json()["code"] == "VALIDATION_ERROR", body
@@ -159,7 +145,53 @@ def test_the_body_the_internal_list_and_lists_out_of_reach_are_refused(
     for gone in (shop.lists["deleted"], shop.lists["foreign"], uuid4()):
         assert reply(expose(ana, gone, {"ai_exposable": True})) == NOT_FOUND
     assert reply(expose(ana, regular, {"ai_exposable": True}, org="org-b")) == NOT_FOUND
+    give(shop.a, shop.m["vera"], {"ai.manage": None})  # solo ve REGULAR: lo demás no existe
+    for hidden in (shop.lists["wholesale"], shop.lists["internal"]):  # ni el 400 de la interna
+        assert reply(expose(signed(shop.vera), hidden, {"ai_exposable": True})) == NOT_FOUND
     assert exposed(migrator) == [] and audit(migrator) == []
+
+
+def test_a_list_that_becomes_internal_stops_being_cited_and_is_not_cited_again_by_itself(
+    shop: SimpleNamespace, migrator: DB
+) -> None:
+    """bea (`prices.manage`) vuelve interna una lista que el Owner marcó, por el tipo o por quién
+    la ve: deja de citarse en la misma escritura, auditado a su nombre; volver atrás no la marca."""
+    ana, bea = signed(shop.ana), signed(shop.bea)
+    regular, wholesale = shop.lists["regular"], shop.lists["wholesale"]
+    for marked in (regular, wholesale):
+        assert expose(ana, marked, {"ai_exposable": True}).status_code == 200
+    for marked, internal, back in (
+        (regular, {"kind": "INTERNAL"}, {"kind": "RETAIL"}),
+        (wholesale, {"required_permission": "prices.view_internal"},
+         {"required_permission": "prices.view_wholesale"}),
+    ):  # fmt: skip
+        changed = send(bea, "patch", f"{LISTS}{marked}/", internal)
+        assert changed.status_code == 200 and changed.json()["ai_exposable"] is False
+        assert send(bea, "patch", f"{LISTS}{marked}/", back).json()["ai_exposable"] is False
+    assert exposed(migrator) == []
+    off, why = {"ai_exposable": [True, False]}, {"reason": "INTERNAL_LIST"}
+    assert [row[1:] for row in audit(migrator)[2:]] == [
+        (regular, off, why, "USER", shop.bea.pk, shop.a),
+        (wholesale, off, why, "USER", shop.bea.pk, shop.a),
+    ]
+
+
+def test_the_engine_never_cites_an_internal_list_and_the_owner_can_always_turn_it_off(
+    shop: SimpleNamespace, migrator: DB
+) -> None:
+    """Una interna marcada de antes (por el tipo o por quién la ve): el motor no la cita, y el
+    Owner la desmarca (auditado); marcarla sigue siendo un 400."""
+    internal, by_kind = shop.lists["internal"], shop.lists["internal_kind"]
+    migrator.execute("UPDATE price_lists SET ai_exposable = true WHERE id = ANY(%s)",
+                     [[internal, by_kind, shop.lists["regular"]]])  # fmt: skip
+    with tenant_scope(ctx(shop.a)) as tenant:
+        cited = services._lists(tenant, services.Audience.PUBLIC_AI)
+        assert sorted(row.code for row in cited) == ["REGULAR"]
+    ana = signed(shop.ana)
+    for listed in (internal, by_kind):
+        assert expose(ana, listed, {"ai_exposable": False}).json()["ai_exposable"] is False
+        assert expose(ana, listed, {"ai_exposable": True}).status_code == 400
+    assert exposed(migrator) == ["REGULAR"] and len(audit(migrator)) == 2
 
 
 def test_creating_and_changing_a_list_no_longer_take_the_flag(
@@ -212,9 +244,8 @@ def test_changing_it_counts_in_the_ai_write_limit_and_other_pricing_writes_do_no
 def test_the_migration_turns_every_list_off_and_audits_only_the_ones_it_changed(
     shop: SimpleNamespace, migrator: DB
 ) -> None:
-    """Varias listas marcadas en dos organizaciones (la borrada también se apaga); las que ya
-    estaban apagadas no dejan rastro. Hacia atrás no vuelve a marcar nada (lo decidiría quien
-    corre la migración, no el propietario); repetirla no cambia ni audita nada más."""
+    """Marcadas en dos organizaciones (también la borrada); las apagadas no dejan rastro. Hacia
+    atrás no marca nada; repetirla no audita más."""
     up = "UPDATE price_lists SET ai_exposable = true WHERE code = ANY(%s)"
     on = ["AJENA", "BORRADA", "MAYORISTA", "REGULAR"]
     try:
@@ -234,14 +265,11 @@ def test_the_migration_turns_every_list_off_and_audits_only_the_ones_it_changed(
             assert row[2:] == ({"ai_exposable": [True, False]}, reset, "SYSTEM", None, org)
         with as_migrator():
             call_command("migrate", "pricing", "0007", verbosity=0)
-        assert exposed(migrator) == []  # no-op hacia atrás
-        with as_migrator():
+            assert exposed(migrator) == []  # no-op hacia atrás
             call_command("migrate", "pricing", verbosity=0)
         assert len(audit(migrator)) == 4  # nada que apagar: nada que auditar
         with connection.schema_editor() as editor, pytest.raises(RuntimeError, match="BYPASSRLS"):
-            import_module(MIGRATION).reset(
-                None, editor
-            )  # `crm_app`: bajo RLS no vería ninguna lista
+            import_module(MIGRATION).reset(None, editor)  # `crm_app`: RLS no le deja ver nada
     finally:
         with as_migrator():
             call_command("migrate", "pricing", verbosity=0)

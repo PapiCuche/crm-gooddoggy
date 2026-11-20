@@ -78,7 +78,7 @@ describe("PriceListAi", () => {
     const [first] = await screen.findAllByRole("listitem");
     expect(within(first!).getByText("La IA puede citarla")).toBeVisible();
     expect(screen.queryByRole("checkbox")).toBeNull(); // `prices.manage` no basta
-    press("Editar la lista Regular", first!);
+    fireEvent.click(within(first!).getByRole("button", { name: "Editar la lista Regular" }));
     expect(within(screen.getByRole("form")).queryByText(/IA/)).toBeNull(); // ya no se edita aquí
     view.unmount();
     show("ai.manage");
@@ -126,6 +126,7 @@ describe("PriceListAi", () => {
   it.each([
     [fail(403, "PERMISSION_DENIED"), "No tienes permiso para decidir qué listas cita la IA."],
     [fail(429, "RATE_LIMITED", "120"), "Demasiados intentos. Vuelve a probar en 2 minutos."],
+    [fail(429, "RATE_LIMITED"), "Demasiados intentos. Espera un momento antes de volver a probar."],
     [fail(400, "VALIDATION_ERROR"), "La lista interna nunca la cita la IA."],
     [fail(500, "INTERNAL_ERROR"), "No se pudo cambiar si la IA cita «Regular»."],
   ])("los errores van por `code`, sin el texto del servidor (%#)", async (reply, text) => {
@@ -152,7 +153,3 @@ describe("PriceListAi", () => {
     expect(await screen.findByText(/todavía no tiene listas/)).toBeVisible();
   });
 });
-
-function press(name: string, inside: HTMLElement) {
-  fireEvent.click(within(inside).getByRole("button", { name }));
-}

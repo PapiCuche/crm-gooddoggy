@@ -18,6 +18,7 @@ from django.db import IntegrityError, connections, transaction
 from apps.access.selectors import AccessDenied, Denied, execution_context, has_permission
 from apps.audit.services import Entity, record
 from apps.pricing.models import DISTRIBUTOR, INTERNAL, VIEW, WHOLESALE, PriceList
+from apps.pricing.selectors import visible_price_lists
 from core.tenancy.context import TenantContext
 from core.tenancy.scope import require_scope
 from core.text import name as clean_name
@@ -80,6 +81,11 @@ def price_list_name(value: str) -> str:
 def required_permission_for(kind: str) -> str:
     """El permiso de lectura que pide una lista de ese tipo si no se elige otro."""
     return BY_KIND.get(kind, VIEW)
+
+
+def _internal(kind: str, required_permission: str) -> bool:
+    """La interna (04 §K.2), por su tipo o por quién la ve: la IA nunca la cita."""
+    return kind == PriceList.Kind.INTERNAL or required_permission == INTERNAL
 
 
 def _cleaned(fields: dict[str, Any]) -> dict[str, Any]:
@@ -170,6 +176,8 @@ def update_price_list(ctx: TenantContext, *, price_list_id: UUID, **fields: Any)
     """Cambia lo que se envía y lo audita con el antes y el después. `is_default=true` quita la
     marca a la anterior de la moneda; activar una lista con `prices.view` cuando su moneda no tiene
     predeterminada la hace serlo, salvo `is_default=false` (otro cambio no la marca).
+    Una lista que pasa a ser la interna deja de citarla la IA en la misma escritura, auditado
+    aparte (`price_list.ai_exposable_changed`); volver atrás no la vuelve a marcar.
     `PriceListIsDefault` si se desactiva la predeterminada, se le quita la marca o se cambia su
     permiso; `InactiveDefault` o `RestrictedDefault` si se marca una inactiva o sin
     `prices.view`. Sin cambios no escribe ni audita. Una borrada o de otra organización:
@@ -201,27 +209,38 @@ def update_price_list(ctx: TenantContext, *, price_list_id: UUID, **fields: Any)
         if changes:
             for field, (_, value) in changes.items():
                 setattr(price_list, field, value)
-            price_list.updated_by_user_id = ctx.user_id
-            price_list.save(
-                using=alias, update_fields=[*changes, "updated_by_user_id", "updated_at"]
+            hidden = price_list.ai_exposable and _internal(
+                price_list.kind, price_list.required_permission
             )
+            saved = [*changes, "updated_by_user_id", "updated_at"]
+            if hidden:  # nunca una interna citable, ni un momento
+                price_list.ai_exposable = False
+                saved.append("ai_exposable")
+            price_list.updated_by_user_id = ctx.user_id
+            price_list.save(using=alias, update_fields=saved)
             entity = Entity("price_list", price_list.pk, price_list.code)
             record(ctx, "price_list.updated", entity, changes)
+            if hidden:
+                off, why = {"ai_exposable": [True, False]}, {"reason": "INTERNAL_LIST"}
+                record(ctx, "price_list.ai_exposable_changed", entity, off, why)
     return price_list
 
 
 def set_ai_exposable(ctx: TenantContext, *, price_list_id: UUID, exposable: bool) -> PriceList:
     """Marca o desmarca una lista como citable por la IA (F8-07b, D-F8-06) y lo audita con el antes
     y el después (`price_list.ai_exposable_changed`). Igual que estaba: no escribe ni audita.
-    `AccessDenied` sin `ai.manage`; `InternalList` si es la interna (por permiso o por tipo); una
-    borrada o de otra organización: `DoesNotExist`."""
+    `AccessDenied` sin `ai.manage`; `InternalList` si se marca la interna (desmarcarla siempre se
+    puede). Una que el actor no ve (su `required_permission` o `prices.manage`), borrada o de otra
+    organización: `DoesNotExist`, sin decir si es la interna."""
     alias = require_scope(ctx)
-    if not has_permission(execution_context(ctx), AI_MANAGE):
+    ectx = execution_context(ctx)
+    if not has_permission(ectx, AI_MANAGE):
         raise AccessDenied(Denied.PERMISSION)
     with transaction.atomic(using=alias):
         _lock(alias, ctx)
-        price_list: PriceList = _live(alias).select_for_update(no_key=True).get(pk=price_list_id)
-        if price_list.kind == PriceList.Kind.INTERNAL or price_list.required_permission == INTERNAL:
+        seen = visible_price_lists(ectx).using(alias).select_for_update(no_key=True)
+        price_list: PriceList = seen.get(pk=price_list_id)
+        if exposable and _internal(price_list.kind, price_list.required_permission):
             raise InternalList("ai_exposable")
         if price_list.ai_exposable != exposable:
             before = price_list.ai_exposable
