@@ -452,6 +452,9 @@ AI_TURN_LIMITS = {"turns": 100, "blocks": 400, "thinking": 100, "images": 20,
 # F8-07d (decisión del propietario, #770): «pocas unidades» es de 1 a este número; `get_stock`
 # falla cerrado si no es un entero >= 1.
 AI_STOCK_FEW_UNITS = 3
+# F8-08e (ADR-034 §9): segundos que vale la evidencia de precio y stock para el Output Guard; un
+# valor fijo en configuración, entero de 1 a 600 (10 minutos como mucho), o el guard falla cerrado.
+AI_EVIDENCE_TTL = 600
 # Correo saliente (ADR-019): SMTP por entorno, sin proveedor fijado. Solo `core.mail` lo usa.
 # El backend por defecto de Django no envía nada: lo que no pasa por `core.mail` (el aviso a
 # `ADMINS` de `AdminEmailHandler`, `django.core.mail.send_mail`) no abre una conexión SMTP.

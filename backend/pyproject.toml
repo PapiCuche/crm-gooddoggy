@@ -194,10 +194,11 @@ ignore_imports = ["apps.ai_agents.records -> apps.audit.services"]
 [[tool.importlinter.contracts]]
 # `ignore_imports` quita esa arista de todo el grafo: sin este contrato, una tool que importe
 # `records` llegaría al escritor de la auditoría sin que nadie lo viera. Lo que llama a
-# `records.save` es el runtime del copiloto (F8-08g, #1024), que no está en esta lista.
+# `records.save` es el runtime del copiloto (F8-08g, #1024), que no está en esta lista. El Output
+# Guard (F8-08e) es puro: devuelve sus hallazgos y el runtime los registra.
 name = "Solo el runtime del copiloto importa su registro (F8-08b)"
 type = "forbidden"
-source_modules = ["apps.ai_agents.tools", "apps.ai_agents.registry", "apps.ai_agents.fields", "apps.ai_agents.models", "apps.ai_agents.apps", "apps.ai_agents.migrations"]
+source_modules = ["apps.ai_agents.tools", "apps.ai_agents.registry", "apps.ai_agents.fields", "apps.ai_agents.models", "apps.ai_agents.apps", "apps.ai_agents.migrations", "apps.ai_agents.guard"]
 forbidden_modules = ["apps.ai_agents.records"]
 
 [[tool.importlinter.contracts]]
