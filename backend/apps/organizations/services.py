@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 from typing import NamedTuple
 from uuid import UUID
 
-from django.db import IntegrityError, connection, transaction
+from django.db import IntegrityError, connection, connections, transaction
 from django.db.models import F, Func, Max
 from django.db.models.functions import Now
 from django.utils import timezone
@@ -233,7 +233,7 @@ def create_invitation(
         pending = rows.filter(status=UserInvitation.Status.PENDING)
         if pending.filter(email=email).exists():
             raise InvitationPending
-        _may_send(alias, email)
+        _may_send(ctx, email)
         if pending.count() >= INVITATIONS_PENDING_MAX:
             raise TooManyPending
         now = timezone.now()
@@ -278,7 +278,9 @@ def renew_invitation(
     comprobados), caducidad nueva, el usuario de `ctx` invita y el enlace anterior deja de valer.
     Lo audita y pide su correo; la tarea cuenta el envío, y la cuenta no vuelve a 0. Lanza
     `InvalidTransition`, `AlreadyMember`, `SendLimit` o `SendTooSoon` sin escribir; la de otra
-    organización, `DoesNotExist`. Quien llama tiene el bloqueo de RBAC: después, la fila."""
+    organización, `DoesNotExist`. Quien llama tiene el bloqueo de RBAC: después, la fila.
+    Si después la tarea no la envía (la organización ya no admite acceso, quien renovó perdió
+    sus permisos), la invitación queda sin enlace y se enseña `NOT_SENT` (F2-130g)."""
     alias = require_scope(ctx)
     if ctx.user_id is None:
         raise ValueError("una invitación la renueva una persona")
@@ -291,7 +293,7 @@ def renew_invitation(
             raise AlreadyMember
         if invitation.send_count >= INVITATION_MAX_SENDS:
             raise SendLimit
-        _may_send(alias, invitation.email)
+        _may_send(ctx, invitation.email)
         before = [str(role_id) for role_id in invitation.role_ids]
         changes = {"invited_by": [invitation.invited_by_id, ctx.user_id]}
         changes["expires_at"] = [invitation.expires_at, timezone.now() + INVITATION_LIFETIME]
@@ -427,26 +429,33 @@ def accept_invitation(
     return UUID(str(membership.pk))
 
 
-def _may_send(alias: str, email: str) -> None:
+def _may_send(ctx: TenantContext, email: str) -> None:
     """Lanza `SendTooSoon` (`AddressLimit`: tope diario) si ahora no se puede enviar a `email`."""
-    if wait := _address_wait(alias, email):
+    if wait := _address_wait(ctx, email):
         raise AddressLimit(wait)
-    if wait := _send_wait(alias, email):
+    if wait := _send_wait(require_scope(ctx), email):
         raise SendTooSoon(wait)
 
 
-def _address_wait(alias: str, email: str) -> int:
-    """Segundos hasta poder enviar a `email` sin pasar de `ADDRESS_DAILY_SENDS` en `ADDRESS_WINDOW`,
-    con todas las invitaciones a ese correo. Con el bloqueo de RBAC: se cuentan en serie."""
-    now = timezone.now()
-    since = now - ADDRESS_WINDOW
-    rows = UserInvitation.objects.using(alias).filter(email=email, sent_at__gt=since)
-    logs = rows.values_list("send_times", flat=True)
-    times: list[datetime] = sorted(when for log in logs for when in log if when > since)
-    if len(times) < ADDRESS_DAILY_SENDS:
-        return 0
-    left = times[-ADDRESS_DAILY_SENDS] + ADDRESS_WINDOW - now
-    return max(1, math.ceil(left.total_seconds()))
+# El `ADDRESS_DAILY_SENDS`-ésimo envío más reciente a un correo en la ventana: cuándo sale de ella.
+_ADDRESS_WAIT = (  # `window`: los segundos de la ventana
+    "SELECT least(greatest(ceil(extract(epoch FROM t - now()) + %(window)s), 1), %(window)s)"
+    " FROM public.user_invitations i, unnest(i.send_times) AS t WHERE i.organization_id = %(org)s"
+    " AND i.email = %(email)s AND t > now() - %(window)s * interval '1 second'"
+    " ORDER BY t DESC OFFSET %(skip)s LIMIT 1"
+)
+
+
+def _address_wait(ctx: TenantContext, email: str) -> int:
+    """Segundos (de 1 a un día) hasta poder enviar a `email` sin pasar de `ADDRESS_DAILY_SENDS` en
+    `ADDRESS_WINDOW`, con todas las invitaciones a ese correo; 0 si ya se puede. Con el reloj de
+    la base, que puso cada hora (F2-130g), y el bloqueo de RBAC: se cuentan en serie."""
+    window, skip = int(ADDRESS_WINDOW.total_seconds()), ADDRESS_DAILY_SENDS - 1
+    with connections[require_scope(ctx)].cursor() as cursor:
+        org = ctx.organization_id
+        cursor.execute(_ADDRESS_WAIT, {"window": window, "org": org, "email": email, "skip": skip})
+        found = cursor.fetchone()
+    return int(found[0]) if found else 0
 
 
 def _send_wait(alias: str, email: str) -> int:
@@ -482,7 +491,7 @@ def invitation_to_send(
         return "served"
     if invitation.send_count >= INVITATION_MAX_SENDS:
         return "limit"
-    if _address_wait(alias, invitation.email):
+    if _address_wait(ctx, invitation.email):
         return "address_limit"
     if _send_wait(alias, invitation.email):
         return "too_soon"

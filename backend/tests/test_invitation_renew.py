@@ -30,6 +30,7 @@ from tests.test_invitation_preview import ask as preview
 from tests.test_invitation_send import EVENTS, invited, run, secret_in, send_now
 from tests.test_invitations_list import listed
 from tests.test_invitations_table import invite as stored
+from tests.test_invitations_table import unguarded
 from tests.test_invite import ask
 from tests.test_memberships import ctx, join
 from tests.test_self_context import NOT_FOUND, reply, signed
@@ -53,7 +54,7 @@ TOTALS = "SELECT (SELECT count(*) FROM user_invitations), (SELECT count(*) FROM 
 
 
 def age(migrator: psycopg.Connection[Any], by: str = "16 minutes") -> None:
-    migrator.execute(AGE, {"by": by})  # y los pedidos: lo servido sigue siendo posterior
+    unguarded(migrator, AGE, {"by": by})  # y los pedidos: lo servido sigue siendo posterior
     migrator.execute("UPDATE outbox_events SET occurred_at = occurred_at - %s::interval", [by])
 
 
