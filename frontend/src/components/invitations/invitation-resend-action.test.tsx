@@ -179,6 +179,46 @@ describe("InvitationResendAction", () => {
     expect(calls(api, "POST")).toHaveLength(0);
   });
 
+  it.each([
+    // Atrasado una hora: el envío de hace 20 minutos le cae en el futuro. Para 15, no 55.
+    [-60, 20, "true", "Se envió hace menos de 15 minutos. Desde las 9:15 a. m. podrás reenviarla."],
+    [60, 5, "false", null], // adelantado: se ofrece, y si es pronto lo dice el 429 de la API
+  ])(
+    "con el reloj %i minutos desviado no para más de 15 minutos",
+    async (skew, sent, stops, text) => {
+      vi.setSystemTime(NOW + skew * 60_000);
+      mockApi({ [LIST]: list({ sent_at: ago(sent) }) });
+      screenOf();
+      const button = await resend();
+      expect(button).toHaveAttribute("aria-disabled", stops);
+      if (text) expect(button).toHaveAccessibleDescription(text);
+      else expect(button).not.toHaveAttribute("aria-describedby");
+    },
+  );
+
+  it("una lectura en vuelo no pisa la fila reenviada", async () => {
+    const api = mockApi({
+      [LIST]: { status: 200, body: { results: [invitation("lima"), others[0]!], next: "abc" } },
+      [`${LIST}?cursor=abc`]: { status: 200, body: { results: [invitation("tacna")], next: null } },
+      [RESEND]: { status: 200, body: invitation("lima", { delivery: "NOT_SENT" }) },
+    });
+    screenOf();
+    const button = await resend();
+    const release = hold(api);
+    const more = screen.getByRole("button", { name: "Cargar más" });
+    fireEvent.click(more); // sale con la lista de antes del reenvío
+    fireEvent.click(button);
+    await waitFor(() => expect(within(card("lima")).getByText("Correo: sin enviar")).toBeVisible());
+    release();
+    await tick();
+    expect(within(card("lima")).getByText("Correo: sin enviar")).toBeVisible();
+    // Esa lectura se canceló: la página se pide otra vez y la fila sigue como la dejó la API.
+    await waitFor(() => expect(more).toHaveAttribute("aria-disabled", "false"));
+    fireEvent.click(more);
+    expect(await screen.findByText("tacna@cliente.pe")).toBeVisible();
+    expect(within(card("lima")).getByText("Correo: sin enviar")).toBeVisible();
+  });
+
   it("pasados los 15 minutos se vuelve a ofrecer, sin recargar", async () => {
     vi.useRealTimers();
     const sent = new Date(Date.now() - 15 * 60_000 + 300).toISOString();

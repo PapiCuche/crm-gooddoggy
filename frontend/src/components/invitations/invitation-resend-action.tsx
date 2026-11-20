@@ -94,7 +94,9 @@ export function InvitationResendAction({
     if (!busy) sending.current = false; // como «Revocar»: cuando la pantalla ya lo enseña
   });
 
-  const last = invitation.sent_at ? Date.parse(invitation.sent_at) : NaN;
+  // El reloj del navegador puede ir atrasado (o el `sent_at`, quedar en su futuro): la pantalla
+  // no para más de 15 minutos desde ahora. Quien manda es el 429 de la API, con su `Retry-After`.
+  const free = Math.min(Date.parse(invitation.sent_at ?? "") + GAP, now + GAP);
   const block: Block | null =
     held?.reason === "maxed"
       ? held
@@ -102,8 +104,8 @@ export function InvitationResendAction({
         ? { reason: "maxed" }
         : held?.until && held.until > now
           ? held
-          : last + GAP > now
-            ? { reason: "soon", until: last + GAP }
+          : free > now
+            ? { reason: "soon", until: free }
             : null;
   const until = block?.until;
   useEffect(() => {
