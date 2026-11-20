@@ -176,22 +176,21 @@ def test_a_list_that_becomes_internal_stops_being_cited_and_is_not_cited_again_b
     ]
 
 
-def test_the_engine_never_cites_an_internal_list_and_the_owner_can_always_turn_it_off(
+def test_an_internal_list_is_never_marked_not_even_by_the_owner_of_the_table(
     shop: SimpleNamespace, migrator: DB
 ) -> None:
-    """Una interna marcada de antes (por el tipo o por quién la ve): el motor no la cita, y el
-    Owner la desmarca (auditado); marcarla sigue siendo un 400."""
-    internal, by_kind = shop.lists["internal"], shop.lists["internal_kind"]
-    migrator.execute("UPDATE price_lists SET ai_exposable = true WHERE id = ANY(%s)",
-                     [[internal, by_kind, shop.lists["regular"]]])  # fmt: skip
+    """Por el tipo o por quién la ve: la base la niega a todo rol (F8-07f, el CHECK) y la API da
+    400; el motor cita solo la marcada que no es interna."""
+    mark = "UPDATE price_lists SET ai_exposable = true WHERE id = %s"
+    for listed in (shop.lists["internal"], shop.lists["internal_kind"]):
+        with pytest.raises(psycopg.errors.CheckViolation, match="price_lists_internal_not_ai_ck"):
+            migrator.execute(mark, [listed])
+        assert expose(signed(shop.ana), listed, {"ai_exposable": True}).status_code == 400
+    migrator.execute(mark, [shop.lists["regular"]])
     with tenant_scope(ctx(shop.a)) as tenant:
         cited = services._lists(tenant, services.Audience.PUBLIC_AI)
         assert sorted(row.code for row in cited) == ["REGULAR"]
-    ana = signed(shop.ana)
-    for listed in (internal, by_kind):
-        assert expose(ana, listed, {"ai_exposable": False}).json()["ai_exposable"] is False
-        assert expose(ana, listed, {"ai_exposable": True}).status_code == 400
-    assert exposed(migrator) == ["REGULAR"] and len(audit(migrator)) == 2
+    assert exposed(migrator) == ["REGULAR"] and audit(migrator) == []
 
 
 def test_creating_and_changing_a_list_no_longer_take_the_flag(
