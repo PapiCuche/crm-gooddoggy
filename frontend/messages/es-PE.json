@@ -137,7 +137,8 @@
         "branch_changed": "Sucursal de un miembro cambiada",
         "invited": "Persona invitada",
         "invitation_revoked": "Invitación revocada",
-        "created": "Miembro añadido por un operador"
+        "created": "Miembro añadido por un operador",
+        "activated": "Invitación aceptada"
       },
       "role": {
         "created": "Rol creado",
@@ -475,14 +476,15 @@
       "rolesInvalid": "Alguno de los roles elegidos ya no existe en la organización. Cierra el formulario y vuelve a abrirlo.",
       "member": "Ese correo ya es miembro de la organización.",
       "pending": "Ese correo ya tiene una invitación, pendiente o caducada.",
+      "soon": "Ese correo recibió una invitación hace menos de 15 minutos. Espera un poco y vuelve a intentarlo.",
       "limit": "La organización ya tiene 50 invitaciones pendientes o caducadas: es el máximo.",
       "daily": "La organización ya creó 100 invitaciones en las últimas 24 horas. Inténtalo más tarde.",
       "denied": "No tienes permiso para invitar con esos roles.",
-      "notSent": "Por ahora la invitación solo queda registrada: el correo con el enlace todavía no se envía.",
+      "notSent": "Le enviaremos un correo con el enlace para aceptar. El enlace vale 7 días.",
       "submit": "Invitar",
       "busy": "Invitando…",
       "cancel": "Cancelar",
-      "done": "Invitación a {email} registrada. Todavía no se envía ningún correo."
+      "done": "Invitación a {email} registrada. En unos minutos le llegará el correo con el enlace."
     },
     "revoke": {
       "open": "Revocar",
