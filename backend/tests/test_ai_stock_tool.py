@@ -8,6 +8,7 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
+from django.apps import apps
 from django.core.exceptions import ImproperlyConfigured
 from django.test import override_settings
 from django.utils import timezone
@@ -115,8 +116,14 @@ def test_the_band_at_its_edges_counts_available_not_on_hand(
 def test_only_live_active_sellable_warehouses_count_and_they_add_up(seller: Any) -> None:
     assert stock(seller, seller.shop.big)[1]["data"]["availability"] == OUT_OF_STOCK  # 300 fuera
     with tenant_scope(ctx(seller.world.a)):
-        put(seller.shop.big, seller.main, 2)
+        other = ProductVariant.objects.get(product=seller.shop.red, is_default=True)
+        put(other, seller.main, 50)  # otra variante: no es de esta
         put(seller.shop.big, seller.side, 2)
+    done, body = stock(seller, seller.shop.big)
+    assert body["data"]["availability"] == FEW_UNITS and done.evidence is not None
+    assert dict(done.evidence.facts) == {"available": 2}
+    with tenant_scope(ctx(seller.world.a)):
+        put(seller.shop.big, seller.main, 2)
     done, body = stock(seller, seller.shop.big)
     assert body["data"]["availability"] == AVAILABLE and done.evidence is not None
     assert dict(done.evidence.facts) == {"available": 4}
@@ -176,6 +183,14 @@ def test_the_exact_number_stays_in_immutable_evidence_never_in_the_envelope_or_l
     with pytest.raises(dataclasses.FrozenInstanceError):
         evidence.facts = {}
     assert dict(evidence.facts) == {"available": SENTINEL}
+    assert hash(evidence) == hash(dataclasses.replace(evidence, facts={}))  # sigue siendo hashable
+
+
+@pytest.mark.parametrize("value", [0, "3", True])
+def test_a_bad_threshold_also_stops_the_startup(value: Any) -> None:
+    with override_settings(AI_STOCK_FEW_UNITS=value), pytest.raises(ImproperlyConfigured):
+        apps.get_app_config("ai_agents").ready()
+    apps.get_app_config("ai_agents").ready()  # con el valido arranca
 
 
 def test_no_output_carries_warehouses_locations_or_quantities(seller: Any) -> None:

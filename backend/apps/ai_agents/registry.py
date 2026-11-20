@@ -84,8 +84,10 @@ class Evidence:  # en el servidor: no se serializa hacia el modelo
     as_of: datetime
     subjects: tuple[UUID, ...]
     # Lo exacto para el vendedor (F8-07d: el stock): de solo lectura, fuera del sobre, del `meta`,
-    # del log y del `repr`.
-    facts: Mapping[str, int | None] = field(default_factory=_no_facts, repr=False)
+    # del log y del `repr`; fuera de la igualdad y del hash (la evidencia sigue siendo hashable).
+    facts: Mapping[str, int | None] = field(
+        default_factory=_no_facts, repr=False, compare=False, hash=False
+    )
 
 
 @dataclass(frozen=True)
