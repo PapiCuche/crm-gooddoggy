@@ -191,28 +191,32 @@ forbidden_modules = [
 # a la auditoría) lo sostiene el contrato de F8-08b. F8-08d: solo el contexto del copiloto lee los
 # mensajes con `conversations.selectors.messages`, como pide ADR-034 §7; ese módulo importa
 # contactos y medios para otras lecturas que el contexto no usa, y que solo `apps` importe
-# `context` lo sostiene el contrato de F8-08d.
+# `context` lo sostiene el contrato de F8-08d. F8-08g (#1024): el runtime del copiloto llama al
+# modelo solo por `gateway.complete` (ADR-034 §2: toda llamada pasa por `ai_gateway`), que abre la
+# clave y mira el interruptor. La excepción es solo esa arista: otro módulo de `ai_agents` que
+# importe el gateway sigue rompiendo este contrato. Los demás contratos no cambian.
 ignore_imports = [
     "apps.ai_agents.records -> apps.audit.services",
     "apps.ai_agents.context -> apps.conversations.selectors",
+    "apps.ai_agents.copilot -> apps.ai_gateway.gateway",
 ]
 
 [[tool.importlinter.contracts]]
 # F8-08d: ese `ignore_imports` quita la arista para todo el grafo; sin este contrato, cualquier
 # módulo de `ai_agents` llegaría a contactos y a `core.sealed` a través de `context`. Solo el
-# arranque lo importa; el runtime del copiloto (F8-08g, #1024) se añadirá aquí a propósito. Que
-# ningún módulo de `ai_agents` importe `apps.ai_agents.apps` lo sostiene el contrato siguiente.
-name = "Solo apps.ai_agents.apps importa el contexto del copiloto (F8-08d)"
+# arranque y, a propósito, el runtime del copiloto (F8-08g, #1024) lo importan. Que ningún módulo
+# de `ai_agents` importe `apps.ai_agents.apps` lo sostiene el contrato siguiente.
+name = "Solo apps.ai_agents.apps y el runtime importan el contexto del copiloto (F8-08d, F8-08g)"
 type = "protected"
 protected_modules = ["apps.ai_agents.context"]
-allowed_importers = ["apps.ai_agents.apps"]
+allowed_importers = ["apps.ai_agents.apps", "apps.ai_agents.copilot"]
 
 [[tool.importlinter.contracts]]
 # F8-08d: cierra el resto del contrato anterior; nada de `ai_agents` importa su arranque (y así
 # `context`). El runtime (F8-08g, #1024) entra aquí al crearse.
 name = "Ningún módulo de ai_agents importa su arranque (F8-08d)"
 type = "forbidden"
-source_modules = ["apps.ai_agents.tools", "apps.ai_agents.registry", "apps.ai_agents.fields", "apps.ai_agents.models", "apps.ai_agents.migrations", "apps.ai_agents.records", "apps.ai_agents.context", "apps.ai_agents.guard", "apps.ai_agents.detectors"]
+source_modules = ["apps.ai_agents.tools", "apps.ai_agents.registry", "apps.ai_agents.fields", "apps.ai_agents.models", "apps.ai_agents.migrations", "apps.ai_agents.records", "apps.ai_agents.context", "apps.ai_agents.guard", "apps.ai_agents.detectors", "apps.ai_agents.copilot"]
 forbidden_modules = ["apps.ai_agents.apps"]
 
 [[tool.importlinter.contracts]]

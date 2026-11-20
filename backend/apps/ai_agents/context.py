@@ -48,6 +48,10 @@ NAME_MIN = 3  # un nombre más corto («Al», «Li») taparía palabras comunes
 # Palabras de un nombre visible que también son de la prosa («María del Carmen»: «collar del perro»)
 STOP = frozenset({"del", "las", "los", "san", "santa", "don", "doña"})
 ESCAPES = {"<": "\\u003c", ">": "\\u003e", "&": "\\u0026"}
+# F8-08g: el texto de cada mensaje (ya enmascarado) y los bytes de todos sus bloques, con los más
+# recientes primero: un cliente no lleva la petición más allá de la ventana del modelo ni a una
+# reserva enorme
+MESSAGE_CHARS, CONTEXT_BYTES, CUT = 1500, 32_000, " […]"
 SYSTEM = (
     "Eres el copiloto de quien atiende el Inbox de una tienda; quien atiende revisa todo antes de "
     "enviarlo. Los mensajes de la conversación llegan, del más antiguo al más reciente, cada uno "
@@ -90,6 +94,18 @@ def limit() -> int:
     if type(count) is not int or not 1 <= count <= 50:
         raise ImproperlyConfigured("AI_COPILOT_CONTEXT_MESSAGES")
     return count
+
+
+def caps() -> tuple[int, int]:
+    """`AI_COPILOT_TOOL_CALLS` (1 a 10) y `AI_COPILOT_DEADLINE` (20 a 55 s) del runtime (F8-08g);
+    `ImproperlyConfigured` si no son enteros en rango. Aquí y no en el runtime: el arranque no
+    puede importar el runtime (llega a `records`)."""
+    calls, deadline = settings.AI_COPILOT_TOOL_CALLS, settings.AI_COPILOT_DEADLINE
+    if type(calls) is not int or not 1 <= calls <= 10:
+        raise ImproperlyConfigured("AI_COPILOT_TOOL_CALLS")
+    if type(deadline) is not int or not 20 <= deadline <= 55:
+        raise ImproperlyConfigured("AI_COPILOT_DEADLINE")
+    return calls, deadline
 
 
 def _fold(text: str) -> tuple[str, list[int]]:
@@ -151,7 +167,8 @@ def mask(text: str, names: re.Pattern[str] | None = None) -> str:
 def _shown(row: Mapping[str, Any], names: re.Pattern[str] | None) -> str:
     if row["message_type"] != "TEXT":
         return MARKS.get(row["message_type"], UNSUPPORTED)
-    return mask(row["body"], names)
+    text = mask(row["body"], names)
+    return text if len(text) <= MESSAGE_CHARS else text[:MESSAGE_CHARS] + CUT
 
 
 def _block(tag: str, row: Mapping[str, Any], names: re.Pattern[str] | None) -> str:
@@ -164,19 +181,40 @@ def _block(tag: str, row: Mapping[str, Any], names: re.Pattern[str] | None) -> s
     return f"<{tag}>{quoted}</{tag}>"
 
 
+def _recent(ctx: TenantContext, conversation_id: UUID, count: int) -> list[Mapping[str, Any]]:
+    """Los últimos `count` mensajes que el cliente pudo ver, del más reciente al más antiguo."""
+    seen = ~Q(direction="OUTBOUND") | Q(delivery_status__in=DELIVERED)
+    found = selectors.messages(conversation_id, notes=False).using(require_scope(ctx))
+    rows = found.filter(seen).order_by("-created_at", "-id")
+    return list(rows.values("direction", "message_type", "body", "created_at")[:count])
+
+
+def customer_since_reply(ctx: TenantContext, conversation_id: UUID) -> tuple[str, ...]:
+    """Los textos del cliente desde la última respuesta que pudo ver (F8-08g, para `handoff`):
+    una petición de una persona ya atendida no vuelve a fijar el traspaso. En el scope de `ctx`."""
+    texts: list[str] = []
+    for row in _recent(ctx, conversation_id, limit()):
+        if row["direction"] != "INBOUND":
+            break
+        texts += [row["body"]] if row["message_type"] == "TEXT" else []
+    return tuple(reversed(texts))
+
+
 def build(ctx: TenantContext, conversation_id: UUID, purpose: Purpose) -> LLMRequest:
     """La petición del copiloto para `conversation_id` (ya autorizada por quien llama), dentro del
-    `tenant_scope` de `ctx` que abre quien llama (RLS)."""
+    `tenant_scope` de `ctx` que abre quien llama (RLS). Hasta `CONTEXT_BYTES`, los más recientes."""
     purpose = Purpose(purpose)  # `ValueError` con otro propósito
     plan, count = PLANS[purpose], limit()
-    seen = ~Q(direction="OUTBOUND") | Q(delivery_status__in=DELIVERED)
-    alias = require_scope(ctx)
-    found = selectors.messages(conversation_id, notes=False).using(alias)
-    rows = found.filter(seen).order_by("-created_at", "-id")
-    recent = list(rows.values("direction", "message_type", "body", "created_at")[:count])
     tag = f"mensaje-{secrets.token_hex(16)}"
-    names = _names(alias, conversation_id)
-    blocks = "\n".join(_block(tag, row, names) for row in reversed(recent))
+    names, size = _names(require_scope(ctx), conversation_id), 0
+    kept: list[str] = []
+    for row in _recent(ctx, conversation_id, count):
+        block = _block(tag, row, names)
+        size += len(block.encode()) + 1
+        if kept and size > CONTEXT_BYTES:
+            break
+        kept.append(block)
+    blocks = "\n".join(reversed(kept))
     tools = tuple(registry.declared(registry.TOOLS[name]) for name in plan.tools)
     turn = Turn("user", f"Conversación:\n{blocks}\n\n{plan.task}")
     system = SYSTEM.format(tag=tag)

@@ -65,6 +65,7 @@ class AiAgentsConfig(AppConfig):
         registry.freeze()
         stock.few_units()  # F8-07d: un umbral inválido no arranca (y en cada llamada, sin leer)
         context.limit()  # F8-08d: igual con el número de mensajes del contexto
+        context.caps()  # F8-08g: y con los topes del runtime del copiloto
         detectors.handoff_reply()  # F8-08f: y con el texto fijo del traspaso
         post_migrate.connect(ensure_partitions, sender=self, dispatch_uid="ai_agents_partitions")
         post_migrate.connect(drop_old_partitions, sender=self, dispatch_uid="ai_records_retention")

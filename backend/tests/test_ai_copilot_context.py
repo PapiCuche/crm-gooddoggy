@@ -319,10 +319,12 @@ def test_only_the_context_may_reach_the_message_selector_past_the_import_contrac
     assert mine["ignore_imports"] == [
         "apps.ai_agents.records -> apps.audit.services",
         "apps.ai_agents.context -> apps.conversations.selectors",
+        "apps.ai_agents.copilot -> apps.ai_gateway.gateway",  # F8-08g: el modelo, por el gateway
     ]
     # y como esa excepción vale para todo el grafo, solo el arranque importa `context`
     [guard] = [c for c in contracts if c.get("protected_modules") == ["apps.ai_agents.context"]]
-    assert (guard["type"], guard["allowed_importers"]) == ("protected", ["apps.ai_agents.apps"])
+    allowed = ["apps.ai_agents.apps", "apps.ai_agents.copilot"]  # F8-08g: el runtime, a propósito
+    assert (guard["type"], guard["allowed_importers"]) == ("protected", allowed)
     # y ningún módulo de `ai_agents` (todos clasificados) importa el arranque
     [boot] = [c for c in contracts if c.get("forbidden_modules") == ["apps.ai_agents.apps"]]
     package = importlib.import_module("apps.ai_agents")
