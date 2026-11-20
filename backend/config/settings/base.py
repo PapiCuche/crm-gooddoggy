@@ -455,6 +455,9 @@ AI_STOCK_FEW_UNITS = 3
 # F8-08d (ADR-034 §7): cuántos mensajes recientes visibles para el cliente lee el copiloto; un
 # valor que no sea un entero de 1 a 50 no arranca.
 AI_COPILOT_CONTEXT_MESSAGES = 20
+# F8-08k (D-F8-05): el job de migraciones quita el detalle de la IA de más de 12 meses completos.
+# Apagado hasta que el propietario lo confirme con datos reales en producción; encenderlo es un PR.
+AI_RECORDS_RETENTION = False
 # Correo saliente (ADR-019): SMTP por entorno, sin proveedor fijado. Solo `core.mail` lo usa.
 # El backend por defecto de Django no envía nada: lo que no pasa por `core.mail` (el aviso a
 # `ADMINS` de `AdminEmailHandler`, `django.core.mail.send_mail`) no abre una conexión SMTP.

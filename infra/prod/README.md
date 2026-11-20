@@ -119,6 +119,8 @@ sudo systemctl daemon-reload && sudo systemctl enable --now crm-migrate.timer
 systemctl list-timers crm-migrate.timer   # la próxima ejecución; el resultado, en journalctl -u crm-migrate
 ```
 
+El mismo `migrate` quita el detalle de la IA de más de 12 meses completos (F8-08k, D-F8-05) cuando `AI_RECORDS_RETENTION` está encendido en `config/settings/base.py` (apagado por omisión). Como guarda el mes UTC entero y el temporizador corre el día 15, en la práctica el detalle dura hasta unos 13,5 meses, y unos 14,5 si se salta una ejecución. Si una tabla está ocupada más de 5 s, avisa en el log (`ai.records_retention_lock_busy`) y lo deja para el siguiente `migrate`.
+
 ## Backup nocturno y despliegues
 
 El backup nocturno (`backup.sh nightly`) toma el mismo lock que `deploy.sh`, `/var/lib/crm-deploy/lock`. Mientras dura, ningún despliegue arranca. Si un despliegue lo tiene, el backup espera hasta una hora (`BACKUP_LOCK_WAIT`). Si sigue puesto, porque un despliegue se cortó y lo dejó, el backup falla con `backup.failed` (`stage=deploy_lock`) y avisa. `backup.sh predeploy` no lo toma: lo lanza `deploy.sh`, que ya lo tiene.
