@@ -458,6 +458,14 @@ AI_COPILOT_CONTEXT_MESSAGES = 20
 # F8-08e (ADR-034 §9): segundos que vale la evidencia de precio y stock para el Output Guard; un
 # valor fijo en configuración, entero de 1 a 600 (10 minutos como mucho), o el guard falla cerrado.
 AI_EVIDENCE_TTL = 600
+# F8-08f (ADR-034 §8): con traspaso, la sugerencia es siempre este texto, nunca el del modelo.
+# PENDIENTE DEL PROPIETARIO (#771): redacción neutra propuesta por el programa, sin plazos ni
+# promesas; el propietario la cambia por PR. Con una cifra, un plazo, un enlace o la marca, no
+# arranca.
+AI_HANDOFF_REPLY = (
+    "Gracias por escribirnos. Una persona de nuestro equipo va a continuar con tu consulta por "
+    "este medio."
+)
 # F8-08k (D-F8-05): el job de migraciones quita el detalle de la IA de más de 12 meses completos.
 # Apagado hasta que el propietario lo confirme con datos reales en producción; encenderlo es un PR.
 AI_RECORDS_RETENTION = False

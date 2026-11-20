@@ -374,8 +374,8 @@ def test_the_migration_goes_back_and_forward(crm: SimpleNamespace, migrator: DB)
         call_command("migrate", "ai_gateway", "zero", verbosity=0)
     assert migrator.execute(exists).fetchone() == (False,)
     assert migrator.execute(function).fetchone() == (0,)
-    with as_migrator():
-        call_command("migrate", "ai_gateway", verbosity=0)
+    with as_migrator():  # todas: `zero` deshizo también ai_agents 0002+ (depende de ai_gateway)
+        call_command("migrate", verbosity=0)
     assert migrator.execute(exists).fetchone() == (True,)
     assert migrator.execute(function).fetchone() == (1,)
     signature = "public.ai_provider_keys_stale_organizations(integer, integer)"
