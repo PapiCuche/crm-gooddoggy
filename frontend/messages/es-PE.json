@@ -1724,6 +1724,7 @@
     },
     "seenBy": "Quién la ve: {audience}",
     "default": "Predeterminada",
+    "aiCited": "La IA puede citarla",
     "active": "Activa",
     "inactive": "Inactiva",
     "order": "Orden {order}",
@@ -1745,8 +1746,6 @@
       "is_active": "Activa (una lista inactiva no se ofrece)",
       "is_default": "Predeterminada (la que se usa si no se elige otra)",
       "defaultHint": "Sin marcarla, la primera lista activa que ven todos pasa a ser la predeterminada.",
-      "ai": "IA pública",
-      "aiHint": "No tiene efecto hasta la Fase 8, cuando un agente de IA pueda dar precios a los clientes.",
       "save": "Guardar",
       "busy": "Guardando…",
       "cancel": "Cancelar",
@@ -1762,6 +1761,16 @@
       "denied": "No tienes permiso para administrar listas de precios.",
       "done": "Lista «{name}» {created, select, true {creada} other {guardada}}.",
       "doneStale": "Lista «{name}» {created, select, true {creada} other {guardada}}, pero la vista no se pudo actualizar. Recarga la página para verla."
+    },
+    "ai": {
+      "label": "La IA puede citar sus precios",
+      "labelFor": "La IA puede citar los precios de {name}",
+      "hint": "Solo lo decides tú, con tu código de segundo factor. Sin ninguna lista marcada, la IA no da precios.",
+      "on": "La IA ya puede citar los precios de «{name}».",
+      "off": "La IA ya no cita los precios de «{name}».",
+      "PERMISSION_DENIED": "No tienes permiso para decidir qué listas cita la IA.",
+      "VALIDATION_ERROR": "La lista interna nunca la cita la IA.",
+      "failed": "No se pudo cambiar si la IA cita «{name}». Vuelve a intentarlo."
     }
   },
   "prices": {

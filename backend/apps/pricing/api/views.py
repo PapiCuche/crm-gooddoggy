@@ -2,7 +2,9 @@
 
 Leer pide `prices.view`, y cada lista sale solo si el actor tiene su `required_permission` o
 `prices.manage`: la que no ve da el mismo 404 que una que no existe. Crear y cambiar piden
-`prices.manage`.
+`prices.manage` y no aceptan `ai_exposable`: qué listas cita la IA lo decide el propietario en
+`…/ai-exposable/` (F8-07b, D-F8-06), con `ai.manage`, el segundo factor reciente y el tope por
+persona de las escrituras de IA (`apps.ai_gateway.throttle`).
 """
 
 from collections.abc import Mapping
@@ -17,12 +19,13 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.access.permissions import request_context
+from apps.access.permissions import rbac_errors, request_context
 from apps.pricing import price_lists as commands
 from apps.pricing.models import READ_PERMISSIONS, PriceList
 from apps.pricing.selectors import visible_price_lists
 from core.api.errors import ApiError
 from core.api.schema import errors
+from core.api.strict import Closed, Flag
 from core.tenancy import context
 
 CODE_IN_USE = "Ya hay una lista con ese código en la organización."
@@ -32,7 +35,9 @@ RESTRICTED = "La predeterminada la ve quien ve precios: debe pedir `prices.view`
 IMMUTABLE = "No se puede cambiar: crea otra lista si hace falta."
 PERMISSION = "Quién la ve. Si no se envía, sale del tipo: mayorista, distribuidor, interno o "
 PERMISSION += "`prices.view`."
-AI = "Si un agente de IA de cara al cliente podrá comunicar sus precios (Fase 8)."
+AI = "Si la IA puede citar sus precios. Lo cambia `PUT …/ai-exposable/` (`ai.manage`)."
+AI_ONLY_THERE = "Lo decide quien tiene `ai.manage`, en `PUT …/price-lists/{id}/ai-exposable/`."
+AI_INTERNAL = "La lista interna nunca la cita la IA."
 
 
 def _tenant() -> Any:
@@ -77,7 +82,6 @@ class PriceListUpdateSerializer(serializers.Serializer[Any]):
     kind = serializers.ChoiceField(choices=PriceList.Kind.choices, required=False)
     is_default = serializers.BooleanField(required=False)
     required_permission = serializers.ChoiceField(choices=READ_PERMISSIONS, required=False)
-    ai_exposable = serializers.BooleanField(required=False)
     payment_condition = serializers.ChoiceField(
         choices=PriceList.PaymentCondition.choices, allow_null=True, required=False
     )
@@ -100,6 +104,16 @@ class PriceListCreateSerializer(PriceListUpdateSerializer):
         return str(_checked(commands.price_list_code, value))
 
 
+class PriceListAiExposableSerializer(Closed, serializers.Serializer[Any]):
+    ai_exposable = Flag(help_text="Exactamente `true` o `false`.")
+
+
+def _refuse_ai_exposable(data: Any) -> None:
+    """Un cliente que aún lo envía al crear o cambiar recibe 400 en el campo, no un silencio."""
+    if isinstance(data, Mapping) and "ai_exposable" in data:
+        raise serializers.ValidationError({"ai_exposable": [AI_ONLY_THERE]})
+
+
 @extend_schema_view(
     get=extend_schema(
         operation_id="price_lists_list",
@@ -115,7 +129,8 @@ class PriceListCreateSerializer(PriceListUpdateSerializer):
         responses={201: PriceListSerializer, **errors(400, 401, 403, 404, 409)},
         description="Crea una lista. Es la predeterminada de su moneda si se pide (la anterior "
         "deja de serlo) o, sin `is_default`, si es la primera activa con `prices.view`; solo "
-        "una así puede serlo (400 en `is_default`). 409 `PRICE_LIST_CODE_TAKEN`.",
+        "una así puede serlo (400 en `is_default`). 409 `PRICE_LIST_CODE_TAKEN`. `ai_exposable` "
+        "da 400 en ese campo: va por `…/ai-exposable/`.",
     ),
 )
 class PriceListsView(generics.ListAPIView):
@@ -126,6 +141,7 @@ class PriceListsView(generics.ListAPIView):
         return _visible(self.request)
 
     def post(self, request: Request, **kwargs: Any) -> Response:
+        _refuse_ai_exposable(request.data)
         wanted = PriceListCreateSerializer(data=request.data)
         wanted.is_valid(raise_exception=True)
         try:
@@ -163,7 +179,8 @@ class PriceListView(APIView):
         "cambian. `is_default=true` la hace la predeterminada de su moneda (la anterior deja de "
         "serlo); debe estar activa y pedir `prices.view` (400 en `is_default`). 409 "
         "`PRICE_LIST_IS_DEFAULT`: la predeterminada no se desactiva, no deja de serlo ni cambia "
-        "de `required_permission`; antes hay que elegir otra.",
+        "de `required_permission`; antes hay que elegir otra. `ai_exposable` da 400 en ese "
+        "campo: va por `…/ai-exposable/`.",
     )
     def patch(self, request: Request, price_list_id: UUID, **kwargs: Any) -> Response:
         # Un cuerpo que no es un objeto (`5`, `null`, una lista) lo rechaza el serializador.
@@ -171,6 +188,7 @@ class PriceListView(APIView):
         fixed = [field for field in ("code", "currency") if field in sent]
         if fixed:
             raise serializers.ValidationError({field: [IMMUTABLE] for field in fixed})
+        _refuse_ai_exposable(sent)
         wanted = PriceListUpdateSerializer(data=request.data)
         wanted.is_valid(raise_exception=True)
         try:
@@ -185,4 +203,35 @@ class PriceListView(APIView):
             raise serializers.ValidationError({"is_default": [INACTIVE]}) from None
         except commands.RestrictedDefault:
             raise serializers.ValidationError({"is_default": [RESTRICTED]}) from None
+        return Response(PriceListSerializer(price_list).data)
+
+
+class PriceListAiExposableView(APIView):
+    """F8-07b (D-F8-06). La organización es la de la ruta; el cuerpo solo trae `ai_exposable`."""
+
+    required_permissions = {"PUT": commands.AI_MANAGE}
+    step_up_methods = {"PUT"}
+
+    @extend_schema(
+        operation_id="price_lists_ai_exposable",
+        tags=["pricing"],
+        request=PriceListAiExposableSerializer,
+        responses={200: PriceListSerializer, **errors(400, 401, 403, 404, 429)},
+        description="Marca o desmarca la lista como citable por la IA (`ai.manage` y segundo "
+        "factor reciente) y lo audita (`price_list.ai_exposable_changed`, antes y después); "
+        "igual que estaba, no cambia nada. La interna da 400 en `ai_exposable`. 404: no existe, "
+        "está borrada o no es de la organización. 429 `RATE_LIMITED`: el tope por persona de "
+        "las escrituras de IA, con `Retry-After`.",
+    )
+    def put(self, request: Request, price_list_id: UUID, **kwargs: Any) -> Response:
+        wanted = PriceListAiExposableSerializer(data=request.data)
+        wanted.is_valid(raise_exception=True)
+        exposable = wanted.validated_data["ai_exposable"]
+        try:
+            with rbac_errors():
+                price_list = commands.set_ai_exposable(
+                    _tenant(), price_list_id=price_list_id, exposable=exposable
+                )
+        except commands.InternalList:
+            raise serializers.ValidationError({"ai_exposable": [AI_INTERNAL]}) from None
         return Response(PriceListSerializer(price_list).data)

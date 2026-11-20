@@ -9,18 +9,20 @@ import { getPriceListsListQueryKey, priceListsList } from "@/lib/api/client";
 import type { PriceList } from "@/lib/api/model";
 import { cn } from "@/lib/utils";
 
+import { AI_MANAGE, isInternal, PriceListAi } from "./price-list-ai";
 import { audienceKey, PriceListForm } from "./price-list-form";
 
 // Listas de precios de la organización (F3-41): lo que devuelve `GET …/pricing/price-lists/`
 // (F3-40b), activas o no, por orden de creación. La API solo trae las que el actor ve (su
 // `required_permission`, o todas con `prices.manage`). La lista, sus estados y su foco son los
-// de `CursorList`.
+// de `CursorList`. Quién tiene `ai.manage` decide en cada lista si la IA puede citarla (F8-07b).
 export function PriceLists() {
   const t = useTranslations("priceLists");
   const { organization, permissions } = useTenant();
   const slug = organization.slug;
   // Comodidad: crear y editar se ofrecen a quien la API dijo que tiene `prices.manage`.
   const canManage = permissions.some((grant) => grant.code === "prices.manage");
+  const canAi = permissions.some((grant) => grant.code === AI_MANAGE);
   const listKey = [...getPriceListsListQueryKey(slug), "pages"];
   const list = useRef<CursorListHandle>(null);
   // Lo que respondió la última escritura. Una lista que ya no se ve (`alert`) se explica aquí.
@@ -51,9 +53,9 @@ export function PriceLists() {
         priceListsList(slug, cursor ? { cursor } : undefined, { signal })
       }
       notice={
-        canManage ? (
+        canManage || canAi ? (
           <>
-            {form()}
+            {canManage ? form() : null}
             {/* Montado desde el principio: un lector de pantalla lo anuncia cuando cambia. */}
             <p role="status" className={said && !said.alert ? "text-sm wrap-anywhere" : "sr-only"}>
               {said && !said.alert ? said.text : ""}
@@ -84,11 +86,24 @@ export function PriceLists() {
           </p>
           <p className="flex flex-wrap gap-x-3 text-sm sm:flex-col sm:items-end">
             {row.is_default ? <span className="font-medium">{t("default")}</span> : null}
+            {row.ai_exposable ? <span className="font-medium">{t("aiCited")}</span> : null}
             <span className={cn("font-medium", row.is_active ? "text-success" : "text-muted")}>
               {t(row.is_active ? "active" : "inactive")}
             </span>
             <span className="text-muted tabular-nums">{t("order", { order: row.sort_order })}</span>
           </p>
+          {canAi && !isInternal(row) ? (
+            <div className="sm:col-span-2">
+              <PriceListAi
+                slug={slug}
+                row={row}
+                listKey={listKey}
+                onDone={(text) => setSaid({ text })}
+                onAlert={(text) => setSaid({ text, alert: true })}
+                onStale={stale}
+              />
+            </div>
+          ) : null}
           {canManage ? <div className="sm:col-span-2">{form(row)}</div> : null}
         </>
       )}

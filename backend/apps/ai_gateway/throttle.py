@@ -1,6 +1,7 @@
 """Tope de escrituras de cada persona en las rutas de cuentas del proveedor de IA (F8-03d; ADR-034
 §4) y en la de los topes de gasto (F8-05b3), como el de las cuentas de WhatsApp (F7-02e): la prueba
-de conexión llama al proveedor cada vez, así que nadie la repite en bucle. Cuentan las escrituras
+de conexión llama al proveedor cada vez, así que nadie la repite en bucle; y en la que decide qué
+listas de precios cita la IA (F8-07b). Cuentan las escrituras
 (POST, PUT y DELETE: guardar, rotar, borrar, probar, fijar los topes y cambiar el modelo), que
 comparten el contador; GET y HEAD no cuentan (decisión del propietario del 2026-11-17, F8-03e): leer
 no llama al proveedor y sigue pidiendo `ai.manage` y el segundo factor. OPTIONS tampoco cuenta: las
@@ -29,8 +30,12 @@ from django.http import HttpRequest, HttpResponse
 
 from core.api.errors import error_response
 
-# Encender la IA cuenta (F8-06); apagarla, nunca (`…/ai/switch/off/`, ADR-034 §5).
-PATH = re.compile(r"^/api/v1/o/[^/]+/ai/(provider-accounts/|budget/|switch/on/)")
+# Encender la IA cuenta (F8-06); apagarla, nunca (`…/ai/switch/off/`, ADR-034 §5). Marcar qué
+# listas de precios cita la IA (F8-07b) cuenta también; las demás rutas de precios, no.
+PATH = re.compile(
+    r"^/api/v1/o/[^/]+/(ai/(provider-accounts/|budget/|switch/on/)"
+    r"|pricing/price-lists/[^/]+/ai-exposable/$)"
+)
 READS = ("GET", "HEAD", "OPTIONS")  # las que no cuentan; las demás, sí (F8-03e)
 _COUNT = """
 INSERT INTO login_throttles AS t (key, failures, blocked_until, updated_at)

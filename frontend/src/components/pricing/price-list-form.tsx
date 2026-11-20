@@ -109,18 +109,17 @@ export function PriceListForm(props: {
   const pick = (change: Partial<Picked>) => setPicked((now) => now && { ...now, ...change });
   const title = priceList ? t("editLabel", { name: priceList.name }) : t("title");
   const id = useId();
-  // «IA pública» (`ai`) se enseña sin poder cambiarse: no tiene efecto hasta la Fase 8.
-  const toggle = (name: "is_active" | "is_default" | "ai", hint?: string) => (
+  // Si la IA puede citarla no se decide aquí: lo cambia quien tiene `ai.manage` (F8-07b).
+  const toggle = (name: "is_active" | "is_default", hint?: string) => (
     <div className="flex flex-col gap-1">
-      <label className="has-disabled:text-muted flex min-h-11 items-center gap-2 text-sm sm:min-h-9">
+      <label className="flex min-h-11 items-center gap-2 text-sm sm:min-h-9">
         <input
           type="checkbox"
           className="size-4 shrink-0"
-          checked={name === "ai" ? (priceList?.ai_exposable ?? false) : picked![name]}
-          disabled={name === "ai"}
+          checked={picked![name]}
           aria-disabled={busy}
           aria-describedby={hint ? `${id}-${name}` : undefined}
-          onChange={() => busy || name === "ai" || pick({ [name]: !picked![name] })}
+          onChange={() => busy || pick({ [name]: !picked![name] })}
         />
         {t(name)}
       </label>
@@ -197,7 +196,6 @@ export function PriceListForm(props: {
               />
               {toggle("is_active")}
               {toggle("is_default", priceList ? undefined : t("defaultHint"))}
-              {toggle("ai", t("aiHint"))}
             </>
           }
           write={write}
