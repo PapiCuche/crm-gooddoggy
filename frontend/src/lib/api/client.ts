@@ -10312,7 +10312,7 @@ export const getInvitationsCreateUrl = (orgSlug: string) => {
 };
 
 /**
- * Deja creada la invitación de una persona, pendiente y con los roles que tendrá al aceptar, y pide su correo, que sale después con el enlace. 400: correo al que no se puede escribir, o `role_ids` vacío, con un rol repetido o que no es de la organización. 403: sin `users.invite` y `users.manage`, o con un rol que el actor no podría asignar. 409: `ALREADY_MEMBER`, `INVITATION_PENDING`, `INVITATION_LIMIT` (50 pendientes) o `LAST_OWNER` (la organización no tiene rol Owner y no admite ningún cambio). 429: 100 invitaciones en 24 h, o `INVITATION_SEND_TOO_SOON` con `Retry-After`: la organización envió una invitación a ese correo hace menos de 15 minutos.
+ * Deja creada la invitación de una persona (201), pendiente y con los roles que tendrá al aceptar, y pide su correo, que sale después con el enlace. Si el correo tiene una pendiente, la renueva (200, F2-130e). 400: correo al que no se puede escribir, o `role_ids` vacío, con un rol repetido o que no es de la organización. 403: sin `users.invite` y `users.manage`, o con un rol que el actor no podría asignar (al renovar, también los que tenía). 409: `ALREADY_MEMBER`, `INVITATION_SEND_LIMIT`, `INVITATION_LIMIT` (50 pendientes) o `LAST_OWNER` (la organización no tiene rol Owner y no admite ningún cambio). 429: 100 invitaciones en 24 h; con `Retry-After`, `INVITATION_ADDRESS_LIMIT` o `INVITATION_SEND_TOO_SOON` (ver el reenvío).
  */
 export const invitationsCreate = async (
   orgSlug: string,
@@ -10409,6 +10409,93 @@ export const useInvitationsCreate = <TError = ErrorType<Error>, TContext = unkno
   TContext
 > => {
   return useMutation(getInvitationsCreateMutationOptions(options), queryClient);
+};
+
+export const getInvitationsResendUrl = (orgSlug: string, invitationId: string) => {
+  return `/api/v1/o/${orgSlug}/invitations/${invitationId}/resend/`;
+};
+
+/**
+ * Reenvía una invitación pendiente, caducada o no: la renueva con sus roles y las reglas de
+ * invitar (ADR-020 §1). El enlace anterior deja de valer. 409: `INVALID_TRANSITION`,
+ * `ALREADY_MEMBER`, `INVITATION_SEND_LIMIT` (5 envíos), `INVITATION_ROLE_GONE` o `LAST_OWNER`.
+ * 429 con `Retry-After`: `INVITATION_ADDRESS_LIMIT` (3 envíos a ese correo en 24 h) o
+ * `INVITATION_SEND_TOO_SOON` (15 minutos entre dos).
+ */
+export const invitationsResend = async (
+  orgSlug: string,
+  invitationId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<Invitation> => {
+  return apiFetch<Invitation>(getInvitationsResendUrl(orgSlug, invitationId), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getInvitationsResendMutationKey = () => ["invitationsResend"] as const;
+
+export const getInvitationsResendMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof invitationsResend>>,
+    TError,
+    InvitationsResendMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof invitationsResend>>,
+  TError,
+  InvitationsResendMutationVariables,
+  TContext
+> => {
+  const mutationKey = getInvitationsResendMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof invitationsResend>>,
+    InvitationsResendMutationVariables
+  > = (props) => {
+    const { orgSlug, invitationId } = props ?? {};
+
+    return invitationsResend(orgSlug, invitationId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type InvitationsResendMutationResult = NonNullable<
+  Awaited<ReturnType<typeof invitationsResend>>
+>;
+
+export type InvitationsResendMutationError = ErrorType<Error>;
+export type InvitationsResendMutationVariables = { orgSlug: string; invitationId: string };
+
+export const useInvitationsResend = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof invitationsResend>>,
+      TError,
+      InvitationsResendMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof invitationsResend>>,
+  TError,
+  InvitationsResendMutationVariables,
+  TContext
+> => {
+  return useMutation(getInvitationsResendMutationOptions(options), queryClient);
 };
 
 export const getInvitationsSetStatusUrl = (orgSlug: string, invitationId: string) => {

@@ -5,6 +5,7 @@
  * Contrato de la API del backend. Fuente para el cliente TypeScript (orval).
  * OpenAPI spec version: 0.1.0
  */
+import type { DeliveryEnum } from "./deliveryEnum";
 import type { InvitationStatusEnum } from "./invitationStatusEnum";
 
 export interface Invitation {
@@ -18,4 +19,13 @@ export interface Invitation {
   /** La cuenta que invitó. */
   invited_by: string;
   created_at: string;
+  /**
+   * El último envío.
+   * @nullable
+   */
+  sent_at: string | null;
+  /** Cuántas veces se envió (de 0 a 5). */
+  send_count: number;
+  /** `NOT_DELIVERED`: el último enlace se emitió y contó sin entrega confirmada. */
+  readonly delivery: DeliveryEnum;
 }
