@@ -14,11 +14,11 @@ from uuid import UUID
 
 import psycopg
 import pytest
-from django.db import DatabaseError, connection
+from django.db import DatabaseError, connection, transaction
 from django.utils import timezone
 
 from apps.ai_agents import registry
-from apps.ai_agents.registry import Found, invoke, invoke_read_only
+from apps.ai_agents.registry import Found, invoke, invoke_read_only, read_only_scope
 from apps.ai_agents.tools import catalog, price
 from apps.ai_agents.tools.catalog import SEARCH_PRODUCT
 from apps.ai_gateway.llm import ToolCall
@@ -39,6 +39,7 @@ pytestmark = pytest.mark.usefixtures("tenant_db")
 __all__ = ["shop", "store", "world"]  # los fixtures, para pytest
 SEARCH = ToolCall("toolu_1", "search_product", {"query": "collar"})
 NEW_BRAND = "INSERT INTO brands (id, name) VALUES (gen_random_uuid(), 'Escrita')"
+SESSION = "INSERT INTO django_session VALUES ('b1020', 'x', now() + interval '1 day')"
 
 
 def faked(monkeypatch: Any, handler: Any) -> None:
@@ -109,13 +110,43 @@ def test_a_commit_inside_a_tool_fails_and_its_write_is_rolled_back(
     shop: Any, monkeypatch: Any
 ) -> None:
     allow(shop.world, "products.view")
-    session = "INSERT INTO django_session VALUES ('b1020', 'x', now() + interval '1 day')"
-    faked(monkeypatch, executing("COMMIT", session))  # la siguiente ya es otra transacción
+    faked(monkeypatch, executing("COMMIT", SESSION))  # la siguiente ya es otra transacción
     with pytest.raises(RuntimeError, match="solo lectura"):
         invoke_read_only(ctx(shop.world.a, shop.world.ana), SEARCH)
+    assert sessions() == 0
+
+
+def sessions() -> int:
     with connection.cursor() as cursor:
         cursor.execute("SELECT count(*) FROM django_session WHERE session_key = 'b1020'")
-        assert cursor.fetchone() == (0,)
+        found: int = cursor.fetchone()[0]
+    return found
+
+
+def test_the_scope_never_commits_even_if_the_caller_swallows_the_failure(
+    shop: Any, monkeypatch: Any
+) -> None:
+    allow(shop.world, "products.view")
+    faked(monkeypatch, executing("COMMIT", SESSION))
+    with read_only_scope(ctx(shop.world.a, shop.world.ana)) as ectx:
+        with pytest.raises(RuntimeError, match="solo lectura"):
+            invoke(ectx, SEARCH)  # el fallo se atrapa dentro del scope: aun así, nada queda
+    assert sessions() == 0
+
+
+def test_an_on_commit_callback_of_a_tool_never_runs(shop: Any, monkeypatch: Any) -> None:
+    def handler(ectx: Any, args: Any, as_of: datetime) -> Found:
+        transaction.on_commit(write)  # tras un commit que nunca llega
+        return Found({"products": []}, ())
+
+    def write() -> None:
+        with connection.cursor() as cursor:
+            cursor.execute(SESSION)
+
+    allow(shop.world, "products.view")
+    faked(monkeypatch, handler)
+    assert invoke_read_only(ctx(shop.world.a, shop.world.ana), SEARCH).ok
+    assert sessions() == 0
 
 
 def test_advisory_locks_and_session_settings_are_left_to_the_query_capture(

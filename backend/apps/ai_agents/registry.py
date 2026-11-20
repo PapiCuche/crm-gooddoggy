@@ -28,7 +28,7 @@ from types import MappingProxyType
 from typing import Any
 from uuid import UUID
 
-from django.db import connections
+from django.db import connections, transaction
 
 from apps.access.selectors import (
     AccessDenied,
@@ -343,13 +343,17 @@ def read_only_scope(tenant: TenantContext) -> Iterator[ExecutionContext | None]:
     if current() is not None:
         raise TenantContextError("las tools abren su propio tenant_scope de solo lectura")
     with tenant_scope(tenant):
-        with connections[require_scope(tenant)].cursor() as cursor:
-            cursor.execute("SET TRANSACTION READ ONLY")
+        alias = require_scope(tenant)
         try:
-            ectx: ExecutionContext | None = execution_context(tenant)
-        except AccessDenied:
-            ectx = None
-        yield ectx
+            with connections[alias].cursor() as cursor:
+                cursor.execute("SET TRANSACTION READ ONLY")
+            try:
+                ectx: ExecutionContext | None = execution_context(tenant)
+            except AccessDenied:
+                ectx = None
+            yield ectx
+        finally:  # nunca confirma: lo que un `COMMIT` en la tool o un `on_commit` dejó, se deshace
+            transaction.set_rollback(True, using=alias)
 
 
 def invoke_read_only(tenant: TenantContext, call: llm.ToolCall) -> Invocation:
