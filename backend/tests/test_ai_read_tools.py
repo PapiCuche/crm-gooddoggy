@@ -12,7 +12,17 @@ import pytest
 
 from apps.access.selectors import member_context
 from apps.ai_agents import registry
-from apps.ai_agents.registry import TOOLS, Audience, Found, Risk, ToolRejected, check, invoke
+from apps.ai_agents.registry import (
+    TOOLS,
+    Audience,
+    Found,
+    Risk,
+    ToolRejected,
+    check,
+    invoke,
+    invoke_read_only,
+    read_only_scope,
+)
 from apps.ai_agents.tools.catalog import SEARCH_PRODUCT
 from apps.ai_gateway import turns
 from apps.ai_gateway.llm import LLMRequest, Text, ToolCall, Turn
@@ -38,8 +48,8 @@ LEAKS = ("cost", "margin", "internal", "on_hand", "reserved", "warehouse", "loca
 
 
 def run(world: Any, name: str, data: Any) -> tuple[registry.Invocation, dict[str, Any]]:
-    with acting(world.a, world.ana) as ectx:
-        done = invoke(ectx, ToolCall("toolu_1", name, data))
+    """Por el camino del copiloto (F8-08c): un `tenant_scope` propio de solo lectura."""
+    done = invoke_read_only(ctx(world.a, world.ana), ToolCall("toolu_1", name, data))
     return done, json.loads(done.text)
 
 
@@ -294,7 +304,7 @@ def test_output_outside_its_declared_shape_fails_closed(
     shop: Any, monkeypatch: Any, data: dict[str, Any]
 ) -> None:
     allow(shop.world, "products.view")
-    fake = replace(SEARCH_PRODUCT, handler=lambda ectx, args: Found(data, ()))
+    fake = replace(SEARCH_PRODUCT, handler=lambda ectx, args, as_of: Found(data, ()))
     monkeypatch.setitem(registry._TOOLS, "search_product", fake)
     with pytest.raises(RuntimeError):
         run(shop.world, "search_product", {"query": "collar"})
@@ -336,7 +346,7 @@ def test_no_tool_invocation_writes_or_locks_anything(shop: Any, granted: bool) -
              ("get_product_variants", {"product_id": str(shop.red.pk)}),
              ("get_product_variants", {"product_id": str(shop.foreign.pk)}),
              ("nope", {})]  # fmt: skip
-    with acting(shop.world.a, shop.world.ana) as ectx, captured() as seen:
+    with read_only_scope(ctx(shop.world.a, shop.world.ana)) as ectx, captured() as seen:
         for name, data in calls:
             invoke(ectx, ToolCall("toolu_1", name, data))
     assert writes(seen) == [] and bool(seen) is granted  # sin permiso no se lee nada
