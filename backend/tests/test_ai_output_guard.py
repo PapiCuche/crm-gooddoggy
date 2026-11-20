@@ -21,7 +21,7 @@ from apps.ai_agents import context, guard
 from apps.ai_agents.guard import KINDS, Finding, Malformed, Problem, render, reply_schema
 from apps.ai_agents.registry import TOOLS, Evidence, ToolSpec, invoke_read_only
 from apps.ai_agents.tools.catalog import GET_PRODUCT_VARIANTS, SEARCH_PRODUCT
-from apps.ai_agents.tools.price import GET_PRICE
+from apps.ai_agents.tools.price import GET_PRICE, _cut
 from apps.ai_agents.tools.stock import GET_STOCK, NOT_TRACKED
 from apps.ai_gateway.llm import ToolCall
 from core.tenancy.scope import tenant_scope
@@ -103,13 +103,26 @@ def one(kind: str, path: str, ref: str = "e", **found: Evidence | None) -> guard
     return render(reply("{{c1}}", claim("c1", kind, ref, path)), {**EVIDENCE, **found}, NOW)
 
 
+def codes(template: str, *claims: dict[str, str], **found: Evidence | None) -> list[str]:
+    done = render(reply(template, *claims), {**EVIDENCE, **found}, NOW)
+    marks(done)
+    return [p.code for p in done.problems]
+
+
+def two_promotions() -> Evidence:  # `prices(BIG)` con otra promoción en la fila 1
+    data = prices(BIG)
+    data["prices"][1] |= {"promotion": "Black Friday", "promotion_id": PRICE_ID}
+    data["promotions"].append({"promotion_id": PRICE_ID, "terms": "Solo tarjetas"})
+    return ev(GET_PRICE, data, PRODUCT, BIG)
+
+
 def priced(change: dict[str, Any], **data: Any) -> Evidence:  # `prices(BIG)`, la fila 0 cambiada
     rows = [{**prices(BIG)["prices"][0], **change}, *prices(BIG)["prices"][1:]]
     return ev(GET_PRICE, {**prices(BIG), "prices": rows, **data}, PRODUCT, BIG)
 
 
 FULL = reply(
-    "El {{c1}} cuesta {{c2}} (no S/ 10), antes {{c3}} con {{c4}} ({{c5}}), y está {{c6}}.",
+    "El {{c1}} cuesta {{c2}} (no S/ 10), {{c3}} con {{c4}} ({{c5}}), y está {{c6}}.",
     claim("c1", "PRODUCT_NAME", "tu_v", "variants.0.name"),
     claim("c2", "PRICE", "tu_p", "prices.0.amount"),
     claim("c3", "REGULAR_PRICE", "tu_p", "prices.0.regular_amount"),
@@ -123,12 +136,12 @@ def test_a_valid_template_is_rendered_with_the_values_copied_from_the_evidence()
     """El número que el modelo escribió fuera de un placeholder pasa tal cual: lo marca F8-08f."""
     done = render(FULL, EVIDENCE, NOW)
     assert done.text == (
-        "El Grande cuesta S/ 1,249.90 (no S/ 10), antes S/ 1,299.90 con Promo Verano (Solo esta "
-        "semana), y está disponible, con pocas unidades."
+        "El Grande cuesta S/ 1,249.90 (no S/ 10), precio regular S/ 1,299.90 con Promo Verano "
+        "(Solo esta semana), y está disponible, con pocas unidades."
     )
     assert (done.ok, done.findings, done.problems, done.feedback()) == (True, (), (), "")
     assert [done.text[a:b] for a, b in done.inserted] == [
-        "Grande", "S/ 1,249.90", "S/ 1,299.90", "Promo Verano", "Solo esta semana",
+        "Grande", "S/ 1,249.90", "precio regular S/ 1,299.90", "Promo Verano", "Solo esta semana",
         "disponible, con pocas unidades"]  # fmt: skip
     assert done.expires_at == NOW + timedelta(seconds=600) and done.wants_handoff is False
     assert render({**FULL, "wants_handoff": True}, EVIDENCE, NOW).wants_handoff is True
@@ -211,7 +224,10 @@ def test_the_stock_band_is_copied_with_its_fixed_text_never_the_exact_number() -
     assert marks(done) == ["VALUE_MISSING"] and "no afirmes disponibilidad" in done.feedback()
 
 
-@pytest.mark.parametrize(("terms", "problem"), [("  ", "VALUE_MISSING"), ("Hoy […]", "TRUNCATED")])
+@pytest.mark.parametrize(("terms", "problem"), [
+    ("  ", "VALUE_MISSING"), ("Hoy […]", "TRUNCATED"),
+    (_cut("Solo esta semana", 0), "TRUNCATED"),  # recortadas a cero: «[…]», sin el espacio
+])  # fmt: skip
 def test_blank_or_cut_promotion_terms_are_never_inserted(terms: str, problem: str) -> None:
     found = priced({}, promotions=[{"promotion_id": PROMO, "terms": terms}])
     both = (claim("c1", "PRICE", "e", "prices.0.amount"),
@@ -288,6 +304,8 @@ def test_claims_after_a_product_name_talk_about_that_product_and_one_variant() -
     again = claim("c10", "PRODUCT_NAME", "tu_v", "name")  # el mismo producto: sigue la variante
     assert kinds("{{c7}} a {{c3}}, el {{c10}} {{c6}}", product, price, again, stock2) == [
         "SUBJECT_MISMATCH"]  # fmt: skip
+    # dos nombres de productos distintos: el precio es del segundo
+    assert kinds("El {{c10}} y el {{c9}} a {{c3}}", again, arnes, price) == ["SUBJECT_MISMATCH"]
 
 
 def test_before_price_and_promotion_are_of_the_current_price_row_and_terms_of_a_cited_one() -> None:
@@ -306,11 +324,8 @@ def test_before_price_and_promotion_are_of_the_current_price_row_and_terms_of_a_
     assert marked("Antes {{c2}}", before) == ["SUBJECT_MISMATCH"]  # un «antes» sin «ahora»
     edge = claim("c3", "PROMOTION", "tu_edge", "prices.0.promotion")  # otra evidencia
     assert marked("{{c1}} con {{c3}}", now, edge) == ["SUBJECT_MISMATCH"]
-    two = prices(BIG)
-    two["prices"][1] |= {"promotion": "Black Friday", "promotion_id": PRICE_ID}
-    two["promotions"].append({"promotion_id": PRICE_ID, "terms": "Solo tarjetas"})
     terms = claim("c4", "PROMOTION_TERMS", "e", "promotions.1.terms")
-    found = ev(GET_PRICE, two, PRODUCT, BIG)
+    found = two_promotions()
     assert marked("{{c3}}: {{c4}}", {**promo, "evidence_ref": "e"}, terms, e=found) == [
         "SUBJECT_MISMATCH"]  # fmt: skip
     assert marked("{{c3}}: {{c4}}", {**promo, "evidence_ref": "e", "path": "prices.1.promotion"},
@@ -325,6 +340,8 @@ def test_the_schema_is_strict_and_its_kinds_are_the_registered_tools() -> None:
         assert obj["additionalProperties"] is False and obj["required"] == list(obj["properties"])
     enum = ["PRODUCT_NAME", "PRICE", "REGULAR_PRICE", "PROMOTION", "PROMOTION_TERMS", "STOCK"]
     assert items["properties"]["kind"]["enum"] == enum
+    text = schema["properties"]["reply_template"]["description"]  # las etiquetas no las escribe
+    assert "«precio regular»" in text and "su nombre a cada PRICE: no los escribas" in text
     assert all(TOOLS[tool.name] is tool for kind in KINDS.values() for tool in kind.tools)
     assert {k: [t.name for t in v.tools] for k, v in KINDS.items() if k != "PRODUCT_NAME"} == {
         "PRICE": ["get_price"], "REGULAR_PRICE": ["get_price"], "PROMOTION": ["get_price"],
@@ -382,10 +399,88 @@ def test_with_the_real_tools_the_text_has_their_values_and_never_the_exact_stock
               for c in FULL["claims"]]  # fmt: skip
     done = render({**FULL, "claims": claims}, found, timezone.now())
     assert done.text == (
-        f"El {variants[index]['name']} cuesta S/ 49.90 (no S/ 10), antes S/ 59.90 con Promo "
-        "Verano (Solo esta semana), y está disponible."
+        f"El {variants[index]['name']} cuesta S/ 49.90 (no S/ 10), precio regular S/ 59.90 con "
+        "Promo Verano (Solo esta semana), y está disponible."
     )
     assert done.ok and str(SENTINEL) not in done.text
     exact = render(reply("{{c1}}", claim("c1", "STOCK", "tu_s", "available")), found,
                    timezone.now())  # fmt: skip
     assert marks(exact) == ["PATH_MISSING"] and str(SENTINEL) not in exact.text
+
+
+def test_promotion_terms_go_with_the_nearest_cited_row_and_its_promotion() -> None:
+    """Las de la fila citada más cercana (la anterior antes que la siguiente): dos promociones no
+    cruzan sus condiciones, ni unas condiciones van junto a una fila sin promoción."""
+    promo_a, promo_b = (claim(f"c{n + 1}", "PROMOTION", "e", f"prices.{n}.promotion")
+                        for n in (0, 1))  # fmt: skip
+    terms_a, terms_b = (claim(f"c{n + 3}", "PROMOTION_TERMS", "e", f"promotions.{n}.terms")
+                        for n in (0, 1))  # fmt: skip
+    claims, e = (promo_a, promo_b, terms_a, terms_b), two_promotions()
+    assert marked("{{c1}} ({{c3}}) y {{c2}} ({{c4}})", *claims, e=e) == []
+    assert marked("{{c4}}: {{c2}}", *claims[1::2], e=e) == []  # sin una anterior, la siguiente
+    assert marked("{{c1}} ({{c4}}) y {{c2}} ({{c3}})", *claims, e=e) == ["SUBJECT_MISMATCH"] * 2
+    price_a, price_b = (claim(f"c{n + 5}", "PRICE", "e", f"prices.{n}.amount") for n in (0, 1))
+    prices_ = (price_a, price_b, terms_a, terms_b)  # dos listas de una llamada: cada una lo suyo
+    assert marked("{{c5}} ({{c3}}) y {{c6}} ({{c4}})", *prices_, e=e) == []
+    assert marked("{{c5}} ({{c4}}) y {{c6}} ({{c3}})", *prices_, e=e) == ["SUBJECT_MISMATCH"] * 2
+    plain = claim("c1", "PRICE", "e", "prices.1.amount")  # la otra lista, sin promoción
+    terms = claim("c2", "PROMOTION_TERMS", "e", "promotions.0.terms")
+    assert marked("{{c1}} ({{c2}})", plain, terms, e=EVIDENCE["tu_p"]) == ["SUBJECT_MISMATCH"]
+    bare = priced({}, promotions=[{"terms": "Sin promoción"}])  # unas condiciones sin su id
+    assert marked("{{c1}} ({{c2}})", plain, terms, e=bare) == ["SUBJECT_MISMATCH"]
+
+
+def test_prices_of_a_variant_come_from_one_get_price_call_and_each_before_from_its_row() -> None:
+    """Varias listas de una llamada sí (D-F8-06; «antes/ahora» con ellas lo marca F8-08f, #1023);
+    otra llamada para la misma variante no: tras un cambio de precio sería un descuento falso."""
+    now_a, now_b = (claim(f"c{n + 1}", "PRICE", "tu_p", f"prices.{n}.amount") for n in (0, 1))
+    done = render(reply("Antes {{c1}}, ahora {{c2}}", now_a, now_b), EVIDENCE, NOW)
+    assert done.ok and done.text == "Antes Precio Publico: S/ 1,249.90, ahora Tienda: US$ 57.50"
+    later = claim("c2", "PRICE", "n", "prices.0.amount")  # otra llamada, tras un cambio de precio
+    n = priced({"amount": "999.00"})
+    done = render(reply("Antes {{c1}}, ahora {{c2}}", now_a, later), {**EVIDENCE, "n": n}, NOW)
+    assert done.text == "Antes S/ 1,249.90, ahora [verificar]"
+    assert marks(done) == ["SUBJECT_MISMATCH"]
+    assert done.feedback() == "la claim c2 es de otra consulta de precio de una variante ya citada"
+    big = claim("c3", "PRODUCT_NAME", "tu_v", "variants.0.name")  # otro nombre no lo reinicia
+    assert codes("El {{c3}} costaba {{c1}}; el {{c3}} cuesta {{c2}}", big, now_a, later, n=n) == [
+        "PRICE_TWICE"]  # fmt: skip
+    same = claim("c4", "PRICE", "tu_p", "prices.0.amount")  # la misma fila: el mismo precio
+    assert marked("{{c1}}, o sea {{c4}} ({{c1}})", now_a, same) == []
+    # cada «antes» con el precio de su fila, el anterior antes que el siguiente
+    a, b = ({**now, "evidence_ref": "e"} for now in (now_a, now_b))
+    regular_a, regular_b = (claim(f"c{n + 3}", "REGULAR_PRICE", "e", f"prices.{n}.regular_amount")
+                            for n in (0, 1))  # fmt: skip
+    rows, e = (a, b, regular_a, regular_b), two_promotions()
+    assert marked("{{c1}}, antes {{c3}}; {{c2}}, antes {{c4}}", *rows, e=e) == []
+    assert marked("{{c1}} y {{c2}}, antes {{c3}}", *rows[:3], e=e) == ["SUBJECT_MISMATCH"]
+    # ni con el de la otra llamada, que no queda
+    regular_n = claim("c3", "REGULAR_PRICE", "n", "prices.0.regular_amount")
+    assert codes("{{c1}} y {{c2}}, antes {{c3}}", now_a, later, regular_n, n=n) == [
+        "PRICE_TWICE", "SUBJECT_MISMATCH"]  # fmt: skip
+
+
+def test_the_server_labels_the_before_price_and_each_list_when_a_variant_has_several() -> None:
+    """Las etiquetas son texto del servidor (en `inserted`): el «antes» nunca pasa por lo que se
+    paga y el modelo no pone nombre a una lista; con una sola lista por variante, sin nombre."""
+    now, before = claim("c1", "PRICE", "e", "prices.0.amount"), claim(
+        "c2", "REGULAR_PRICE", "e", "prices.0.regular_amount")  # fmt: skip
+    done = render(reply("Cuesta {{c2}} (lista {{c1}})", now, before), {"e": priced({})}, NOW)
+    assert done.ok and done.text == "Cuesta precio regular S/ 1,299.90 (lista S/ 1,249.90)"
+    assert [done.text[a:b] for a, b in done.inserted] == [
+        "precio regular S/ 1,299.90", "S/ 1,249.90"]  # fmt: skip
+    untaxed = {"e": priced({"tax_included": False})}
+    taxed = render(reply("{{c1}}, {{c2}}", now, before), untaxed, NOW)
+    assert taxed.text == "S/ 1,249.90 + IGV, precio regular S/ 1,299.90 + IGV"
+    lists = (now, claim("c3", "PRICE", "e", "prices.1.amount"))
+    done = render(reply("Precio normal {{c1}}, para ti {{c3}}", *lists), {"e": priced({})}, NOW)
+    assert done.ok and [done.text[a:b] for a, b in done.inserted] == [
+        "Precio Publico: S/ 1,249.90", "Tienda: US$ 57.50"]  # fmt: skip
+    nameless = priced({"price_list": " "})  # sin nombre no se distinguen: no se insertan
+    done = render(reply("{{c1}} y {{c3}}", *lists), {"e": nameless}, NOW)
+    assert done.text == "[verificar] y Tienda: US$ 57.50" and marks(done) == ["VALUE_MISSING"]
+    assert render(reply("{{c1}}", now), {"e": nameless}, NOW).text == "S/ 1,249.90"
+    big, small = (claim(f"c{n + 4}", "PRODUCT_NAME", "tu_v", f"variants.{n}.name") for n in (0, 1))
+    each = ({**now, "evidence_ref": "tu_p"}, claim("c6", "PRICE", "tu_p2", "prices.0.amount"))
+    done = render(reply("El {{c4}} a {{c1}}; el {{c5}} a {{c6}}", big, small, *each), EVIDENCE, NOW)
+    assert done.ok and done.text == "El Grande a S/ 1,249.90; el Chico a S/ 1,249.90"

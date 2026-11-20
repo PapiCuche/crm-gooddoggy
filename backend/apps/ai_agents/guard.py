@@ -5,16 +5,18 @@ La respuesta del modelo es una plantilla con placeholders `{{c1}}` y claims (`re
 `None` si no dio `ok`): tool y `kind`, `path` del `kind` en `Evidence.data`, evidencia ni del futuro
 ni caducada (`AI_EVIDENCE_TTL`); y por grupos (un nombre abre uno; lo anterior al primero es suyo):
 un producto y una variante, el «antes» y la promoción de la fila del precio actual, las condiciones
-de una promoción citada. Copia el valor de la evidencia, nunca de la plantilla; si no, `VERIFY_MARK`
-con un hallazgo (tipo y posición, nunca el texto del modelo) y un problema para el reintento. Las
-posiciones son índices de `str` (code points, no UTF-16: F8-09 las convierte); los detectores de
-F8-08f miran solo lo que no está en `inserted`. Puro: sin base de datos ni logs."""
+de la fila citada más cercana; y los precios de una variante, de una sola consulta. Copia el valor
+de la evidencia, nunca de la plantilla, con las etiquetas del servidor («precio regular», y el
+nombre de la lista si se citan varias de una variante); si no, `VERIFY_MARK` con un hallazgo
+(tipo y posición, nunca el texto del modelo) y un problema para el reintento. Las posiciones son
+índices de `str` (code points, no UTF-16: F8-09 las convierte); los detectores de F8-08f miran
+solo lo que no está en `inserted` (valores, etiquetas y marcas). Puro: sin base de datos ni logs."""
 
 import copy
 import re
 from collections import Counter
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any
@@ -42,8 +44,10 @@ BANDS = {AVAILABLE: "disponible", FEW_UNITS: "disponible, con pocas unidades",
          OUT_OF_STOCK: "agotado"}  # fmt: skip
 PROMOTED = ("REGULAR_PRICE", "PROMOTION")  # solo con promoción y de la fila del precio actual
 ROWS = ("PRICE", *PROMOTED)  # las que citan una fila de `prices`
+REGULAR = "precio regular"  # lo escribe el servidor: el «antes» nunca pasa por lo que se paga
 # Códigos que solo cambian el texto del reintento; el hallazgo va con su tipo
-FINDING = {"NOT_TRACKED": "VALUE_MISSING", "TRUNCATED": "VALUE_MISSING"}
+FINDING = {"NOT_TRACKED": "VALUE_MISSING", "TRUNCATED": "VALUE_MISSING",
+           "PRICE_TWICE": "SUBJECT_MISMATCH"}  # fmt: skip
 TEXTS = {
     "CLAIM_ID": "una claim tiene un id inválido; usa c1, c2…",
     "CLAIM_DUPLICATE": "la claim {claim} está repetida",
@@ -51,6 +55,7 @@ TEXTS = {
     "SUBJECT_MISMATCH": "la claim {claim} no es del producto, variante o fila de su grupo",
     "NOT_TRACKED": "la claim {claim} no lleva stock: no afirmes disponibilidad",
     "TRUNCATED": "las condiciones de la claim {claim} llegaron recortadas: no las cites",
+    "PRICE_TWICE": "la claim {claim} es de otra consulta de precio de una variante ya citada",
     "TOO_LONG": f"la respuesta renderizada pasa de {BODY_MAX} caracteres: acórtala",
 }
 
@@ -77,7 +82,9 @@ _SCHEMA: dict[str, Any] = {
     "type": "object", "additionalProperties": False, "required": list(TOP),
     "properties": {
         "reply_template": {"type": "string", "description": "La respuesta. Cada nombre, precio, "
-                           "promoción o disponibilidad va como {{id}} de su claim, nunca escrito."},
+                           "promoción o disponibilidad va como {{id}} de su claim, nunca escrito. "
+                           f"El servidor antepone «{REGULAR}» a REGULAR_PRICE y, si citas varias "
+                           "listas de una variante, su nombre a cada PRICE: no los escribas tú."},
         "claims": {"type": "array", "items": {
             "type": "object", "additionalProperties": False, "required": list(FIELDS),
             "properties": {
@@ -162,6 +169,7 @@ class _Cited:
     expires: datetime | None
     row: tuple[str, int] | None = None  # (evidence_ref, índice) de una fila de `prices`
     promotion: str | None = None  # el `promotion_id` de esa fila o de unas condiciones
+    price_list: str | None = None  # el nombre de la lista de esa fila, si lo tiene
 
 
 def evidence_ttl() -> timedelta:
@@ -218,7 +226,8 @@ def _value(kind: str, row: Mapping[str, Any], leaf: str) -> str | None:
         money, tax = _money(row.get("currency"), leaf), row.get("tax_included")
         if money is None or type(tax) is not bool:
             return None
-        return money if tax else f"{money} + IGV"
+        money = money if tax else f"{money} + IGV"
+        return f"{REGULAR} {money}" if kind == "REGULAR_PRICE" else money
     if kind == "STOCK":
         return BANDS.get(leaf)
     return leaf
@@ -245,8 +254,8 @@ def _cite(claim: Claim, found: Evidence | None, now: datetime, ttl: timedelta) -
         return "NO_PROMOTION"
     if claim.kind == "STOCK" and leaf == NOT_TRACKED:
         return "NOT_TRACKED"
-    if claim.kind == "PROMOTION_TERMS" and type(leaf) is str and leaf.endswith(CUT):
-        return "TRUNCATED"  # recortadas por `get_price`: no se insertan como si estuvieran enteras
+    if claim.kind == "PROMOTION_TERMS" and type(leaf) is str and leaf.endswith(CUT.lstrip()):
+        return "TRUNCATED"  # recortadas por `get_price` (a cero: solo «[…]»): nunca como enteras
     value = _value(claim.kind, row, leaf) if type(leaf) is str and leaf.strip() else None
     if value is None:
         return "VALUE_MISSING"
@@ -256,9 +265,10 @@ def _cite(claim: Claim, found: Evidence | None, now: datetime, ttl: timedelta) -
             return "VALUE_MISSING"
         return _Cited(value, product, row.get("variant_id"), frozenset(), None)
     at = (claim.evidence_ref, int(claim.path.split(".")[1])) if claim.kind in ROWS else None
-    subjects = frozenset(map(str, found.subjects))
+    subjects, name = frozenset(map(str, found.subjects)), row.get("price_list")
+    name = name.strip() if type(name) is str and name.strip() else None
     return _Cited(value, None, found.data.get("variant_id"), subjects, expires, at,
-                  row.get("promotion_id"))  # fmt: skip
+                  row.get("promotion_id"), name)  # fmt: skip
 
 
 def _groups(kinds: list[str], cited: list[_Cited | str]) -> list[tuple[Any, list[int]]]:
@@ -280,13 +290,25 @@ def _groups(kinds: list[str], cited: list[_Cited | str]) -> list[tuple[Any, list
     return groups
 
 
-def _coherent(kinds: list[str], cited: list[_Cited | str]) -> None:
-    """Cambia por `SUBJECT_MISMATCH` lo que no es del sujeto de su grupo (ADR-005 Parte D)."""
+def _near(at: int, among: list[int]) -> int | None:
+    """El índice de `among` más cercano a `at`: el anterior antes que el siguiente."""
+    near = [p for p in among if p < at][-1:] or [p for p in among if p > at][:1]
+    return near[0] if near else None
 
-    def valid(at: int, *wanted: str) -> _Cited | None:
+
+def _coherent(kinds: list[str], cited: list[_Cited | str]) -> None:
+    """Cambia por `SUBJECT_MISMATCH` lo que no es del sujeto de su grupo (ADR-005 Parte D), y por
+    `PRICE_TWICE` el precio de una variante ya citada que viene de otra llamada a `get_price`:
+    «antes X, ahora Y» tras un cambio de precio sería un descuento que no existe. Varias listas de
+    una misma llamada sí (D-F8-06); cómo se redactan lo miran los detectores (F8-08f)."""
+
+    def valid(at: int | None, *wanted: str) -> _Cited | None:
+        if at is None:  # sin fila con la que emparejar
+            return None
         found = cited[at]
         return found if isinstance(found, _Cited) and kinds[at] in wanted else None
 
+    current: dict[str | None, str | None] = {}  # variante → la llamada de su primer precio
     for (product, variant), members in _groups(kinds, cited):
         for at in members:
             if (found := valid(at, *KINDS)) is None:
@@ -297,20 +319,36 @@ def _coherent(kinds: list[str], cited: list[_Cited | str]) -> None:
                 cited[at] = "SUBJECT_MISMATCH"
             else:
                 variant = found.variant
+        for at in members:  # en todo el texto, no solo en el grupo: un nombre no lo reinicia
+            if (found := valid(at, "PRICE")) is None:
+                continue
+            call = found.row[0] if found.row else None  # el `tool_use_id` de su `get_price`
+            if current.setdefault(found.variant, call) != call:
+                cited[at] = "PRICE_TWICE"
         prices = [at for at in members if valid(at, "PRICE")]
         for at in members:
             if (found := valid(at, *PROMOTED)) is None:
                 continue
-            near = [p for p in prices if p < at][-1:] or [p for p in prices if p > at][:1]
-            pair = valid(near[0], "PRICE") if near else None
+            pair = valid(_near(at, prices), "PRICE")
             alone = pair is None and kinds[at] == "REGULAR_PRICE"  # un «antes» sin «ahora»
             if alone or (pair is not None and pair.row != found.row):
                 cited[at] = "SUBJECT_MISMATCH"
-        rows = [valid(at, *ROWS) for at in members]
-        promotions = {found.promotion for found in rows if found is not None} - {None}
-        for at in members:
-            if (found := valid(at, "PROMOTION_TERMS")) and found.promotion not in promotions:
+        rows = [at for at in members if valid(at, *ROWS)]
+        for at in members:  # las condiciones, de la fila citada más cercana y de su promoción
+            if (found := valid(at, "PROMOTION_TERMS")) is None:
+                continue
+            pair = valid(_near(at, rows), *ROWS)
+            if pair is None or found.promotion is None or pair.promotion != found.promotion:
                 cited[at] = "SUBJECT_MISMATCH"
+    quoted = [(at, price) for at in range(len(cited)) if (price := valid(at, "PRICE"))]
+    lists: dict[str | None, set[tuple[str, int] | None]] = {}  # variante → filas de sus precios
+    for _, price in quoted:
+        lists.setdefault(price.variant, set()).add(price.row)
+    for at, price in quoted:  # varias listas: cada precio con su nombre, nunca el del modelo
+        if len(lists[price.variant]) > 1 and (label := price.price_list):
+            cited[at] = replace(price, value=f"{label}: {price.value}")
+        elif len(lists[price.variant]) > 1:  # sin nombre no se distinguen: no se insertan
+            cited[at] = "VALUE_MISSING"
 
 
 def render(raw: object, evidence: Mapping[str, Evidence | None], now: datetime) -> Rendered:
