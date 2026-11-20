@@ -1,7 +1,7 @@
 """Administración de miembros (F2-19, E01-07, ADR-017): suspender y reactivar una membresía,
 asignarle una sucursal (F2-69), ponerla en un equipo o quitarla (F2-58, F2-59, D-F2-13),
-invitar a alguien a la organización (F2-80, ADR-020), revocar una invitación (F2-82) y aceptarla
-(F2-130b).
+invitar a alguien a la organización (F2-80, ADR-020) o renovar y reenviar su invitación (F2-130e),
+revocarla (F2-82) y aceptarla (F2-130b).
 
 Orquesta `access` (las reglas de RBAC), `organizations` (la membresía) y `accounts` (las
 sesiones), que no se importan entre sí. Primero las reglas, que toman el bloqueo de RBAC de la
@@ -112,13 +112,21 @@ def remove_team_member(ctx: TenantContext, *, team_id: UUID, membership_id: UUID
         teams.remove_team_member(ctx, team_id=team_id, membership_id=membership_id)
 
 
-def invite(ctx: TenantContext, *, email: str, role_ids: Collection[UUID]) -> InvitationRef:
-    """Deja creada la invitación de `email` con esos roles (ADR-020). No envía nada.
+class RoleGone(Exception):
+    """Un rol de la invitación que se reenvía ya no existe: se invita otra vez con otros roles."""
+
+
+def invite(
+    ctx: TenantContext, *, email: str, role_ids: Collection[UUID]
+) -> tuple[InvitationRef, bool]:
+    """Deja creada la invitación de `email` con esos roles (ADR-020), o renueva la pendiente
+    (§1, F2-130e). Devuelve la invitación y si se renovó.
 
     El correo se guarda en la forma canónica de las cuentas (D-F2-3) y solo si `core.mail`
     podría entregarlo: `InvalidEmail`. Las reglas son las de asignar esos roles, y además el
-    permiso `users.invite`. Lanza `AccessDenied`, `UnknownRole` (un rol no es de esta
-    organización) y lo que lanza `create_invitation`. Si lanza, no escribe.
+    permiso `users.invite`; renovar, también las de revocar con los que tenía (más estricto que
+    ADR-020 §1: cambiarlos los quita). Lanza `AccessDenied`, `UnknownRole` (un rol no es de esta
+    organización) y lo que lanzan `create_invitation` y `renew_invitation`. Si lanza, no escribe.
     """
     try:
         address = canonical_email(email)
@@ -129,7 +137,28 @@ def invite(ctx: TenantContext, *, email: str, role_ids: Collection[UUID]) -> Inv
     alias = require_scope(ctx)
     with transaction.atomic(using=alias):
         ensure_can_invite(ctx, role_ids=role_ids)
-        return create_invitation(ctx, email=address, role_ids=role_ids)
+        pending = organizations.pending_invitation(ctx, email=address)
+        if pending is None:
+            return create_invitation(ctx, email=address, role_ids=role_ids), False
+        had = invitation_role_ids(ctx, invitation_id=pending)
+        ensure_can_revoke_invitation(ctx, role_ids=had)
+        return organizations.renew_invitation(ctx, invitation_id=pending, role_ids=role_ids), True
+
+
+def resend_invitation(ctx: TenantContext, *, invitation_id: UUID) -> InvitationRef:
+    """Reenvía una invitación pendiente, caducada o no: la renueva con sus mismos roles y las
+    reglas de invitar con ellos (ADR-020 §1), en el orden de revocar: permisos y bloqueo de RBAC,
+    después la fila. Lanza `AccessDenied`, `RoleGone`, `DoesNotExist` (no es de esta
+    organización) y lo que lanza `renew_invitation`. Si lanza, no escribe."""
+    alias = require_scope(ctx)
+    with transaction.atomic(using=alias):
+        ensure_can_revoke_invitation(ctx, role_ids=())
+        roles = invitation_role_ids(ctx, invitation_id=invitation_id)
+        try:
+            ensure_can_invite(ctx, role_ids=roles)
+        except UnknownRole:
+            raise RoleGone from None
+        return organizations.renew_invitation(ctx, invitation_id=invitation_id, role_ids=roles)
 
 
 def revoke_invitation(ctx: TenantContext, *, invitation_id: UUID) -> InvitationRef:

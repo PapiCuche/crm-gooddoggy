@@ -81,6 +81,9 @@ def test_it_leaves_a_pending_invitation_without_a_link_and_audits_it(
         "role_ids": wanted,
         "status": "PENDING",
         "invited_by": str(rbac.ana.pk),
+        "sent_at": None,
+        "send_count": 0,
+        "delivery": "NOT_SENT",
     }
     stored = ("nueva.persona@example.com", wanted, "PENDING", None, 0, None, rbac.ana.pk, rbac.a)
     assert rows(migrator) == [stored]  # sin enlace y sin enviar: eso es de la tarea de envío
@@ -184,7 +187,7 @@ def test_roles_are_one_to_twenty_of_this_organization_without_repeats(
     assert ask(ana, "x@example.com", many[:20]).status_code == 201  # veinte sí
 
 
-def test_a_member_in_any_state_or_a_pending_address_is_not_invited_again(
+def test_a_member_in_any_state_is_not_invited_and_a_pending_address_is_renewed(
     rbac: Any, migrator: psycopg.Connection[Any]
 ) -> None:
     join(rbac.a, make_user(email="suspendida@example.com"), "SUSPENDED")
@@ -204,10 +207,10 @@ def test_a_member_in_any_state_or_a_pending_address_is_not_invited_again(
     known, new = ask(ana, "de-b@example.com", target), ask(ana, "nadie@example.com", target)
     assert known.status_code == new.status_code == 201  # no dice quién tiene cuenta
     assert sorted(known.json()) == sorted(new.json())
-    assert refused(ask(ana, "Nadie@Example.com", target)) == (409, "INVITATION_PENDING")
+    assert ask(ana, "Nadie@Example.com", target).status_code == 200  # la renueva (F2-130e)
     migrator.execute("UPDATE user_invitations SET expires_at = now() - interval '1 day'")
-    assert refused(ask(ana, "nadie@example.com", target)) == (409, "INVITATION_PENDING")  # caducó
-    assert len(rows(migrator)) == 3 and state(migrator)[2] == 2  # ni fila ni auditoría de más
+    assert ask(ana, "nadie@example.com", target).status_code == 200  # caducada, también
+    assert len(rows(migrator)) == 3  # ninguna fila de más
     migrator.execute("UPDATE user_invitations SET status = 'REVOKED' WHERE email LIKE 'nadie%'")
     assert ask(ana, "nadie@example.com", target).status_code == 201  # revocada: se puede otra vez
 

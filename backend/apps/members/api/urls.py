@@ -10,6 +10,11 @@ urlpatterns = [
         name="invitation-status",
     ),
     path(
+        "invitations/<uuid:invitation_id>/resend/",
+        views.InvitationResendView.as_view(),
+        name="invitation-resend",
+    ),
+    path(
         "members/<uuid:membership_id>/status/",
         views.MemberStatusView.as_view(),
         name="member-status",
