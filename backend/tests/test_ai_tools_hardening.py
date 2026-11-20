@@ -8,6 +8,7 @@ import pathlib
 import tomllib
 from dataclasses import replace
 from datetime import datetime, timedelta
+from string.templatelib import Interpolation, Template
 from typing import Any, cast
 from uuid import UUID
 
@@ -48,12 +49,25 @@ PLANTED = [
     "DO $$ BEGIN END $$", "SELECT set_config('app.x', %s, false)",
     "SELECT set_config('lock_timeout', '1s', FALSE)", "SELECT set_config('a', %s, %s)",
     'UPDATE "products" SET "name" = %s', "TRUNCATE products", "LOCK TABLE t",
+    # F8-07e, segunda revisión: la sesión por SQL, comentarios, objetos grandes y otros
+    "SET app.tenant_id = 'x'", "SET SESSION statement_timeout = 0", "SET ROLE crm_migrator",
+    "  set search_path = public", "SELECT 1; SET x = 1", "/* c */ SET x = 1", "RESET ALL",
+    "DISCARD ALL", "LISTEN c", 'SELECT 1 FROM "t" FOR/**/SHARE',
+    'SELECT 1 FROM "t" FOR -- x\n SHARE',
+    "SELECT E'\\'' ; UPDATE t SET x = 'a'", "SELECT lo_create(0)", "SELECT lo_unlink(1)",
+    "SELECT lo_import('/f')", "SELECT lo_from_bytea(0, '')", "SELECT lo_put(1, 0, '')",
+    "SELECT pg_terminate_backend(1)", "SELECT pg_cancel_backend(1)", "CHECKPOINT",
+    "SECURITY LABEL ON TABLE t IS 'x'", "PREPARE TRANSACTION 'x'", "PREPARE p AS SELECT 1",
+    "EXECUTE p",
 ]  # fmt: skip
 READS = [
     "SELECT set_config('app.tenant_id', %s, true), set_config('app.user_id', %s, true)",
     'SELECT "t"."cluster_id", "t"."do_not_disturb", "t"."notify_at" FROM "t" WHERE "t"."x" = '
     "'delete into vacuum'",
     "SELECT clock_timestamp()", 'SAVEPOINT "s1"', 'RELEASE SAVEPOINT "s1"',
+    "SET LOCAL lock_timeout = '1s'", "SET TRANSACTION ISOLATION LEVEL SERIALIZABLE",
+    "SET CONSTRAINTS ALL DEFERRED", 'SELECT "t"."reset_at", \'a--b\', \'/*\' FROM "t"',
+    "SELECT 1 -- se borra con delete\n", "SELECT E'it''s \\\\ ok'",
 ]  # fmt: skip
 
 
@@ -69,6 +83,8 @@ def test_capture_sees_driver_cursors_copy_and_other_connections() -> None:
         with captured() as seen:
             driver = connection.connection  # el psycopg de Django, sin su envoltorio
             driver.execute("SELECT pg_try_advisory_xact_lock(7)")
+            # una t-string (`t"…({9})"`; mypy aún no las lee): la plantilla, sin texto plano
+            driver.execute(Template("SELECT pg_try_advisory_xact_lock(", Interpolation(9), ")"))
             driver.execute(sql.SQL("SELECT {}").format(sql.Literal("compuesta")))
             with driver.cursor() as cursor, cursor.copy("COPY (SELECT 1) TO STDOUT") as copy:
                 list(copy)
@@ -76,10 +92,11 @@ def test_capture_sees_driver_cursors_copy_and_other_connections() -> None:
                 cursor.execute("SELECT pg_try_advisory_xact_lock(8)")
     finally:
         other.close()
-    # también el `set_config('TimeZone', %s, false)` con el que Django abre la otra conexión
-    assert writes(seen) == ["SELECT pg_try_advisory_xact_lock(7)", "COPY (SELECT 1) TO STDOUT",
-                            "SELECT set_config('TimeZone', %s, false)",
-                            "SELECT pg_try_advisory_xact_lock(8)"]  # fmt: skip
+    found = writes(seen)  # también el `set_config('TimeZone', …, false)` de la otra conexión
+    locks = [f"SELECT pg_try_advisory_xact_lock({n})" for n in (7, 9, 8)]
+    assert found[:3] == [*locks[:2], "COPY (SELECT 1) TO STDOUT"]
+    assert found[3].startswith("SELECT set_config('TimeZone', ") and found[3].endswith(", false)")
+    assert found[4:] == locks[2:]
     assert "SELECT 'compuesta'" in seen
     count = len(seen)
     connection.connection.execute("SELECT 1")  # fuera del bloque ya no se captura
@@ -102,11 +119,15 @@ def test_ai_agents_cannot_import_writers_keys_whatsapp_sealed_data_or_people() -
 QUERY = SEARCH_PRODUCT.fields["query"]
 FIELDS = ("оrg_id", "cliente_id", "conversacion_id", "conversa_tion", "usuario", "telefono",
           "correo", "owner_id", "seller_id", "person_id", "company_id", "lead_id", "deal_id",
-          "uid", "ｑuery", "qu ery")  # fmt: skip
+          "uid", "ｑuery", "qu ery", "sucursal_id", "vendedor", "empresa_id", "comprador",
+          "mensaje", "agente_id", "oportunidad_id", "negocio_id", "dni", "rut", "message_id",
+          "chat", "thread_id", "wa_id", "psid", "staff_id", "buyer_id")  # fmt: skip
 OUTPUTS = ("ѕku", "ｓｋｕ", "skü", "descripción", "descripcion", "margen", "notas_internas",
            "proveedor", "almacen", "codigo_barras", "existencias", "ubicacion", "reservado",
            "compra", "supplier", "ean13", "gtins", "isbn", "mpn", "upc_a",
-           "short_description_long", "x_short_description", "short_description2")  # fmt: skip
+           "short_description_long", "x_short_description", "short_description2", "interno",
+           "vendor", "bodega", "inventory", "quantity", "qty", "cantidad", "comment", "comentario",
+           "observaciones", "productgtin", "variantIsbn", "partMpn")  # fmt: skip
 
 
 @pytest.mark.parametrize(

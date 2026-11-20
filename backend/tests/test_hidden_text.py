@@ -59,6 +59,7 @@ PAYLOADS = [
     ("葛" + IVS + IVS, "葛" + IVS),
     # F8-07e: cada cifra es base de keycap; VS15/16 tras ella solo con la tecla U+20E3 detrás
     ("Tel 9" + VS16 + "87 6\ufe0e5 #" + VS16 + " *\ufe0e", "Tel 987 65 # *"),
+    ("1" + VS16 + "\u200b\u20e3", "1" + VS16 + "\u20e3"),  # la tecla tras lo que se quita
     ("a" + "\u0300" * 4 + LRM + "\u0300" * 4, "a" + "\u0300" * 4 + LRM),  # LRM no es una base
     ("hola \U0001f600" + ZWJ + "\U0001d159 adi\u00f3s", "hola \U0001f600 adi\u00f3s"),  # no se ve
     ("\u0628" + ZWNJ + "\u3164\u0628", "\u0628" + ZWNJ + "\u0628"),  # lo que sigue y sí queda

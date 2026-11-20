@@ -42,12 +42,16 @@ CAMEL = re.compile(r"([a-z0-9])([A-Z])")
 # `OrganizationID` y `tenantid` son identidad; `unitCost`, `BarCode` y `SKU`, salida prohibida.
 # También en español y sus sinónimos (F8-07e).
 WHO = ("org", "tenant", "contact", "convers", "customer", "client", "user", "usuario", "member",
-       "actor", "branch", "account", "phone", "telefono", "email", "correo", "owner", "seller",
-       "person", "company", "lead", "deal", "uid")  # fmt: skip
-SECRET = ("cost", "margin", "margen", "interna", "onhand", "reserv", "warehouse", "almacen",
-          "location", "ubicacion", "note", "nota", "supplier", "proveedor", "sku", "barcode",
-          "barra", "purchase", "compra", "stock", "existencia", "descrip")  # fmt: skip
-CODES = ("ean", "gtin", "upc", "isbn", "mpn")  # cortos: al principio de una palabra (`ean13`)
+       "actor", "branch", "sucursal", "account", "phone", "telefono", "email", "correo", "owner",
+       "seller", "vendedor", "person", "company", "empresa", "buyer", "comprador", "lead", "deal",
+       "negocio", "opportunit", "oportunidad", "message", "mensaje", "chat", "thread", "agent",
+       "staff", "waid", "psid", "dni", "rut", "uid")  # fmt: skip
+SECRET = ("cost", "margin", "margen", "intern", "onhand", "reserv", "warehouse", "almacen",
+          "bodega", "location", "ubicacion", "note", "nota", "comment", "comentario",
+          "observacion", "supplier", "proveedor", "vendor", "sku", "barcode", "barra", "gtin",
+          "isbn", "mpn", "purchase", "compra", "stock", "existencia", "inventor", "quantit", "qty",
+          "cantidad", "descrip")  # fmt: skip
+CODES = ("ean", "upc")  # cortos: al principio de una palabra (`ean13`); `gtin`, en cualquier sitio
 LEAVES = (str, int, float, bool, type(None))  # una hoja abierta (dict, list…) dejaría pasar todo
 
 
