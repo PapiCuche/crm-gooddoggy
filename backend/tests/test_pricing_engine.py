@@ -28,7 +28,7 @@ from tests import test_authorization
 from tests.factories import make_user
 from tests.test_authorization import give
 from tests.test_memberships import ctx, join
-from tests.test_prices import price_list
+from tests.test_prices import price_list, seeding
 
 world = test_authorization.world
 pytestmark = pytest.mark.usefixtures("tenant_db")
@@ -63,7 +63,7 @@ def row(
     org: UUID, where: tuple[UUID, UUID], amount: str, starts: datetime, ends: Any = None
 ) -> UUID:
     """Un precio con la vigencia que se quiera, también pasada: `set_price` no las escribe."""
-    with tenant_scope(ctx(org)):
+    with seeding(org):
         made = ProductPrice.objects.create(
             variant_id=where[0],
             price_list_id=where[1],

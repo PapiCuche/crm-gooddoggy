@@ -21,6 +21,7 @@ from apps.pricing import services
 from apps.pricing.models import PriceList, Promotion, PromotionItem, PromotionPriceList
 from core.tenancy.scope import tenant_scope
 from tests import test_authorization
+from tests.test_authorization import give
 from tests.test_inventory_stock import race
 from tests.test_memberships import ctx
 from tests.test_prices import price_list
@@ -30,6 +31,12 @@ from tests.test_promotion_tables import NOW, brand, final, promo, shop, stock, t
 world, _shop = test_authorization.world, shop
 pytestmark = pytest.mark.usefixtures("tenant_db")
 DAY, US = timedelta(days=1), timedelta(microseconds=1)
+
+
+@pytest.fixture(autouse=True)
+def manager(world: Any) -> None:
+    """ana crea y mueve las promociones: la base se lo pide a `prices.manage` (`pricing/0011`)."""
+    give(world.a, world.membership, {"prices.manage": None})
 
 
 def create(world: Any, shop: Any, **fields: Any) -> Promotion:

@@ -20,7 +20,7 @@ from apps.pricing.services import PriceQuery, PromotionApplied
 from core.tenancy.scope import tenant_scope
 from tests import test_authorization
 from tests.test_memberships import ctx
-from tests.test_prices import price_list
+from tests.test_prices import price_list, seeding
 from tests.test_pricing_engine import LIMA, MARK, T0, US, human, public_ai, row
 from tests.test_promotion_tables import D1, D8, NOW, final, promo, shop, stock, tree
 
@@ -63,7 +63,7 @@ def test_the_four_levels_reach_the_variant_and_the_specific_override_wins(
         made = promo(world.a, [shop.listed], [target], "AMOUNT_OFF", "100", priority=0)
         got = final(world.a, shop.viewer, shop.variant, shop.listed, NOW)
         assert (got.final_amount, got.promotion_id) == (Decimal("4299.00"), made)
-        with tenant_scope(ctx(world.a)):
+        with seeding(world.a):
             Promotion.objects.filter(pk=made).update(status="CANCELLED")
         none = final(world.a, shop.viewer, other[1], shop.listed, NOW)
         assert none.promotion_id is None  # no alcanza a una variante ajena
@@ -95,7 +95,7 @@ def test_one_promotion_with_two_targets_uses_the_variant_value_over_the_product_
         made = promo(world.a, [shop.listed], targets, "AMOUNT_OFF", "100")
         got = final(world.a, shop.viewer, shop.variant, shop.listed, NOW)
         assert got.final_amount == Decimal("4199.00")  # la de la variante, en el orden que sea
-        with tenant_scope(ctx(world.a)):
+        with seeding(world.a):
             Promotion.objects.filter(pk=made).update(status="CANCELLED")
     wide = [
         {"brand_id": shop.make, "override_value": Decimal("500")},
@@ -121,7 +121,7 @@ def test_the_three_types_and_their_override(world: Any, shop: Any, kind: str) ->
         made = promo(world.a, [shop.listed], [target], kind, value)
         got = final(world.a, shop.viewer, shop.variant, shop.listed, NOW)
         assert (got.final_amount, got.promotion_id) == (Decimal(price), made)
-        with tenant_scope(ctx(world.a)):
+        with seeding(world.a):
             Promotion.objects.filter(pk=made).update(status="CANCELLED")
 
 
@@ -160,7 +160,7 @@ def test_a_parent_category_reaches_the_children_but_not_the_other_way(
     made = promo(world.a, [shop.listed], [{"category_id": root}])
     assert final(world.a, shop.viewer, shop.variant, shop.listed, NOW).promotion_id == made
     assert final(world.a, shop.viewer, in_root, shop.listed, NOW).promotion_id == made
-    with tenant_scope(ctx(world.a)):
+    with seeding(world.a):
         Promotion.objects.filter(pk=made).update(status="CANCELLED")
     deeper = promo(world.a, [shop.listed], [{"category_id": child}])
     assert final(world.a, shop.viewer, shop.variant, shop.listed, NOW).promotion_id == deeper
