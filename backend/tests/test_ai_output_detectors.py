@@ -171,16 +171,64 @@ def test_the_guard_findings_move_with_the_text() -> None:
     assert out.problems == rendered.problems and len(out.inserted) == 4
 
 
-def test_model_text_glued_to_a_server_value_or_between_two_prices_is_marked() -> None:
-    glued = substitute(
-        Rendered("Rojo.tiendita y Rojo . dog", (), (), False, None, ((0, 4), (16, 20)))
-    )
+def server(*parts: str) -> Rendered:
+    """`parts` alterna valor del servidor y texto del modelo, empezando por un valor."""
+    text, inserted = "", []
+    for at, part in enumerate(parts):
+        if at % 2 == 0:
+            inserted.append((len(text), len(text) + len(part)))
+        text += part
+    return Rendered(text, (), (), False, None, tuple(inserted))
+
+
+def test_model_text_glued_to_a_server_value_is_marked() -> None:
+    glued = substitute(server("Rojo", ".tiendita y ", "Rojo", " . dog"))
     assert glued.text == f"Rojo{M} y Rojo {M}"
-    prices = "S/ 40.00 y S/ 30.00, S/ 20.00 + IGVS/ 10.00 Collar S/ 5.00"
-    server = ((0, 8), (11, 19), (21, 35), (35, 43), (44, 50), (51, 58))
-    out = substitute(Rendered(prices, (), (), False, None, server))
-    assert out.text == f"S/ 40.00{M}S/ 30.00{M}S/ 20.00 + IGVS/ 10.00 Collar S/ 5.00"
-    assert [f.type for f in out.findings] == ["DISCOUNT", "DISCOUNT"]
+    for word in ["gratis", "quinientos", "stock", "cuotas", "dias", "promo", "envio", "agotado",
+                 " punto dog"]:  # fmt: skip
+        out = substitute(server("Collar Rojo", word))  # la palabra sola, aunque el valor la pegue
+        assert out.text == f"Collar Rojo{M}" if word[0] != " " else f"Collar Rojo {M}"
+    assert substitute(server("Collar", "es gratis")).text == f"Collares {M}"
+    clean = server("disponible", ", ", "Promo Verano", " ", "S/ 1,249.90", " ", "2 kg")
+    assert substitute(clean) == clean  # nada detectado o solo blancos entre dos valores
+    assert substitute(server("30", ",", "40")).text == f"30{M}40"  # una cifra hecha de dos
+    assert substitute(server("Rojo", ".", "tienda")).text == f"Rojo{M}tienda"  # salvo un enlace
+
+
+P0, P1, REGULAR = "Precio Publico: S/ 1,249.90", "Tienda: US$ 57.50", "precio regular S/ 1,299.90"
+
+
+@pytest.mark.parametrize("gap", [" y ", ", ", "\n", "\n- ", " / ", " o ", " | "])
+def test_two_prices_with_a_list_separator_stay(gap: str) -> None:
+    for left, right in [(P0, P1), ("S/ 40.00", "S/ 30.00 + IGV")]:
+        rendered = server(left, gap, right)
+        assert substitute(rendered) == rendered
+
+
+GAPS = [
+    " a ",
+    " hasta ",
+    " vs ",
+    " > ",
+    " \u2014 ",
+    " \u25b6 ",
+    " \u00bb ",
+    " \U0001f449 ",
+    " \u23e9 ",
+    " \u274c ",
+    " (tachado) ",
+    " mejor ",
+    " y te lo dejo en ",
+    " y ahora ",
+]
+
+
+@pytest.mark.parametrize("gap", GAPS)
+def test_anything_else_between_two_prices_is_a_discount(gap: str) -> None:
+    for left, right in [(P0, P1), (REGULAR, P0), ("S/ 40.00", "S/ 30.00")]:
+        out = substitute(server(left, gap, right))
+        assert out.text == f"{left}{M}{right}"
+        assert [f.type for f in out.findings] == ["DISCOUNT"]
 
 
 def test_the_summary_marks_without_substituting() -> None:
@@ -212,14 +260,14 @@ def test_too_many_spans_keep_the_findings_bounded() -> None:
         (["Un ase\u200bsor"], False, "ASKED_FOR_PERSON"),
         (["Con un agente"], False, "ASKED_FOR_PERSON"),
         (["Con tu jefe"], False, "ASKED_FOR_PERSON"),
-        (["Un ejecutivo"], False, "ASKED_FOR_PERSON"),
+        (["Con un ejecutivo"], False, "ASKED_FOR_PERSON"),
         (["Pásame con alguien"], False, "ASKED_FOR_PERSON"),
         (["Que me atienda alguien"], False, "ASKED_FOR_PERSON"),
         (["Es una ESTAFA, quiero un asesor"], True, "ASKED_FOR_PERSON"),  # el orden de motivos
         (["Voy a poner un reclamo"], True, "UPSET"),
         (["esto es una ESTAFA!!!"], False, "UPSET"),
         (["Voy a poner un reclamo"], False, "UPSET"),
-        (["QUIERO MI PEDIDO YA"], False, "UPSET"),  # mayúsculas sostenidas
+        (["QUIERO MI PEDIDO YA!!!"], False, "UPSET"),  # mayúsculas sostenidas
         (["NO PUEDE SER!!!"], False, "UPSET"),
         (["YA BASTA!!!"], False, "UPSET"),  # con «!!!»
         (["YA BASTA"], False, None),
@@ -230,6 +278,18 @@ def test_too_many_spans_keep_the_findings_bounded() -> None:
         (["Bolsas para basura"], False, None),
         (["Quiero el ROYAL CANIN MAXI ADULT"], False, None),
         (["Hola!!!"], False, None),
+        (["Hola, quiero el ROYAL CANIN!!!"], False, None),
+        (["HOLA BUENAS TARDES"], False, None),
+        (["TIENEN STOCK?"], False, None),
+        (["PRECIO DEL NEXGARD?"], False, None),
+        (["ROYAL CANIN MEDIUM ADULT 15KG"], False, None),
+        (["¿Tienen agente antipulgas?"], False, None),
+        (["Es el perro de mi jefe"], False, None),
+        (["¿Es para consumo humano?"], False, None),
+        (["No es de uso humano"], False, None),
+        (["Estoy cansado"], False, None),
+        (["Estoy cansada de esperar"], False, "UPSET"),
+        (["¿Hablo con un humano?"], False, "ASKED_FOR_PERSON"),
         (["¿Tienen collares rojos?"], True, "MODEL"),
         (["¿Tienen collares rojos?"], False, None),
         ([], False, None),

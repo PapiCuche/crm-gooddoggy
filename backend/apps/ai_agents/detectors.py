@@ -109,28 +109,35 @@ PATTERNS: dict[str, str] = {
 _COMPILED = {kind: re.compile(pattern) for kind, pattern in PATTERNS.items()}
 _RANK = {kind: rank for rank, kind in enumerate(PATTERNS)}
 JOIN = re.compile(r"[\s.,:;/。·-]*")  # entre dos tramos (en la clave): una sola marca
-# Un precio que copió el servidor (`guard._value`): el texto del modelo entre dos es un descuento
-PRICE = re.compile(r"(?:S/|US\$|[A-Z]{3}) [0-9][0-9,]*(?:\.[0-9]+)?(?: \+ IGV)?")
+# Un precio que copió el servidor, con su etiqueta si la lleva («precio regular», «Lista: …»);
+# entre dos, lo que escribe el modelo es un descuento salvo un separador de lista (en la clave)
+PRICE = re.compile(
+    r"(?:precio regular |[^\n]{1,80}?: )?(?:S/|US\$|[A-Z]{3}) [0-9][0-9,]*(?:\.[0-9]+)?(?: \+ IGV)?"
+)
+SEPARATOR = re.compile(r"[\s,;/|\u00b7\u2022-]*(?:\b[yoeu]\b[\s,;/|\u00b7\u2022-]*)?")
 
 # §8: quien pide una persona, y la señal de enfado (frases sin doble sentido y mayúsculas)
 PERSON = re.compile(
-    r"\basesor\w*|\bpersonas?\b|\bhuman[oa]s?\b|\balguien\s+(?:real|que\s+me\s+atienda)\b"
+    r"\basesor\w*|\bpersonas?\b|(?<!uso )(?<!consumo )\bhuman[oa]s?\b"
+    r"|\balguien\s+(?:real|que\s+me\s+atienda)\b"
     r"|\b(?:hablar|pasa\w*|comunica\w*|contacta\w*)\s+con\s+alguien\b|\batienda\s+alguien\b"
     r"|\bencargad[oa]s?\b|\bsupervisor\w*|\bgerente\w*|\badministrador\w*|\boperador\w*"
-    r"|\bvendedor\w*|\bagentes?\b|\bjef[ea]s?\b|\bejecutiv[oa]s?\b|\b(?:ro)?bots?\b"
+    r"|\bvendedor\w*|\b(?:con|a)\s+(?:un|una|el|la|tu|su)\s+(?:agente|jef[ea]|ejecutiv[oa])s?\b"
+    r"|\b(?:ro)?bots?\b"
     r"|\b(?:con|eres|es)\s+una\s+maquina\b|\batencion\s+al\s+cliente\b|\bllam(?:en|enme|ame|eme)\b"
 )
 UPSET = re.compile(
     r"\bestaf\w*|\breclamo\w*|\breclamaci\w*|\bdenunci\w*|\bindecopi\b|\bpesim\w*|\bhorribl\w*"
     r"|\bque\s+verguenza\b|\bsinverguenz\w*|\bladron\w*|\brater[oa]s\b|\bmentiros\w*|\bmierda\b"
     r"|\buna\s+(?:basura|porqueria|burla)\b|\bcarajo\b|\bidiota\w*|\bimbecil\w*|\binutiles\b"
-    r"|\bincompetent\w*|\bestoy\s+(?:muy\s+)?(?:hart|molest|enojad|indignad|furios|cansad)\w*"
+    r"|\bincompetent\w*|\bestoy\s+(?:muy\s+)?(?:hart|molest|enojad|indignad|furios)\w*"
+    r"|\bcansad[oa]s?\s+de\s+(?:esperar|ustedes)\b"
     r"|\bfraude\w*|\bme\s+robaron\b|\bes\s+un\s+(?:robo|abuso)\b|\bno\s+me\s+respond\w*"
     r"|\bnadie\s+(?:me\s+)?respond\w*"
 )
-# Gritar: casi todo en mayúsculas en un mensaje con letras de sobra («QUIERO MI PEDIDO YA»); una
-# marca en mayúsculas dentro de una frase no basta, y «!!!» solo baja el mínimo de letras.
-CAPS_RATIO, CAPS_LETTERS, CAPS_BANG = 0.8, 10, 6
+# Gritar: «!!!» con casi todo en mayúsculas («QUIERO MI PEDIDO YA!!!»). Solo mayúsculas no basta
+# (mucha gente escribe así: «TIENEN STOCK?»), ni «!!!» solo («Hola!!!»).
+CAPS_RATIO, CAPS_BANG = 0.8, 6
 REASONS = ("ASKED_FOR_PERSON", "UPSET", "MODEL")
 
 
@@ -184,26 +191,42 @@ def _spans(text: str) -> list[tuple[int, int, list[Hit]]]:
     return merged
 
 
+def _best(found: Sequence[Hit], start: int, end: int) -> str:
+    """El tipo de mayor prioridad de lo que se detectó entre `start` y `end`."""
+    kinds = [kind for kind, first, stop in found if max(first, start) < min(stop, end)]
+    return min(kinds, key=_RANK.__getitem__, default="")
+
+
 def _parts(text: str, owned: Sequence[tuple[int, int]]) -> list[tuple[str, int, int]]:
     """Lo que hay que marcar dentro de `owned` (lo que escribió el modelo): cada tramo de `text`
     entero recortado a cada trozo suyo, sin blancos en los bordes y con el tipo de mayor prioridad
-    de lo que detectó ahí (un trozo de solo blancos y signos no se marca, salvo en un enlace) y,
-    como red, el trozo que aún lleve la marca entre dos tramos (letras que la clave no pliega)."""
+    de lo que detectó ahí (un trozo sin nada detectado, o de solo blancos, no se marca), más
+    lo que se detecta en el trozo solo («gratis» pegado a un nombre del servidor) y, como red, lo
+    que aún lleve la marca entre dos tramos (letras que la clave no pliega)."""
     merged, kept = _spans(text), []
     for low, high in owned:
-        pos = low
-        for start, end, found in [*merged, (high, high, [])]:
+        pieces: list[Hit] = []
+        for start, end, found in merged:
             start, end = max(start, low), min(end, high)
-            if start >= end and start != high:  # fuera del trozo (el último, la red del final)
-                continue
+            kind, piece = _best(found, start, end), text[start:end]
+            lead, trail = len(piece) - len(piece.lstrip()), len(piece) - len(piece.rstrip())
+            if kind and piece.strip():  # sin los blancos de los bordes
+                pieces.append((kind, start + lead, end - trail))
+        for start, end, found in _spans(text[low:high]):
+            pieces.append((_best(found, start, end), start + low, end + low))
+        union: list[Hit] = []
+        for kind, start, end in sorted(pieces, key=lambda hit: (hit[1], -hit[2])):
+            if union and start < union[-1][2]:
+                last, first, stop = union[-1]
+                union[-1] = (min(last, kind, key=_RANK.__getitem__), first, max(stop, end))
+            else:
+                union.append((kind, start, end))
+        pos = low
+        for kind, start, end in [*union, ("", high, high)]:
             if has_verify_mark(text[pos:start]):
                 kept.append(("MARKUP", pos, start))
-            kinds = [k for k, first, stop in found if max(first, start) < min(stop, end)]
-            kind = min(kinds, key=_RANK.__getitem__, default="")
-            piece = text[start:end]
-            if kind == "LINK" or (kind and not JOIN.fullmatch(_fold(piece)[0])):
-                lead, trail = len(piece) - len(piece.lstrip()), len(piece) - len(piece.rstrip())
-                kept.append((kind, start + lead, end - trail))
+            if kind:
+                kept.append((kind, start, end))
             pos = end
     return kept
 
@@ -234,7 +257,8 @@ def substitute(rendered: Rendered) -> Rendered:
     text, server = rendered.text, sorted(rendered.inserted)
     between = [(left[1], right[0]) for left, right in zip(server, server[1:], strict=False)
                if left[1] < right[0] and PRICE.fullmatch(text[left[0] : left[1]])
-               and PRICE.fullmatch(text[right[0] : right[1]])]  # fmt: skip
+               and PRICE.fullmatch(text[right[0] : right[1]])
+               and not SEPARATOR.fullmatch(_fold(text[left[1] : right[0]])[0])]  # fmt: skip
     parts = [part for part in _parts(text, _owned(text, server))
              if not any(low <= part[1] < high for low, high in between)]  # fmt: skip
     parts += [("DISCOUNT", low, high) for low, high in between]
@@ -262,10 +286,9 @@ def substitute(rendered: Rendered) -> Rendered:
 
 def _shouts(text: str) -> bool:
     letters = [char for char in text if char.isalpha()]
-    bangs = sum(char in "!¡" for char in _fold(text)[0]) >= 3
-    least = CAPS_BANG if bangs else CAPS_LETTERS
+    bangs = sum(char in "!\u00a1" for char in _fold(text)[0]) >= 3
     upper = sum(char.isupper() for char in letters)
-    return len(letters) >= least and upper >= CAPS_RATIO * len(letters)
+    return bangs and len(letters) >= CAPS_BANG and upper >= CAPS_RATIO * len(letters)
 
 
 def handoff(customer: Sequence[str], wants_handoff: bool) -> Handoff:
