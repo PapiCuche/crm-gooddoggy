@@ -114,10 +114,12 @@ Qué hacer ante un aviso: leer `journalctl -u crm-backup.service -n 50`, corregi
 
 ## 6. Restaurar en un servidor nuevo
 
+**Servidor compartido (ADR-046):** antes de nada, `/etc/crm/host-mode` con `shared` y la red `shared-ingress` (`production-shared-host.md` §1 y §2). Sin ellos, los scripts tratan el servidor como dedicado.
+
 Objetivo: menos de 4 h (RTO). El propietario o su suplente tienen que estar localizables en la primera hora: traen la clave privada, la credencial de lectura y la copia de los secretos (ADR-033 §8.3).
 
 1. Aprovisionar el servidor con el runbook de primer arranque (F1-17): Docker, el repositorio y los archivos de `/etc/crm` restaurados de la copia del propietario, con **las mismas `SECRETS_KEKS`**. Para los roles, contraseñas nuevas en `postgres.env` (root, `0600`), las mismas en `migrate.env` y `runtime.env`.
-2. Arrancar solo PostgreSQL: `docker compose -f /opt/crm/infra/prod/compose.yaml --env-file /etc/crm/release.env up -d --wait postgres`.
+2. Arrancar solo PostgreSQL: `/opt/crm/infra/prod/compose.sh --env-file /etc/crm/release.env up -d --wait postgres`.
 3. Traer al servidor, solo para la restauración, la clave privada y un archivo `restore.env`, que es `backup.env` con la credencial de **lectura**. Ambos en `/dev/shm` (memoria), con modo `0600`.
 4. Restaurar:
 
@@ -141,9 +143,9 @@ Objetivo: menos de 4 h (RTO). El propietario o su suplente tienen que estar loca
    **Si falla con `--replace-existing-data`** y el aviso `restore.failed` lleva `kept=crm_replaced_<…>`, la base anterior sigue entera con ese nombre. Sin `kept=`, el fallo fue antes de renombrarla y `crm` está intacta: no hay que volver a nada. Para volver a la base guardada, con el runtime parado, usa [`rollback-replaced.sql`](../../infra/prod/backup/rollback-replaced.sql). Solo borra `crm` si la base guardada existe; si no, falla sin tocar nada:
 
    ```bash
-   docker compose -f /opt/crm/infra/prod/compose.yaml --env-file /etc/crm/release.env exec -T postgres \
+   /opt/crm/infra/prod/compose.sh --env-file /etc/crm/release.env exec -T postgres \
      psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres -v kept=crm_replaced_<…> < /opt/crm/infra/prod/backup/rollback-replaced.sql
-   docker compose -f /opt/crm/infra/prod/compose.yaml --env-file /etc/crm/release.env up -d --wait backend
+   /opt/crm/infra/prod/compose.sh --env-file /etc/crm/release.env up -d --wait backend
    ```
 
    Las contraseñas de los roles son ya las de `--roles-env`: `migrate.env` y `runtime.env` tienen que llevar esas mismas. Si en cambio la restauración se da por buena a mano, se borra la anterior con `DROP DATABASE crm_replaced_<…>`.

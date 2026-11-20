@@ -108,9 +108,13 @@ configure() { # <evento del aviso si backup.env no es seguro>
   export storage_bucket state_dir
 }
 
+# shellcheck source=infra/prod/host-mode.sh
+. "$prod_dir/host-mode.sh"
 compose() {
-  local files=(-f "$prod_dir/compose.yaml")
-  [ -z "${CRM_COMPOSE_OVERRIDE:-}" ] || files+=(-f "$CRM_COMPOSE_OVERRIDE")
+  local files=(-f "$prod_dir/compose.yaml") override
+  # CRM_COMPOSE_OVERRIDE (el simulacro) o, si no, el modo del servidor (ADR-046): host-mode.sh.
+  override=$(crm_compose_override "$prod_dir") || return 1
+  [ -z "$override" ] || files+=(-f "$override")
   [ -z "${CRM_COMPOSE_PROJECT:-}" ] || files+=(-p "$CRM_COMPOSE_PROJECT")
   docker compose "${files[@]}" --env-file "${CRM_RELEASE_ENV:-/etc/crm/release.env}" "$@"
 }

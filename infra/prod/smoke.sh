@@ -24,10 +24,18 @@ here=$(cd "$(dirname "$0")" && pwd)
 # `timeout` deja la orden en otro grupo de procesos: con la entrada en la terminal (tmux), `exec -T`
 # la leería y se pararía (SIGTTIN). Por eso </dev/null; -k 10 mata lo que no salga con TERM.
 compose() {
-  timeout -k 10 60 docker compose -f "$here/compose.yaml" --env-file "${CRM_RELEASE_ENV:?release.env del despliegue}" \
-    "$@" < /dev/null
+  if [ -n "$override" ]; then
+    set -- -f "$override" --env-file "${CRM_RELEASE_ENV:?release.env del despliegue}" "$@"
+  else
+    set -- --env-file "${CRM_RELEASE_ENV:?release.env del despliegue}" "$@"
+  fi
+  timeout -k 10 60 docker compose -f "$here/compose.yaml" "$@" < /dev/null
 }
 fail() { echo "smoke FAIL: $*" >&2; exit 1; }
+# Los archivos de Compose de este servidor (dedicado o compartido, ADR-046): host-mode.sh.
+# shellcheck source=infra/prod/host-mode.sh
+. "$here/host-mode.sh"
+override=$(crm_compose_override "$here") || fail "modo del servidor ilegible (host-mode)"
 # Un curl que falla (o agota el plazo) dice por qué, también dentro de $(…), donde set -e sale sin más.
 code() {
   for url do :; done # la URL, el último argumento: las opciones de curl del operador no se imprimen
@@ -91,12 +99,23 @@ for path in /health/live /health/ready /demo; do
   [ "$status" = 404 ] || fail "$path se publica"
 done
 status=$(code "$@" "http://${origin#https://}/")
-[ "$status" = 308 ] || fail "HTTP no redirige a HTTPS"
+# Servidor compartido (ADR-046): delante hay una CDN, y con «Always Use HTTPS» responde ella con 301.
+case "$status:$override" in
+  308:* | 301:?*) ;;
+  *) fail "HTTP no redirige a HTTPS" ;;
+esac
 
 token="smoke-$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
 code "$@" "$origin/webhooks/meta/?hub.mode=subscribe&hub.challenge=1&hub.verify_token=$token" > /dev/null
 logs=$(compose logs --since 5m proxy backend 2>&1) || fail "docker compose logs sale con $?"
 if printf '%s\n' "$logs" | grep -q "$token"; then
   fail "la query de /webhooks aparece en los logs"
+fi
+# Servidor compartido (ADR-046): la IP del cliente que ve el proxy tiene que ser la pública de quien
+# llama. Una privada es la del borde público o la pasarela de Docker: todos los clientes compartirían
+# una sola IP para los límites y la auditoría. Por eso aquí smoke.sh va por el nombre público.
+if [ -n "$override" ]; then
+  private=$(printf '%s\n' "$logs" | grep -oE '"client_ip":"(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.|127\.|fd|fe80)[^"]*"' | sort -u | head -n 3 | tr "\n" " ")
+  [ -z "$private" ] || fail "el proxy ve una IP privada como IP del cliente: $private"
 fi
 echo "smoke OK: $origin"
