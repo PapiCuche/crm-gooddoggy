@@ -198,11 +198,20 @@ def test_model_text_glued_to_a_server_value_is_marked() -> None:
 P0, P1, REGULAR = "Precio Publico: S/ 1,249.90", "Tienda: US$ 57.50", "precio regular S/ 1,299.90"
 
 
-@pytest.mark.parametrize("gap", [" y ", ", ", "\n", "\n- ", " / ", " o ", " | "])
+@pytest.mark.parametrize(
+    "gap", [" y ", ", ", "\n", "\n- ", " / ", " o ", " | ", " \u2022 ", " \u00b7 "]
+)
 def test_two_prices_with_a_list_separator_stay(gap: str) -> None:
     for left, right in [(P0, P1), ("S/ 40.00", "S/ 30.00 + IGV")]:
         rendered = server(left, gap, right)
         assert substitute(rendered) == rendered
+
+
+@pytest.mark.parametrize("bullet", ["\u2022", "\u00b7"])
+def test_a_bullet_list_is_not_a_link(bullet: str) -> None:
+    text = f"Opciones:\n{bullet} Talla M\n{bullet} Talla L\n{bullet} pet shop"
+    assert substitute(plain(text)) == plain(text)
+    assert M in substitute(plain(f"Ve a tienda{bullet}pe")).text  # pegado sí es un enlace
 
 
 GAPS = [
@@ -279,6 +288,27 @@ def test_too_many_spans_keep_the_findings_bounded() -> None:
         (["Quiero el ROYAL CANIN MAXI ADULT"], False, None),
         (["Hola!!!"], False, None),
         (["Hola, quiero el ROYAL CANIN!!!"], False, None),
+        (["GRACIAS!!!"], False, None),
+        (["QUE LINDO!!!"], False, None),
+        (["GRACIAS POR TODO!!!"], False, None),
+        (["LLEGÓ PERFECTO!!!"], False, None),
+        (["ME ENCANTÓ!!!"], False, None),
+        (["SI!!! LO QUIERO"], False, None),
+        (["EXCELENTE SERVICIO!!!"], False, None),
+        (["QUE GENIAL!!!"], False, None),
+        (["ESTOY FELIZ!!!"], False, None),
+        (["BUENAZO!!!"], False, None),
+        (["AYUDEN!!!"], False, "UPSET"),
+        (["AYUDA!!!"], False, None),  # 6 letras sí, 5 no
+        (["¿Es de grado humano?"], False, None),
+        (["¿Sirve para humanos?"], False, None),
+        (["¿Lo puede usar un humano?"], False, None),
+        (["Una persona me recomendó esta tienda"], False, None),
+        (["¿Es para una persona o para el perro?"], False, None),
+        (["¿Para cuántas personas alcanza?"], False, None),
+        (["Quiero hablar con un humano"], False, "ASKED_FOR_PERSON"),
+        (["Quiero una persona"], False, "ASKED_FOR_PERSON"),
+        (["¿Hay un humano de verdad?"], False, "ASKED_FOR_PERSON"),
         (["HOLA BUENAS TARDES"], False, None),
         (["TIENEN STOCK?"], False, None),
         (["PRECIO DEL NEXGARD?"], False, None),

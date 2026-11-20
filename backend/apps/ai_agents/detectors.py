@@ -45,6 +45,7 @@ TLD = (
     r"|dog|vet|cat|blog|click|fun|bio|pro|eu|fr|nl|ca|au|jp|ec|py|bo)\b"
 )
 DOT = "[.。·•∙⋅・‧]"
+SPACED = "[.。∙⋅・‧]"  # con blancos alrededor, sin `·` ni `•`: son viñetas de una lista
 OPEN = "[(\\[{<「『【〔〖〈《⟨⟦❨❪❬❴]"
 CLOSE = "[)\\]}>」』】〕〗〉》⟩⟧❩❫❭❵]"
 HIDDEN_DOT = rf"{OPEN}\s*(?:{DOT}|punto|dot)\s*{CLOSE}"
@@ -57,8 +58,8 @@ PATTERNS: dict[str, str] = {
         # tienda.pe, rojo.pet, bit.ly/x, wa.me/51: sin espacios, cualquier dominio
         rf"(?<!{DOT}){WORD}(?:{DOT}(?![a-z]{{2}}){WORD})*+{DOT}[a-z]{{2}}[\w#-]*+(?:[/?]\S*)?",
         rf"(?:{WORD}\s*+)?(?:{HIDDEN_DOT}\s*+{WORD})+",  # tienda[.]pe, tienda「.」pe
-        rf"{WORD}\s+{DOT}\s*[a-z]{{2,63}}\b",  # tienda . pet, tienda .dog
-        rf"(?:{WORD}\s*+)?(?:{DOT}|\bpunto\b|\bdot\b)\s*{TLD}",  # tienda. pe, tienda punto com
+        rf"{WORD}\s+{SPACED}\s*[a-z]{{2,63}}\b",  # tienda . pet, tienda .dog
+        rf"(?:{WORD}\s*+)?(?:{SPACED}|\bpunto\b|\bdot\b)\s*{TLD}",  # tienda. pe, tienda punto com
         r"(?<![\w.+-])[\w.+-]*+@[\w.-]+|\barroba\b",  # correos y cuentas
     ]),
     # Un placeholder que no se renderizó (`｛｛c1｝｝`), llaves sueltas (`{{{c1}}}`) y la marca
@@ -118,7 +119,8 @@ SEPARATOR = re.compile(r"[\s,;/|\u00b7\u2022-]*(?:\b[yoeu]\b[\s,;/|\u00b7\u2022-
 
 # §8: quien pide una persona, y la señal de enfado (frases sin doble sentido y mayúsculas)
 PERSON = re.compile(
-    r"\basesor\w*|\bpersonas?\b|(?<!uso )(?<!consumo )\bhuman[oa]s?\b"
+    r"\basesor\w*|\b(?:con|a)\s+(?:una?\s+)?(?:persona|human[oa])s?\b"  # «persona», solo pedida
+    r"|\b(?:persona|human[oa])\s+(?:real|de\s+verdad)\b|\bquiero\s+(?:una?\s+)?(?:persona|human[oa])\b"
     r"|\balguien\s+(?:real|que\s+me\s+atienda)\b"
     r"|\b(?:hablar|pasa\w*|comunica\w*|contacta\w*)\s+con\s+alguien\b|\batienda\s+alguien\b"
     r"|\bencargad[oa]s?\b|\bsupervisor\w*|\bgerente\w*|\badministrador\w*|\boperador\w*"
@@ -138,6 +140,11 @@ UPSET = re.compile(
 # Gritar: «!!!» con casi todo en mayúsculas («QUIERO MI PEDIDO YA!!!»). Solo mayúsculas no basta
 # (mucha gente escribe así: «TIENEN STOCK?»), ni «!!!» solo («Hola!!!»).
 CAPS_RATIO, CAPS_BANG = 0.8, 6
+# Gritar de alegría no es enfado («GRACIAS!!!», «ME ENCANTÓ!!!»)
+HAPPY = re.compile(
+    r"\bgracias\b|\blind[oa]s?\b|\bperfect\w*|\bencant\w*|\bexcelente\w*|\bgenial\w*|\bfeliz\w*"
+    r"|\bbuenaz\w*|\blo\s+quiero\b|\bsi\b"
+)
 REASONS = ("ASKED_FOR_PERSON", "UPSET", "MODEL")
 
 
@@ -288,7 +295,8 @@ def _shouts(text: str) -> bool:
     letters = [char for char in text if char.isalpha()]
     bangs = sum(char in "!\u00a1" for char in _fold(text)[0]) >= 3
     upper = sum(char.isupper() for char in letters)
-    return bangs and len(letters) >= CAPS_BANG and upper >= CAPS_RATIO * len(letters)
+    happy = HAPPY.search(_fold(text)[0]) is not None
+    return bangs and not happy and len(letters) >= CAPS_BANG and upper >= CAPS_RATIO * len(letters)
 
 
 def handoff(customer: Sequence[str], wants_handoff: bool) -> Handoff:
