@@ -192,6 +192,16 @@ forbidden_modules = [
 ignore_imports = ["apps.ai_agents.context -> apps.conversations.selectors"]
 
 [[tool.importlinter.contracts]]
+# F8-08d: ese `ignore_imports` quita la arista para todo el grafo; sin este contrato, cualquier
+# módulo de `ai_agents` llegaría a contactos y a `core.sealed` a través de `context`. Solo el
+# arranque lo importa; el runtime del copiloto (F8-08g, #1024) se añadirá aquí a propósito. Queda
+# un resto: un módulo que importe `apps.ai_agents.apps` llega a `context` por él.
+name = "Solo apps.ai_agents.apps importa el contexto del copiloto (F8-08d)"
+type = "protected"
+protected_modules = ["apps.ai_agents.context"]
+allowed_importers = ["apps.ai_agents.apps"]
+
+[[tool.importlinter.contracts]]
 name = "Fronteras de alta: solo provisioning importa los bootstrap.py de L2 (F2-06)"
 type = "protected"
 protected_modules = ["apps.access.bootstrap", "apps.accounts.bootstrap", "apps.organizations.bootstrap"]

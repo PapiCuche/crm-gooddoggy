@@ -15,6 +15,7 @@ propósito; nada del texto las elige. No registra nada: lleva el texto del clien
 import json
 import re
 import secrets
+import unicodedata
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
@@ -37,9 +38,10 @@ DELIVERED = ("SENT", "DELIVERED", "READ")
 MARKS = {"IMAGE": "[imagen]", "AUDIO": "[audio]", "VIDEO": "[video]", "DOCUMENT": "[documento]"}
 UNSUPPORTED = "[mensaje no soportado]"  # y cualquier tipo que no sea `TEXT` ni un medio
 EMAIL = re.compile(r"[\w.!#$%&'*+/=?^`{|}~-]+[@＠﹫][\w-]+(?:\.[\w-]+)+")
-# Entre dos cifras, como mucho un blanco, un separador (guiones y puntos Unicode, paréntesis, barra)
-# y otro blanco, nunca un salto de línea: lineal, sin retroceso que crezca con el texto.
-SEP = r"[^\S\n]?[-.()/\u2010-\u2015\u2212\ufe58\ufe63\uff0d\uff0e]?[^\S\n]?"
+# Entre dos cifras, como mucho un blanco, un separador (guiones y puntos Unicode, paréntesis; no la
+# barra: tallas «38/40/42/44» y fechas) y otro blanco, nunca un salto de línea: sin retroceso que
+# crezca con el texto.
+SEP = r"[^\S\n]?[-.()\u2010-\u2015\u2212\ufe58\ufe63\uff0d\uff0e]?[^\S\n]?"
 DIGITS = re.compile(rf"\d(?:{SEP}\d){{6,}}")  # \d: también las cifras de ancho completo o árabes
 NAME_MIN = 3  # un nombre más corto («Al», «Li») taparía palabras comunes
 ESCAPES = {"<": "\\u003c", ">": "\\u003e", "&": "\\u0026"}
@@ -102,31 +104,58 @@ def limit() -> int:
     return count
 
 
-def mask(text: str) -> str:
-    """Correos → `[correo]`; 7 o más dígitos, con un blanco, un separador y un blanco sueltos entre
-    ellos (`SEP`) → `[número]`. Determinista; el correo primero (`987654321@x.com` entero)."""
-    return DIGITS.sub("[número]", EMAIL.sub("[correo]", text))
+def _fold(text: str) -> tuple[str, list[int]]:
+    """`text` sin tildes ni marcas (NFKD sin `Mn`), con `casefold` y ’ como ', y el índice en `text`
+    de cada carácter del resultado."""
+    folded: list[str] = []
+    origin: list[int] = []
+    for at, char in enumerate(text.replace("\u2019", "'")):
+        for part in unicodedata.normalize("NFKD", char):
+            if unicodedata.category(part) != "Mn":
+                folded.append(part.casefold())
+                origin += [at] * len(folded[-1])
+    return "".join(folded), origin
 
 
 def _names(alias: str, conversation_id: UUID) -> re.Pattern[str] | None:
-    """El nombre del contacto de la conversación (nombre visible, nombre y apellido; RLS), que una
-    respuesta rápida pone en el texto (`{{contact.name}}`): palabra entera, sin mayúsculas, el más
-    largo primero. Nunca se envía; `None` si no hay ninguno de `NAME_MIN` caracteres."""
+    """El nombre del contacto de la conversación (nombre visible y cada palabra suya, nombre y
+    apellido; RLS), que una respuesta rápida pone en el texto (`{{contact.name}}`), plegado con
+    `_fold`, el más largo primero. Nunca se envía; `None` si no hay ninguno de `NAME_MIN`
+    caracteres."""
     convo = Conversation.objects.using(alias).filter(pk=conversation_id)  # sin importar contactos
     fields = ("contact__display_name", "contact__first_name", "contact__last_name")
-    row = convo.values_list(*fields).first() or ()
-    names = sorted({n.strip() for n in row if n and len(n.strip()) >= NAME_MIN}, key=len)
+    row = convo.values_list(*fields).first() or ("", "", "")
+    found = {name.strip() for name in (*row, *row[0].split()) if name}
+    names = sorted({_fold(name)[0] for name in found if len(name) >= NAME_MIN}, key=len)
     if not names:
         return None
     either = "|".join(re.escape(name) for name in reversed(names))
-    return re.compile(rf"(?<!\w)(?:{either})(?!\w)", re.IGNORECASE)
+    return re.compile(rf"(?<!\w)(?:{either})(?!\w)")
+
+
+def _redact(text: str, names: re.Pattern[str] | None) -> str:
+    """Cada nombre de `names` en `text`, como palabra entera del texto plegado, por `[nombre]`; las
+    marcas que siguen a su última letra (una tilde en NFD) van con él."""
+    if names is None:
+        return text
+    folded, origin = _fold(text)
+    for found in reversed(list(names.finditer(folded))):
+        end = origin[found.end()] if found.end() < len(origin) else len(text)
+        text = f"{text[: origin[found.start()]]}[nombre]{text[end:]}"
+    return text
+
+
+def mask(text: str, names: re.Pattern[str] | None = None) -> str:
+    """Correos → `[correo]`; el nombre del contacto (`names`) → `[nombre]`; 7 o más dígitos con,
+    entre dos, un blanco, un separador y un blanco sueltos (`SEP`) → `[número]`. En ese orden:
+    `987654321@x.com` y `ventas.ana@x.pe` son un correo entero. Determinista."""
+    return DIGITS.sub("[número]", _redact(EMAIL.sub("[correo]", text), names))
 
 
 def _shown(row: Mapping[str, Any], names: re.Pattern[str] | None) -> str:
     if row["message_type"] != "TEXT":
         return MARKS.get(row["message_type"], UNSUPPORTED)
-    text = names.sub("[nombre]", row["body"]) if names else row["body"]
-    return mask(text)
+    return mask(row["body"], names)
 
 
 def _block(tag: str, row: Mapping[str, Any], names: re.Pattern[str] | None) -> str:

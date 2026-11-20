@@ -7,6 +7,7 @@ import json
 import logging
 import re
 import tomllib
+import unicodedata
 from itertools import count
 from types import SimpleNamespace
 from typing import Any
@@ -194,17 +195,30 @@ def test_the_contacts_own_name_is_redacted_even_from_a_quick_reply(chat: SimpleN
     values = {"contact.first_name": "Zafironombre", "contact.name": "Zafiro Contacto"}
     greeting, _ = render("Hola {{contact.first_name}}, ¿{{contact.name}} es tu nombre?", values)
     agent(chat, greeting, "SENT")
-    say(chat, "soy ZAFIRONOMBRE zafiroapellido, no Zafironombres ni Zafiro")
-    raw, _, blocks = sent(chat)
+    say(chat, "soy ZAFIRONOMBRE zafiroapellido, no Zafironombres; ventas.zafiro@miempresa.pe")
+    _, _, blocks = sent(chat)
     assert [block["texto"] for block in blocks] == [
         "Hola [nombre], ¿[nombre] es tu nombre?",
-        "soy [nombre] [nombre], no Zafironombres ni Zafiro",
+        "soy [nombre] [nombre], no Zafironombres; [correo]",  # el correo antes que el nombre
     ]  # palabra entera y sin mayúsculas
-    other = {"display_name": "Ámbar Lucía", "first_name": "Ámbar", "last_name": "Li"}
+    # sin tildes, también en NFD, y cada palabra del nombre visible (WhatsApp solo da ese)
+    jose = conversation(chat.a, {"display_name": "José Pérez"})
+    nfd = unicodedata.normalize("NFD", "José")
+    say(chat, f"Hola jose, ¿PEREZ? {nfd} y José Pérez", convo=jose)
+    _, _, [only] = sent(chat, convo=jose)
+    assert only["texto"] == "Hola [nombre], ¿[nombre]? [nombre] y [nombre]"
+    # el más largo primero, el apóstrofo tipográfico, metacaracteres y «Li» (< 3) se queda
+    other = {"display_name": "Ámbar Lucía Li", "first_name": "Kiro.*", "last_name": "D’Angelo"}
     short = conversation(chat.a, other)
-    say(chat, "Al final, Li dijo que sí; saludos a ÁMBAR LUCÍA y a ámbar", convo=short)
-    _, _, [only] = sent(chat, convo=short)  # el más largo primero; «Li» (< 3) se queda
-    assert only["texto"] == "Al final, Li dijo que sí; saludos a [nombre] y a [nombre]"
+    say(chat, "Al final, Li dijo que sí; saludos a ÁMBAR LUCÍA LI, a d'angelo y a kiro.* pero no "
+              "a kiroxyz", convo=short)  # fmt: skip
+    _, _, [only] = sent(chat, convo=short)
+    assert only["texto"] == (
+        "Al final, Li dijo que sí; saludos a [nombre], a [nombre] y a [nombre] pero no a kiroxyz"
+    )
+    # el orden: correo, nombre (aunque lleve cifras) y cifras
+    named = re.compile(rf"(?<!\w){re.escape(context._fold('Ana 9876543')[0])}(?!\w)")
+    assert mask("soy ANA 9876543, ana.9876543@x.pe", named) == "soy [nombre], [correo]"
 
 
 @pytest.mark.parametrize(
@@ -224,6 +238,7 @@ def test_the_contacts_own_name_is_redacted_even_from_a_quick_reply(chat: SimpleN
         ("4111\u20091111\u20091111\u20091111", "[número]"),
         ("123456 y 123-456", "123456 y 123-456"), ("cuesta S/ 59.90", "cuesta S/ 59.90"),
         ("precio 59.90 y 120.00", "precio 59.90 y 120.00"), ("123456\n7", "123456\n7"),
+        ("tallas 38/40/42/44", "tallas 38/40/42/44"), ("el 20/11/2026", "el 20/11/2026"),
     ],
 )  # fmt: skip
 def test_emails_and_runs_of_seven_digits_are_masked(text: str, masked: str) -> None:
@@ -275,3 +290,6 @@ def test_only_the_context_may_reach_the_message_selector_past_the_import_contrac
     contracts = config["tool"]["importlinter"]["contracts"]
     [mine] = [c for c in contracts if c.get("source_modules") == ["apps.ai_agents"]]
     assert mine["ignore_imports"] == ["apps.ai_agents.context -> apps.conversations.selectors"]
+    # y como esa excepción vale para todo el grafo, solo el arranque importa `context`
+    [guard] = [c for c in contracts if c.get("protected_modules") == ["apps.ai_agents.context"]]
+    assert (guard["type"], guard["allowed_importers"]) == ("protected", ["apps.ai_agents.apps"])
