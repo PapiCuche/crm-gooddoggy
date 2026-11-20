@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from typing import Any
 from uuid import UUID, uuid4
 
+import psycopg
 import pytest
 from django.utils import timezone
 
@@ -20,15 +21,17 @@ from apps.pricing import services
 from apps.pricing.models import INTERNAL, WHOLESALE, PriceList, ProductPrice
 from core.tenancy.scope import tenant_scope
 from tests.ai_queries import captured, writes
+from tests.conftest import migrator_conninfo
 from tests.logs import log_text
 from tests.test_ai_read_tools import COST, allow, run, shop, world
 from tests.test_authorization import acting
 from tests.test_memberships import ctx
-from tests.test_pricing_engine import row
+from tests.test_pricing_engine import MARK, row
 from tests.test_promotion_tables import promo
 
 pytestmark = pytest.mark.usefixtures("tenant_db")
 __all__ = ["shop", "world"]  # los fixtures, para pytest
+OFF = "UPDATE price_lists SET ai_exposable = false"
 FORBIDDEN = {"ok": False, "error": {"code": "FORBIDDEN"}}
 NOT_FOUND = '{"error":{"code":"NOT_FOUND"},"ok":false}'
 # código: (nombre, importe, campos); todas con precio para el collar grande
@@ -38,19 +41,31 @@ LISTS: dict[str, tuple[str, str, dict[str, Any]]] = {
     "TIE": ("Tienda", "57.50", {"sort_order": 2}),
     "EXT": ("Extra", "52.00", {"sort_order": 3}),  # la cuarta: fuera del tope
     "MAY": ("Mayorista", "40.00", {"sort_order": 0, "required_permission": WHOLESALE}),
-    "STF": ("Personal", "30.00", {"sort_order": -3, "kind": "INTERNAL"}),
-    "INT": ("Interna", "31.00", {"sort_order": -2, "required_permission": INTERNAL}),
+    # las internas no se pueden marcar (F8-07f, el CHECK de la base): `store` lo comprueba
+    "STF": ("Personal", "30.00", {"sort_order": -3, "kind": "INTERNAL", "ai_exposable": False}),
+    "INT": ("Interna", "31.00", {"sort_order": -2, "required_permission": INTERNAL,
+                                 "ai_exposable": False}),
     "OFF": ("Cerrada", "33.00", {"sort_order": -1, "is_active": False}),
     "DEL": ("Borrada", "34.00", {"sort_order": -1, "deleted_at": timezone.now()}),
     "NOM": ("Sin Marcar", "35.00", {"sort_order": -4, "ai_exposable": False}),
 }  # fmt: skip
 
 
+def as_owner(sql: str, params: list[Any]) -> None:
+    """Marca o desmarca como el propietario: `crm_app` sin `ai.manage` no puede (F8-07f)."""
+    with psycopg.connect(migrator_conninfo(), autocommit=True) as conn:
+        conn.execute(sql, params)
+
+
 def listed(org: UUID, code: str, name: str, **fields: Any) -> UUID:
-    values = {"name": name, "kind": "RETAIL", "currency": "PEN", "ai_exposable": True,
+    marked = fields.pop("ai_exposable", True)
+    values = {"name": name, "kind": "RETAIL", "currency": "PEN",
               "required_permission": "prices.view", **fields}  # fmt: skip
     with tenant_scope(ctx(org)):
-        return UUID(str(PriceList.objects.create(code=code, **values).pk))
+        made = UUID(str(PriceList.objects.create(code=code, **values).pk))
+    if marked:
+        as_owner(MARK, [[made]])
+    return made
 
 
 @pytest.fixture
@@ -63,6 +78,9 @@ def store(shop: Any) -> SimpleNamespace:
         code: listed(a, code, name, **fields) for code, (name, _, fields) in LISTS.items()
     }
     made.prices = {code: row(a, (big, made.lists[code]), LISTS[code][1], past) for code in LISTS}
+    for internal in ("STF", "INT"):
+        with pytest.raises(psycopg.errors.CheckViolation, match="price_lists_internal_not_ai_ck"):
+            as_owner(MARK, [[made.lists[internal]]])
     week = timezone.now() + timedelta(days=7)
     target = [{"variant_id": big}]
     made.promo = promo(a, [made.lists["REG"]], target, "AMOUNT_OFF", "10", past, week,
@@ -126,8 +144,7 @@ def test_up_to_three_marked_lists_with_their_name_and_the_default_first(store: A
 
 def test_with_no_list_marked_there_are_no_prices(store: Any) -> None:
     allow(store.world, "prices.view", "prices.manage")
-    with tenant_scope(ctx(store.world.a)):
-        PriceList.objects.update(ai_exposable=False)
+    as_owner(f"{OFF} WHERE organization_id = %s", [store.world.a])
     done, body = ask(store, store.shop.big)
     assert body["ok"] is True and body["data"] == {"variant_id": str(store.shop.big.pk),
                                                    "prices": []}  # fmt: skip
@@ -141,14 +158,12 @@ def test_only_marked_lists_the_person_sees_and_never_the_internal_one(store: Any
     allow(store.world, "prices.view_wholesale")
     assert names(store) == [("Precio Publico", "49.90"), ("Mayorista", "40.00"),
                             ("Oferta Web", "55.00")]  # fmt: skip
-    with tenant_scope(ctx(store.world.a)):  # lo que no ve es igual que lo no marcado
-        PriceList.objects.filter(code="MAY").update(ai_exposable=False)
+    # lo que no ve es igual que lo no marcado
+    as_owner(f"{OFF} WHERE organization_id = %s AND code = 'MAY'", [store.world.a])
     assert names(store) == without
     allow(store.world, "prices.manage", "prices.view_internal")  # lo ve todo
-    with tenant_scope(ctx(store.world.a)):
-        PriceList.objects.exclude(code__in=["STF", "INT", "OFF", "DEL", "NOM"]).update(
-            ai_exposable=False
-        )
+    kept = ["STF", "INT", "OFF", "DEL", "NOM"]
+    as_owner(f"{OFF} WHERE organization_id = %s AND code <> ALL(%s)", [store.world.a, kept])
     assert names(store) == []  # ni interna, ni inactiva, ni borrada, ni sin marcar
 
 
