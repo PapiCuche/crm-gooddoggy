@@ -1,8 +1,12 @@
 """Reglas de texto de los nombres y líneas que guardan los comandos (sucursales, equipos, marcas),
-y lo que no se ve en un texto libre que leerá el copiloto de IA (`unhide`, F8-11; ADR-034 §7).
-Puras: no dependen de ningún módulo."""
+lo que no se ve en un texto libre que leerá el copiloto de IA (`unhide`, F8-11; ADR-034 §7) y la
+marca `[verificar]` del copiloto, también disfrazada (`has_verify_mark`, F8-08a; ADR-034 §9.3).
+Puras: solo dependen de su tabla de datos (`core.confusables`)."""
 
+import re
 import unicodedata
+
+from core.confusables import PROTOTYPES
 
 # Rellenos hangul y los blancos jeroglíficos (U+13441 y U+13442, Unicode 15): letras para Unicode
 # (`isalnum`), pero no se ven; un nombre solo de ellos parece vacío.
@@ -198,3 +202,52 @@ def unhide(text: str) -> str:
 def shows_all(text: str) -> bool:
     """¿`text` se ve entero? Es decir, `unhide` no le quitaría nada."""
     return unhide(text) == text
+
+
+VERIFY_MARK = "[verificar]"  # la marca del copiloto en lo que no tiene evidencia (ADR-034 §9)
+_PROTOTYPE = str.maketrans({char: shape for shape, chars in PROTOTYPES.items() for char in chars})
+# Antes de NFKC, que los haría un espacio: los espacios finos (U+2006–200A, U+202F y U+205F) no
+# separan una palabra a la vista; el braille vacío (`BLANK`) sí se ve como un espacio.
+_SPACING: dict[int, str | None] = {**dict.fromkeys([*range(0x2006, 0x200B), 0x202F, 0x205F]),
+                                   ord(BLANK): " "}  # fmt: skip
+
+
+def _unseen(char: str) -> bool:
+    """Lo que el esqueleto de UTS #39 quita (Default_Ignorable) y no es de formato (`Cf`, que la
+    clave ya quitó): `UNSEEN` y los puntos ignorables sin asignar. Los selectores de variación son
+    marcas (`Mn`) y se van con ellas."""
+    return _ignored(char) and unicodedata.category(char) != "Cf"
+
+
+def _skeleton(text: str) -> str:
+    """El esqueleto de confusables de UTS #39: NFD, sin `_unseen` ni las marcas que no ocupan
+    sitio (`Mn`: un punto de más sobre la «i» o un selector de variación), cada carácter por su
+    prototipo (`core.confusables`, en minúsculas) y NFD otra vez."""
+    decomposed = unicodedata.normalize("NFD", text)
+    kept = "".join(c for c in decomposed if not _unseen(c) and unicodedata.category(c) != "Mn")
+    return unicodedata.normalize("NFD", kept.translate(_PROTOTYPE))
+
+
+def _key(text: str) -> str:
+    """La clave con la que se compara (ADR-034 §9.3), en este orden: los espacios de `_SPACING`,
+    NFKC, sin `Cf`, `casefold()` y el esqueleto. Nunca se guarda ni se envía: quitar los `Cf`
+    rompería los emoji unidos por ZWJ."""
+    normal = unicodedata.normalize("NFKC", text.translate(_SPACING))
+    shown = "".join(char for char in normal if unicodedata.category(char) != "Cf")
+    return _skeleton(shown.casefold())
+
+
+def _brackets(text: str) -> str:
+    """Cada signo de apertura (`Ps`) como «(» y cada uno de cierre (`Pe`) como «)»."""
+    kinds = {"Ps": "(", "Pe": ")"}
+    return "".join(kinds.get(unicodedata.category(char), char) for char in text)
+
+
+_MARK = re.compile(rf"\(\s*{re.escape(_skeleton(VERIFY_MARK[1:-1]))}\s*\)")
+
+
+def has_verify_mark(text: str) -> bool:
+    """¿Lleva `text` la marca `[verificar]`, aunque la disfracen letras parecidas de otra escritura,
+    otro ancho, caracteres que no se ven o mayúsculas? Busca la palabra entre un signo de apertura y
+    uno de cierre cualesquiera, con espacios opcionales, en la clave `_key`. Pura; nunca lanza."""
+    return _MARK.search(_brackets(_key(text))) is not None

@@ -178,6 +178,15 @@ def test_without_a_verdict_it_is_a_503_and_nothing_is_stored(
     assert migrator.execute(INFECTED, [convo]).fetchall() == []  # nada que auditar
 
 
+def test_a_caption_with_the_verify_mark_is_a_400_and_leaves_no_blob_and_no_row(
+    inbox: SimpleNamespace, blobs: InMemoryStorage, migrator: DB
+) -> None:
+    """F8-08a: el pie de foto sale al cliente; la marca da 400 y el blob ya guardado se borra."""
+    refused = upload(signed(inbox.ana), inbox.convs["nobody"], form(caption="Total (VERIFICAR)"))
+    assert (refused.status_code, refused.json()["code"]) == (400, "UNVERIFIED_CONTENT")
+    assert blobs.objects == {} and migrator.execute(COUNT).fetchone() == (0, 0)
+
+
 def test_a_clean_file_that_fails_to_store_leaves_no_blob_and_no_row(
     inbox: SimpleNamespace, migrator: DB, clamd: FakeClamd, monkeypatch: pytest.MonkeyPatch
 ) -> None:
