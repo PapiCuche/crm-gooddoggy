@@ -7220,9 +7220,10 @@ paths:
           description: ''
     post:
       operationId: price_lists_create
-      description: Crea una lista. Es la predeterminada de su moneda si se pide (la
+      description: 'Crea una lista. Es la predeterminada de su moneda si se pide (la
         anterior deja de serlo) o, sin `is_default`, si es la primera activa con `prices.view`;
         solo una así puede serlo (400 en `is_default`). 409 `PRICE_LIST_CODE_TAKEN`.
+        `ai_exposable` da 400 en ese campo: va por `…/ai-exposable/`.'
       parameters:
       - in: path
         name: org_slug
@@ -7328,7 +7329,8 @@ paths:
         no cambian. `is_default=true` la hace la predeterminada de su moneda (la anterior
         deja de serlo); debe estar activa y pedir `prices.view` (400 en `is_default`).
         409 `PRICE_LIST_IS_DEFAULT`: la predeterminada no se desactiva, no deja de
-        serlo ni cambia de `required_permission`; antes hay que elegir otra.'
+        serlo ni cambia de `required_permission`; antes hay que elegir otra. `ai_exposable`
+        da 400 en ese campo: va por `…/ai-exposable/`.'
       parameters:
       - in: path
         name: org_slug
@@ -7382,6 +7384,73 @@ paths:
                 $ref: '#/components/schemas/Error'
           description: ''
         '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/pricing/price-lists/{price_list_id}/ai-exposable/:
+    put:
+      operationId: price_lists_ai_exposable
+      description: 'Marca o desmarca la lista como citable por la IA (`ai.manage`
+        y segundo factor reciente) y lo audita (`price_list.ai_exposable_changed`,
+        antes y después); igual que estaba, no cambia nada. La interna da 400 en `ai_exposable`.
+        404: no existe, está borrada o no es de la organización. 429 `RATE_LIMITED`:
+        el tope por persona de las escrituras de IA, con `Retry-After`.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: price_list_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - pricing
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PriceListAiExposableRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PriceList'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '429':
           content:
             application/json:
               schema:
@@ -16244,8 +16313,6 @@ components:
           type: boolean
         required_permission:
           $ref: '#/components/schemas/PricePermissionEnum'
-        ai_exposable:
-          type: boolean
         payment_condition:
           nullable: true
           oneOf:
@@ -16712,8 +16779,8 @@ components:
             * `prices.view_internal` - prices.view_internal
         ai_exposable:
           type: boolean
-          description: Si un agente de IA de cara al cliente podrá comunicar sus precios
-            (Fase 8).
+          description: Si la IA puede citar sus precios. Lo cambia `PUT …/ai-exposable/`
+            (`ai.manage`).
         payment_condition:
           nullable: true
           oneOf:
@@ -16735,6 +16802,14 @@ components:
       - payment_condition
       - required_permission
       - sort_order
+    PriceListAiExposableRequest:
+      type: object
+      properties:
+        ai_exposable:
+          type: boolean
+          description: Exactamente `true` o `false`.
+      required:
+      - ai_exposable
     PriceListCreateRequest:
       type: object
       properties:
@@ -16748,8 +16823,6 @@ components:
           type: boolean
         required_permission:
           $ref: '#/components/schemas/PricePermissionEnum'
-        ai_exposable:
-          type: boolean
         payment_condition:
           nullable: true
           oneOf:

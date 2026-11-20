@@ -25,7 +25,14 @@ from django.db import DatabaseError, connections
 from apps.access.selectors import AccessDenied, Denied
 from apps.ai_gateway import keys, prices, switch, turns
 from apps.ai_gateway.anthropic import AnthropicAdapter
-from apps.ai_gateway.llm import LLMProviderAdapter, LLMRequest, LLMResponse, Outcome, ProviderError
+from apps.ai_gateway.llm import (
+    LLMProviderAdapter,
+    LLMRequest,
+    LLMResponse,
+    Outcome,
+    ProviderError,
+    ToolCall,
+)
 from apps.ai_gateway.models import AccountStatus, AIProviderAccount
 from core import sealed
 from core.observability.logging import get_logger
@@ -155,6 +162,13 @@ def complete(ctx: TenantContext, request: LLMRequest, provider: str = "ANTHROPIC
         else:  # no salió, o un error sin uso: se libera
             settle(ctx, held, error.outcome, Decimal(0), None, started, error.request_id)
         raise GatewayError(error.outcome) from None
+    # F8-07d: una tool no ofrecida o un id ya usado en la conversación no se podrían reenviar
+    offered = {tool.name for tool in request.tools}
+    used = {b.id for t in request.turns if type(t.content) is tuple
+            for b in t.content if type(b) is ToolCall}  # fmt: skip
+    if any(call.name not in offered or call.id in used for call in reply.tool_calls):
+        settle(ctx, held, Outcome.PROVIDER_UNCERTAIN, None, None, started, reply.request_id)
+        raise GatewayError(Outcome.PROVIDER_UNAVAILABLE)
     cost = prices.cost(provider, model, reply.usage)
     if cost > 0:
         settle(ctx, held, Outcome.OK, cost, reply, started)

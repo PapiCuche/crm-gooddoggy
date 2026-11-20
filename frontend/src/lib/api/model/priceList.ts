@@ -29,7 +29,7 @@ export interface PriceList {
    * * `prices.view_internal` - prices.view_internal
    */
   required_permission: PricePermissionEnum;
-  /** Si un agente de IA de cara al cliente podrá comunicar sus precios (Fase 8). */
+  /** Si la IA puede citar sus precios. Lo cambia `PUT …/ai-exposable/` (`ai.manage`). */
   ai_exposable: boolean;
   payment_condition: PriceListPaymentConditionEnum | NullEnum | null;
   is_active: boolean;
