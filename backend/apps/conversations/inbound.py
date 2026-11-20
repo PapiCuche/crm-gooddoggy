@@ -56,7 +56,7 @@ from core.observability.logging import get_logger
 from core.outbox import emit
 from core.tenancy.context import TenantContext
 from core.tenancy.scope import require_scope
-from core.text import unhide
+from core.text import shows_all, unhide
 
 logger = get_logger(__name__)
 ZWJ = "‍"
@@ -229,7 +229,7 @@ def receive(ctx: TenantContext, account: ChannelAccount, message: dict[str, Any]
     body, message_type, attachment = None, MessageType.UNSUPPORTED, media.found(kind, message)
     if kind == "text":
         body = clean_text(message["text"]["body"])
-    if body is not None and visible(body):
+    if body is not None and visible(body) and shows_all(body):  # si no, un texto fijo
         message_type = MessageType.TEXT
     else:
         body = LABELS.get(str(kind), GENERIC) if kind != "text" else GENERIC
@@ -305,8 +305,9 @@ def _social_body(message: dict[str, Any]) -> tuple[str, str]:
     reply = message.get("reply_to")
     if visible(body):  # el texto manda, aunque traiga un adjunto
         story = isinstance(reply, dict) and isinstance(reply.get("story"), dict)
-        said = f"{STORY_REPLY}: {body}" if story else body
-        return unhide(_cut(said, BODY_MAX)), MessageType.TEXT  # el corte no deja nada suelto
+        said = unhide(_cut(f"{STORY_REPLY}: {body}" if story else body, BODY_MAX))
+        if visible(said) and shows_all(said):  # el corte no deja nada suelto; si no, un texto fijo
+            return said, MessageType.TEXT
     found = message.get("attachments")
     first = found[0] if isinstance(found, list) and found and isinstance(found[0], dict) else {}
     return SOCIAL_LABELS.get(str(first.get("type")), GENERIC), MessageType.UNSUPPORTED

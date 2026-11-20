@@ -22,7 +22,9 @@ HIDDEN_MAX = 8  # selectores y ZWNJ/ZWJ en una línea: un nombre real lleva de 1
 MARKS_MAX = 4  # marcas combinantes seguidas: el vietnamita lleva 2; el hebreo con puntos, hasta 4
 DIRECTION = frozenset("\u200e\u200f\u061c")  # LRM, RLM y ALM: el texto árabe y hebreo los usa
 TONES = range(0x1F3FB, 0x1F400)  # los tonos de piel de los emoji
-PLAIN = "\ufe0e\ufe0f"  # VS15 y VS16: texto o emoji; un bit por emoji visible, no cuentan al tope
+PLAIN = "\ufe0e\ufe0f"  # VS15 y VS16: texto o emoji (log2 3 bits por emoji visible), sin tope
+# Lo que lleva VS15/16 sin ser un símbolo (So, Sm): los keycaps y ‼ ⁉ 〰 〽 ™ ℹ.
+EMOJI = frozenset("#*0123456789\u203c\u2049\u3030\u303d\u2122\u2139")
 INFO = "\u2139"  # U+2139: una letra para Unicode, pero también un emoji con VS16
 BLANK = "\u2800"  # el braille vacío: un símbolo que no se ve
 _IDEOGRAPH = ("CJK UNIFIED IDEOGRAPH", "CJK COMPATIBILITY IDEOGRAPH")
@@ -37,7 +39,10 @@ def _selector_fits(selector: str, base: str) -> bool | None:
     (el carácter anterior, o vacío)? Python no trae la tabla de secuencias de variación de
     Unicode: es una aproximación por clase de base."""
     point = ord(selector)
-    if 0xFE00 <= point <= 0xFE0F:  # VS1–16: emoji o texto (un corazón, un keycap) e ideogramas
+    if selector in PLAIN:  # VS15/16: tras un símbolo o lo que puede ser emoji (keycap, ‼, ™, ℹ)
+        kind = unicodedata.category(base) if base else ""
+        return base != BLANK and (kind in ("So", "Sm") or base in EMOJI)
+    if 0xFE00 <= point <= 0xFE0F:  # VS1–14: emoji o texto (un corazón, un keycap) e ideogramas
         symbol = bool(base) and base != BLANK and unicodedata.category(base)[0] in "SNP"
         symbol = symbol or base == INFO
         return symbol or _named(base, _IDEOGRAPH)
@@ -78,10 +83,11 @@ def _joins(text: str | list[str], at: int, after: str) -> bool:
 
 def _glues(text: list[str], at: int, after: str) -> bool:
     """¿El ZWJ en `at` une dos emoji (la familia, el corazón en llamas, una profesión con tono de
-    piel)? Antes, un símbolo o un tono de piel, con su VS16; después, otro símbolo."""
+    piel)? Antes, un símbolo o un tono de piel, con su VS16; después, otro símbolo (o uno
+    matemático, como la flecha de la cara que niega)."""
     before = _base(text, at)
     emoji = bool(before) and (unicodedata.category(before) == "So" or ord(before) in TONES)
-    return emoji and bool(after) and unicodedata.category(after) == "So"
+    return emoji and bool(after) and unicodedata.category(after) in ("So", "Sm")
 
 
 def _hides(text: str) -> bool:
@@ -159,12 +165,15 @@ def unhide(text: str) -> str:
     si cambiaría (`shows_all`)."""
     seen = sum(not (_mark(c) or c in JOINERS or c in DIRECTION or _ignored(c)) for c in text)
     room = HIDDEN_MAX + seen // 20
+    ahead = [""] * (len(text) + 1)  # lo siguiente que no se quita nunca (`_ignored` sí se quita)
+    for at in range(len(text) - 1, -1, -1):
+        ahead[at] = ahead[at + 1] if _ignored(text[at]) else text[at]
     kept: list[str] = []
     marks = 0  # marcas seguidas sobre la última base
     for at, char in enumerate(text):
         if _ignored(char):
             continue
-        after, mark = text[at + 1 : at + 2], _mark(char)
+        after, mark = ahead[at + 1], _mark(char)
         fits = _selector_fits(char, kept[-1] if kept else "")
         if char in JOINERS:
             glue = char == "\u200d" and _glues(kept, len(kept), after)

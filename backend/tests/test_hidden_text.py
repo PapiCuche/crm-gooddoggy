@@ -20,7 +20,7 @@ from apps.pricing.promotions import _text as promotion_text
 from apps.quotes.commands import _text as quote_text
 from apps.tasks.commands import _text as task_text
 from core.tenancy.scope import tenant_scope
-from core.text import line, shows_all, unhide
+from core.text import UNSEEN, line, shows_all, unhide
 from tests.meta_sim import social, webhooks
 from tests.test_conversations_api import crm, inbox, real_stack
 from tests.test_conversations_send_api import post
@@ -37,6 +37,8 @@ __all__ = ["channel", "crm", "inbox", "real_stack", "social_world", "world"]  # 
 
 IVS, VS16, ZWNJ, ZWJ, LRM = "\U000e0100", "\ufe0f", "\u200c", "\u200d", "\u200e"
 SMUGGLED = "hola \U0001f600" + IVS * 200 + VS16 * 50  # texto escondido en un emoji
+DANGLING = "hola \U0001f600" + ZWJ + "\U0001d159 adi\u00f3s"  # U+1D159: un So que no se ve
+EMOJI_DANGLING = "\U0001f600" + ZWJ + "\U0001d159"
 # (lo que llega, lo que queda): cada carga conocida pierde lo que no se ve, y nada más
 PAYLOADS = [
     (SMUGGLED, "hola \U0001f600" + VS16),
@@ -56,6 +58,13 @@ PAYLOADS = [
     ("\U0001f600" + ZWNJ + "\U0001f600", "\U0001f600\U0001f600"),  # ZWNJ no une emoji
     ("葛" + IVS + IVS, "葛" + IVS),
     ("a" + "\u0300" * 4 + LRM + "\u0300" * 4, "a" + "\u0300" * 4 + LRM),  # LRM no es una base
+    ("hola \U0001f600" + ZWJ + "\U0001d159 adi\u00f3s", "hola \U0001f600 adi\u00f3s"),  # no se ve
+    ("\u0628" + ZWNJ + "\u3164\u0628", "\u0628" + ZWNJ + "\u0628"),  # lo que sigue y sí queda
+    (
+        "Hola" + VS16 + ", qu\u00e9" + "\ufe0e" + " tal." + VS16,
+        "Hola, qu\u00e9 tal.",
+    ),
+    ("(" + VS16 + "a!" + "\ufe0e" + "\u00bf" + VS16, "(a!\u00bf"),  # la prosa no lleva VS15/16
 ]
 # Lo que escribe la gente: nada cambia.
 NORMAL = [
@@ -75,6 +84,10 @@ NORMAL = [
     "x" + "\u0301" * 4,
     "a\tb\nc",
     "Ver \u2194\ufe0e " * 20,  # VS15, forma de texto: tampoco cuenta
+    "\U0001f468\u200d\U0001f469\u200d\U0001f467\u200d\U0001f466 " * 5,  # 15 ZWJ entre emoji
+    "No \U0001f642\u200d\u2194\ufe0f s\u00ed \U0001f642\u200d\u2195\ufe0f",  # ZWJ antes de un Sm
+    "#\ufe0f\u20e3 *\ufe0f\u20e3 9\ufe0f\u20e3 5\ufe0f \u2049\ufe0f \u3030\ufe0f",  # keycaps y ⁉ 〰
+    "\u303d\ufe0f \u2122\ufe0f \u00a9\ufe0f \u25b6\ufe0f \u2600\ufe0e",
 ]
 
 
@@ -104,6 +117,7 @@ FUZZ = (
     "a\u00e9 \u00f1\n\t\U0001f600\U0001f44d\U0001f3fd\u2764\u270b\u845b\u0628\u0915\u094d\u1820"
     "\u3164\u2800\u0301\u0300\u20e3\ufe0e\ufe0f\U000e0100\U000e01ef\u180b\u200c\u200d\u200e"
     "\u200b\u202e\U000e0041\U000e0080\ud800\udfff\x00\x7f\u034f\uffa1\u00aa\u2113\U0001d41a\u0561"
+    "\U0001d159\U00016fe4\u17b4\u17b5\u115f\u1160\uffa0\U00013441\U00013442\u2194\U0001f642#9!\u2122"
 )
 
 
@@ -119,11 +133,20 @@ def test_unhide_never_raises_is_idempotent_and_inbound_text_always_passes_the_co
     for _ in range(3000):
         raw = _random(rng, rng.randrange(0, 60))
         once = unhide(raw)
-        assert unhide(once) == once, ascii(raw)
+        assert unhide(once) == once, ascii(raw)  # idempotente
         clean = inbound.clean_text(raw)
-        assert shows_all(clean), ascii(raw)
+        assert unhide(clean) == clean and shows_all(clean), ascii(raw)
         if inbound.visible(clean):
             assert clean_body(clean) == clean  # `record_inbound` nunca lo rechaza
+
+
+def test_every_unseen_character_after_a_joiner_leaves_no_joiner_hanging() -> None:
+    for unseen in UNSEEN:
+        for before in ("\U0001f600", "\u0628"):
+            for joiner in (ZWNJ, ZWJ):
+                raw = f"a {before}{joiner}{unseen} b"
+                assert unhide(raw) == f"a {before} b", ascii(raw)
+                assert inbound.clean_text(raw) == f"a {before} b"
 
 
 def test_the_cut_of_a_story_reply_leaves_nothing_hidden_hanging() -> None:
@@ -131,6 +154,14 @@ def test_the_cut_of_a_story_reply_leaves_nothing_hidden_hanging() -> None:
     text = "x" * (room - 2) + "\u0628" + ZWNJ + "\u0628"  # el corte cae justo tras el ZWNJ
     body, kind = inbound._social_body({"text": text, "reply_to": {"story": {"id": "1"}}})
     assert kind == "TEXT" and body.endswith("x\u0628") and clean_body(body) == body
+
+
+def test_a_social_text_the_commands_would_refuse_becomes_a_fixed_label(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert inbound._social_body({"text": "hola"}) == ("hola", "TEXT")
+    monkeypatch.setattr(inbound, "shows_all", lambda text: False)  # si la limpieza fallara
+    assert inbound._social_body({"text": "hola"}) == (inbound.GENERIC, "UNSUPPORTED")
 
 
 def test_unhide_is_linear_on_large_input() -> None:
@@ -229,7 +260,7 @@ def _bodies(org: Any) -> list[str]:
 
 @pytest.mark.usefixtures("tenant_db", "no_realtime_broker")
 def test_whatsapp_stores_the_message_without_the_hidden_part_and_never_rejects_it(
-    crm: SimpleNamespace,
+    crm: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     make(crm.a)
     only_hidden = "\u3164" * 5 + IVS * 20
@@ -239,6 +270,13 @@ def test_whatsapp_stores_the_message_without_the_hidden_part_and_never_rejects_i
     )
     assert ingress.process() == {"PROCESSED": 2}
     assert _bodies(crm.a) == ["hola \U0001f600" + VS16, inbound.GENERIC]
+    deliver_wa(webhooks.text_message(DANGLING, wamid="wamid.3"))
+    assert ingress.process() == {"PROCESSED": 1}  # ni FAILED ni reintentos sin fin
+    assert _bodies(crm.a)[-1] == "hola \U0001f600 adi\u00f3s"
+    monkeypatch.setattr(inbound, "shows_all", lambda text: False)  # si la limpieza fallara
+    deliver_wa(webhooks.text_message("hola", wamid="wamid.4"))
+    assert ingress.process() == {"PROCESSED": 1}
+    assert _bodies(crm.a)[-1] == inbound.GENERIC
 
 
 @pytest.mark.usefixtures("tenant_db")
@@ -247,9 +285,12 @@ def test_messenger_and_instagram_store_the_message_without_the_hidden_part(
 ) -> None:
     messenger = social.text(social.MESSENGER, body=SMUGGLED, mid="m_SIMIN000001")
     deliver(social.signed(social.MESSENGER, messenger))
+    for net, mid in ((social.MESSENGER, "m_SIMIN000003"), (social.INSTAGRAM, "m_SIMIN000004")):
+        deliver(social.signed(net, social.text(net, body=EMOJI_DANGLING, mid=mid)))
     story = social.story_reply(body="Lindo" + ZWNJ * 9 + "\u0300" * 9, mid="m_SIMIN000002")
     deliver(social.signed(social.INSTAGRAM, story))
-    assert ingress.process() == {"PROCESSED": 2}
+    assert ingress.process() == {"PROCESSED": 4}
     assert sorted(_bodies(social_world.a)) == sorted(
         ["hola \U0001f600" + VS16, f"{inbound.STORY_REPLY}: Lindo" + "\u0300" * 4]
+        + ["\U0001f600"] * 2
     )
