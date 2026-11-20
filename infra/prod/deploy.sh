@@ -43,10 +43,16 @@ log() {
   if [ -n "$locked" ]; then echo "$line" >> "$state/deploy.log"; fi
 }
 die() { finished=1; log "ERROR: $*"; exit 1; }
+# Los archivos de Compose de este servidor (dedicado o compartido, ADR-046): host-mode.sh.
+# shellcheck source=infra/prod/host-mode.sh
+. "$here/host-mode.sh"
+files=(-f "$here/compose.yaml")
+override=$(crm_compose_override "$here") || { echo "ERROR: modo del servidor ilegible (host-mode)" >&2; exit 1; }
+[ -z "$override" ] || files+=(-f "$override")
 compose() {
   local release=$1
   shift
-  docker compose -f "$here/compose.yaml" --env-file "$release" "$@"
+  docker compose "${files[@]}" --env-file "$release" "$@"
 }
 git_root() { git -c core.fsmonitor= -c safe.directory="$root" -C "$root" "$@"; }
 

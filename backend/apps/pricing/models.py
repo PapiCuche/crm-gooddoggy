@@ -56,7 +56,7 @@ class PriceList(TenantModel):
     currency = models.CharField(max_length=3)  # ISO 4217
     is_default = models.BooleanField(default=False)
     required_permission = models.CharField(max_length=32)
-    ai_exposable = models.BooleanField(default=False)  # sin efecto hasta la Fase 8
+    ai_exposable = models.BooleanField(default=False)  # lo decide el propietario (D-F8-06)
     payment_condition = models.CharField(  # noqa: DJ001
         max_length=16, choices=PaymentCondition.choices, null=True, blank=True
     )
@@ -109,6 +109,11 @@ class PriceList(TenantModel):
             models.CheckConstraint(  # y la ve quien ve precios (03 §H, 04 §K.2)
                 condition=models.Q(is_default=False) | models.Q(required_permission=VIEW),
                 name="price_lists_default_view_ck",
+            ),
+            models.CheckConstraint(  # la IA nunca cita la interna, por tipo o por quién la ve
+                condition=models.Q(ai_exposable=False)
+                | ~models.Q(kind=Kind.INTERNAL) & ~models.Q(required_permission=INTERNAL),
+                name="price_lists_internal_not_ai_ck",
             ),
         ]
 

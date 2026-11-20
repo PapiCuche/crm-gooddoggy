@@ -33,7 +33,8 @@ if IFS= read -r _; then echo "docker lee la entrada de smoke.sh: $*" >&2; exit 1
 case "$*" in *" ${DOCKER_TIMEOUT:-none} "*) exit 124 ;; esac
 case "$*" in
   *" exec -T backend python -c "*) echo "${PG_OUT:-crm_app panic none 0 terse log superuser-rejected}" ;;
-  *" logs "*) if [ -n "${LEAK:-}" ]; then cat "$CALLS"; else echo '{"uri":"/webhooks/meta/?redacted"}'; fi ;;
+  *" logs "*) if [ -n "${LEAK:-}" ]; then cat "$CALLS"; else echo '{"uri":"/webhooks/meta/?redacted"}'; fi
+    [ -z "${LOG_LINE:-}" ] || echo "$LOG_LINE" ;;
   *) echo "docker inesperado: $*" >&2; exit 1 ;;
 esac
 EOF
@@ -186,6 +187,13 @@ check "/demo que redirige" "/demo se publica" CODE_DEMO=307
 check "/health/ready publicado" "/health/ready se publica" CODE_HEALTH_READY=200
 check "/health/live publicado" "/health/live se publica" CODE_HEALTH_LIVE=200
 check "HTTP sin redirección" "HTTP no redirige a HTTPS" CODE_HTTP=200
+# Servidor compartido (ADR-046): el override lo da CRM_COMPOSE_OVERRIDE, como en el simulacro.
+shared=CRM_COMPOSE_OVERRIDE=/srv/test/compose.shared.yaml
+check "dedicado: 301 no vale (Caddy responde 308)" "HTTP no redirige a HTTPS" CODE_HTTP=301
+check "compartido: 301 de la CDN vale" OK CODE_HTTP=301 "$shared"
+check "compartido: 308 de Caddy vale" OK "$shared"
+check "compartido: el proxy ve una IP privada" "el proxy ve una IP privada como IP del cliente" "$shared" 'LOG_LINE={"client_ip":"172.31.250.2"}'
+check "compartido: IP pública del cliente" OK "$shared" 'LOG_LINE={"client_ip":"203.0.113.7"}'
 check "la query de /webhooks en los logs" "la query de /webhooks aparece en los logs" LEAK=1
 
 [ "$failures" = 0 ] || {

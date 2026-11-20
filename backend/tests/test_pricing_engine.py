@@ -9,6 +9,7 @@ from typing import Any
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
+import psycopg
 import pytest
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
@@ -20,7 +21,7 @@ from apps.access.services import clone_role_templates
 from apps.accounts.models import User
 from apps.catalog.models import Product, ProductVariant
 from apps.pricing import prices, services
-from apps.pricing.models import PriceList, ProductPrice
+from apps.pricing.models import INTERNAL, PriceList, ProductPrice
 from apps.pricing.services import Audience, ListNotVisible, PriceQuery, PriceResolution, Reason
 from core.tenancy.scope import tenant_scope
 from tests import test_authorization
@@ -35,6 +36,7 @@ LIMA, US = ZoneInfo("America/Lima"), timedelta(microseconds=1)
 T0 = datetime(2026, 3, 1, tzinfo=LIMA)  # 00:00 en Lima: 05:00 en UTC
 T1 = datetime(2026, 3, 15, 12, 30, tzinfo=LIMA)
 _emails = iter(range(10_000))
+MARK = "UPDATE price_lists SET ai_exposable = true WHERE id = ANY(%s)"
 
 
 def item(org: UUID, sku: str = "IP16", product: str = "ACTIVE", **variant: Any) -> UUID:
@@ -301,17 +303,16 @@ def test_who_sees_each_list_and_the_default_per_currency(world: Any) -> None:
         )  # una persona sin sus permisos
 
 
-def test_public_ai_needs_an_exposable_list_and_a_visible_variant_and_product(world: Any) -> None:
-    exposed = price_list(world.a, is_default=True, ai_exposable=True)
+def test_public_ai_needs_an_exposable_list_and_a_visible_variant_and_product(
+    world: Any, migrator: psycopg.Connection[Any]
+) -> None:
+    exposed = price_list(world.a, is_default=True)
     hidden = price_list(world.a, "MAYORISTA", ai_exposable=False)
-    gone = price_list(world.a, "BORRADA", ai_exposable=True, deleted_at=T0)
-    internal = price_list(
-        world.a,
-        "INTERNA",
-        kind="INTERNAL",
-        required_permission="prices.view_internal",
-        ai_exposable=True,
-    )
+    gone = price_list(world.a, "BORRADA", deleted_at=T0)
+    internal = price_list(world.a, "INTERNA", kind="INTERNAL", required_permission=INTERNAL)
+    migrator.execute(MARK, [[exposed, gone]])  # como el propietario: `crm_app` no las marca
+    with pytest.raises(psycopg.errors.CheckViolation, match="price_lists_internal_not_ai_ck"):
+        migrator.execute(MARK, [[internal]])  # la interna, nunca (F8-07f)
     plain, no_variant, no_product = (
         item(world.a),
         item(world.a, "V2", ai_visible=False),
@@ -333,8 +334,7 @@ def test_public_ai_needs_an_exposable_list_and_a_visible_variant_and_product(wor
     with pytest.raises(ListNotVisible):
         public_ai(world.a, PriceQuery(plain, internal, T1))  # ni la interna (04 §K.2)
     assert amount(human(world.a, manager, PriceQuery(plain, hidden, T1))) == Decimal("100")
-    with tenant_scope(ctx(world.a)):
-        PriceList.objects.filter(pk=exposed).update(ai_exposable=False)
+    migrator.execute("UPDATE price_lists SET ai_exposable = false WHERE id = %s", [exposed])
     with pytest.raises(ListNotVisible):  # la predeterminada tampoco, si no se expone
         public_ai(world.a, PriceQuery(plain, None, T1))
     with pytest.raises(ListNotVisible):  # ni la de otra organización
