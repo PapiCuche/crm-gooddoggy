@@ -31,8 +31,10 @@ INTERNAL = ("kind = 'INTERNAL'", "required_permission = 'prices.view_internal'")
 
 
 def refused(context: TenantContext, change: str, listed: UUID, match: str = GUARD) -> None:
-    with pytest.raises(IntegrityError, match=match), tenant_scope(context):
+    with pytest.raises(IntegrityError) as error, tenant_scope(context):
         raw(SET.format(change), [listed])
+    cause = error.value.__cause__  # el nombre de la restricción, no solo el texto
+    assert isinstance(cause, psycopg.Error) and cause.diag.constraint_name == match
 
 
 def done(context: TenantContext, change: str, listed: UUID) -> None:
@@ -58,6 +60,10 @@ def test_only_a_member_with_ai_manage_who_sees_the_list_changes_it_with_sql(
         for context in outsiders:
             refused(context, f"ai_exposable = {value}", regular)
         refused(vera, f"ai_exposable = {value}", wholesale)  # no la ve
+        # ni cambiando a la vez quién la ve, hacia una que ve o desde una que ve
+        refused(vera, f"ai_exposable = {value}, required_permission = 'prices.view'", wholesale)
+        hidden = "required_permission = 'prices.view_wholesale'"
+        refused(vera, f"ai_exposable = {value}, {hidden}", regular)
         assert exposed(migrator) == before
         done(vera, f"ai_exposable = {value}", regular)
         done(ctx(shop.a, shop.ana), f"ai_exposable = {value}", wholesale)  # el Owner ve todas
@@ -100,8 +106,9 @@ def test_a_marked_list_becomes_internal_only_if_the_same_write_unmarks_it(
     for change in INTERNAL:
         for context in (bea, ctx(shop.a, shop.ana)):
             refused(context, change, regular, INTERNAL_CK)
-        with pytest.raises(psycopg.errors.CheckViolation, match=INTERNAL_CK):
+        with pytest.raises(psycopg.errors.CheckViolation) as error:
             migrator.execute(SET.format(change), [regular])
+        assert error.value.diag.constraint_name == INTERNAL_CK
     refused(bea, "ai_exposable = false", regular)
     assert exposed(migrator) == ["MAYORISTA", "REGULAR"]
     for listed, change in zip((regular, wholesale), INTERNAL, strict=True):

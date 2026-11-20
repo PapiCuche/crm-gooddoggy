@@ -9,7 +9,8 @@ se sostiene también en la base, no solo en la API y en los comandos.
   fijo, para `crm_app`; el migrador, propietario, no pasa por él): una lista nace sin marcar, y
   `ai_exposable` solo cambia si quien actúa es una persona (`app.actor_type = 'USER'`,
   `app.user_id`) miembro `ACTIVE`, usuario activo, con `ai.manage` y que ve la lista (su
-  `required_permission` o `prices.manage`), como pide `set_ai_exposable`. Desmarcar una lista que
+  `required_permission` o `prices.manage`) tal como está y como queda: cambiar a la vez quién la
+  ve no sirve para marcar una que no ve, como pide `set_ai_exposable`. Desmarcar una lista que
   en la misma escritura queda interna lo hace quien la edita (`prices.manage`, el camino de
   `update_price_list`).
 
@@ -66,8 +67,9 @@ BEGIN
             ON rp.organization_id = m.organization_id AND rp.role_id = mr.role_id
          WHERE m.organization_id = NEW.organization_id AND m.user_id = who
            AND m.status = 'ACTIVE' AND u.is_active
-         GROUP BY m.id  -- `ai.manage`, y ve la lista: su permiso de lectura o `prices.manage`
+         GROUP BY m.id  -- `ai.manage`, y la ve antes y después (su permiso o `prices.manage`)
         HAVING bool_or(rp.permission_code = 'ai.manage')
+           AND bool_or(rp.permission_code IN (OLD.required_permission, 'prices.manage'))
            AND bool_or(rp.permission_code IN (NEW.required_permission, 'prices.manage'))
     ) THEN
         {FAIL}
