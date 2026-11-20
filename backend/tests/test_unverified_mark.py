@@ -46,13 +46,10 @@ MARKED = {  # la variante y el código con el que la ruta la rechaza
 PLAIN = ("verificar", "Lo vamos a verificar", "por verificar", "[verificado]", "[ver ificar]")
 
 HIDDEN = (  # más variantes que la búsqueda ve (`clean_body` ya rechaza algunas)
-    "[veri\u2060ficar]",
-    "[veri\u0307ficar]",
-    "[\u115fverificar]",
-    "[\nverificar\t]",
-    "[\u2028verificar\u1680]",
+    "[veri\u2060ficar]", "[veri\u0307ficar]", "[\u115fverificar]",
+    "[\nverificar\t]", "[\u2028verificar\u1680]",
     *(f"[veri{space}ficar]" for space in "\u2009\u202f\u2006\u205f"),
-)
+)  # fmt: skip
 
 
 @pytest.mark.parametrize("text", [VERIFY_MARK, *HIDDEN, *MARKED])
@@ -95,13 +92,12 @@ def test_the_table_comes_from_the_pinned_file_and_only_what_can_form_the_mark_en
 @pytest.mark.usefixtures("tenant_db")
 def test_the_mark_is_refused_before_any_query(inbox: SimpleNamespace) -> None:
     with tenant_scope(ctx(inbox.a, inbox.ana)) as tenant:
-        alias = require_scope(tenant)
-        with CaptureQueriesContext(connections[alias]) as seen:
-            with pytest.raises(commands.UnverifiedContent):
-                commands.record_outbound(
-                    tenant, conversation_id=inbox.convs["nobody"], client_message_id=uuid4(),
-                    body="[VERIFICAR]", purpose="CUSTOMER_REPLY",
-                )  # fmt: skip
+        seen = CaptureQueriesContext(connections[require_scope(tenant)])
+        with seen, pytest.raises(commands.UnverifiedContent):
+            commands.record_outbound(
+                tenant, conversation_id=inbox.convs["nobody"], client_message_id=uuid4(),
+                body="[VERIFICAR]", purpose="CUSTOMER_REPLY",
+            )  # fmt: skip
     assert seen.captured_queries == []  # ni el permiso, ni la conversación, ni la transacción
 
 

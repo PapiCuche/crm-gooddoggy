@@ -48,27 +48,20 @@ def _shape(text: str) -> str:
     demás, «?»."""
     kinds = {"Ps": "(", "Pe": ")"}
     return "".join(
-        char
-        if char in WORD
-        else " "
-        if char.isspace()
-        else kinds.get(unicodedata.category(char), "?")
-        for char in text
-    )
+        c if c in WORD else " " if c.isspace() else kinds.get(unicodedata.category(c), "?")
+        for c in text
+    )  # fmt: skip
 
 
 def contributes(target: str) -> bool:
     """¿Puede `target` ser parte de una marca: entero, por su final (el comienzo de la marca) o por
     su comienzo (el final de la marca)?"""
-    shape, size = _shape(target), len(target)
+    s, size = _shape(target), len(target)
     for before in range(size + 1):
         for after in range(size + 1):
             mark = "(" + " " * before + WORD + " " * after + ")"
-            if shape in mark or mark in shape:
-                return True
-            if any(
-                mark.startswith(shape[cut:]) or mark.endswith(shape[:cut]) for cut in range(1, size)
-            ):
+            ends = any(mark.startswith(s[c:]) or mark.endswith(s[:c]) for c in range(1, size))
+            if s in mark or mark in s or ends:
                 return True
     return False
 
@@ -124,10 +117,5 @@ def build(raw: bytes) -> str:
     return render(table(raw.decode("utf-8-sig")))
 
 
-def main(argv: list[str]) -> int:
-    OUT.write_text(build(Path(argv[1]).read_bytes()), encoding="utf-8")
-    return 0
-
-
 if __name__ == "__main__":
-    sys.exit(main(sys.argv))
+    OUT.write_text(build(Path(sys.argv[1]).read_bytes()), encoding="utf-8")
