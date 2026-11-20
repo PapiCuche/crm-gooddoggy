@@ -296,7 +296,8 @@ def copy(migrator: DB, table: str, over: dict[str, Any]) -> None:
         ("ai_runs", {"findings": {"PRICE": "el precio era 10"}}, CHECK, "findings_ck"),
         ("ai_runs", {"findings": {"el precio era 10": 1}}, CHECK, "findings_ck"),
         ("ai_runs", {"findings": {"PRICE": 1.5}}, CHECK, "findings_ck"),
-        ("ai_runs", {"findings": {"K" + "A" * n: 1 for n in range(33)}}, CHECK, "findings_ck"),
+        ("ai_runs", {"findings": {f"K{chr(65 + n // 26)}{chr(65 + n % 26)}": 1 for n in range(33)}},
+         CHECK, "findings_ck"),  # claves cortas: lo que falla es el número
         ("ai_runs", {"outcome": "texto libre"}, CHECK, "outcome_check"),
         ("ai_actions", {"arguments": {"query": "texto libre"}}, CHECK, "arguments_ck"),
         ("ai_actions", {"arguments": {"query": {"length": "texto"}}}, CHECK, "arguments_ck"),
@@ -342,7 +343,8 @@ def test_the_database_refuses_free_text_and_inconsistent_rows(
 def test_a_run_counts_up_to_32_finding_types(world: SimpleNamespace, migrator: DB) -> None:
     """F8-08f (0003): los 10 tipos del Output Guard I y los 7 de los detectores caben."""
     save(world, first(world))
-    copy(migrator, "ai_runs", {"findings": {"K" + "A" * n: 1 for n in range(32)}})
+    copy(migrator, "ai_runs", {"findings": {f"K{chr(65 + n // 26)}{chr(65 + n % 26)}": 1
+                                             for n in range(32)}})  # fmt: skip
 
 
 def test_a_tool_the_model_invented_is_stored_as_unknown_without_arguments(

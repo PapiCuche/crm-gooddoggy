@@ -73,7 +73,45 @@ CASES = [
     ("Ya está [verificar]", "verificar", "MARKUP"),
     ("Ya está [vеrificar]", "\u0435", "MARKUP"), ("Ya [veri\u2009ficar]", "\u2009", "MARKUP"),
     ("Ya está ［ＶＥＲＩＦＩＣＡＲ］", "ＶＥＲ", "MARKUP"),
+    # #1039: tras una cifra (la clave la pliega a un signo, no a una letra), palabras compuestas
+    ("Hay 5disponibles", "disponibles", "AVAILABILITY"), ("Con 10descuento", "descuento",
+                                                            "DISCOUNT"),
+    ("En 3cuotas", "cuotas", "TERMS"), ("Envío 0costo", "costo", "TERMS"),
+    ("Llega en 2dias", "dias", "DELIVERY"), ("Son 30lucas", "lucas", "FIGURE"),
+    ("Hoy 20dscto", "dscto", "DISCOUNT"), ("Son quinientos", "quinientos", "FIGURE"),
+    ("Son quinientas", "quinientas", "FIGURE"), ("Son treintaicinco", "treintaicinco", "FIGURE"),
+    ("Son treintiuno", "treintiuno", "FIGURE"), ("Cuesta cero", "cero", "FIGURE"),
+    ("Está ago\u3164tado", "tado", "AVAILABILITY"),
+    ("Ve a tienda punto pet", "tienda", "LINK"), ("Ve a tienda . pet", "tienda", "LINK"),
+    ("Ve a tienda .dog", "dog", "LINK"), ("Ve a tienda .mascotas", "mascotas", "LINK"),
+    ("Ve a tienda dot vet", "vet", "LINK"),
+    ("Ve a tienda\u2022pe", "tienda", "LINK"), ("Ve a tienda\u2219pe", "tienda", "LINK"),
+    ("Ve a tienda\u22c5pe", "tienda", "LINK"), ("Ve a tienda\u300c.\u300dpe", "tienda", "LINK"),
+    ("Antes ~S/ 40~", "~", "DISCOUNT"), ("De S/ 40 \u2192 S/ 30", "\u2192", "DISCOUNT"),
+    ("De 40 -> 30", "->", "DISCOUNT"), ("Costaba más", "Costaba", "DISCOUNT"),
+    ("Pasó de un precio a otro", "Pasó", "DISCOUNT"), ("Bajó de precio", "Bajó", "DISCOUNT"),
+    ("Precio normal", "normal", "DISCOUNT"), ("En vez de eso", "vez", "DISCOUNT"),
+    ("Precio de lista", "lista", "DISCOUNT"), ("Era más caro", "Era", "DISCOUNT"),
 ]  # fmt: skip
+
+# Cómo se vende por chat en Perú (#1039): cada frase deja una marca
+CORPUS = [
+    ("Tiene descto", "descto"), ("Con dto", "dto"), ("Hoy desc especial", "desc"),
+    ("50 OFF", "OFF"), ("Precio especial para ti", "especial"), ("Está más barato", "barato"),
+    ("A mitad de precio", "mitad"), ("Te va de regalo", "regalo"), ("Va sin cargo", "cargo"),
+    ("Puedes cancelar al recibir", "cancelar"), ("Aceptamos Visa", "Visa"),
+    ("Se acabó", "acabó"), ("Ya no hay", "hay"), ("Sí tenemos", "tenemos"),
+    ("Te llega al toque", "toque"), ("Ahorita te lo envío", "Ahorita"),
+    ("Te lo mandamos ya", "mandamos"), ("Tu pedido está en camino", "camino"),
+    ("Tu pedido ya salió", "salió"), ("Pedido confirmado", "confirmado"),
+    ("Ya está listo", "listo"),
+]  # fmt: skip
+
+
+@pytest.mark.parametrize(("text", "needle"), CORPUS)
+def test_peruvian_sales_wording_is_marked(text: str, needle: str) -> None:
+    out = substitute(plain(text))
+    assert needle not in out.text.replace(M, "") and out.findings
 
 
 @pytest.mark.parametrize(("text", "needle", "kind"), CASES)
@@ -106,7 +144,7 @@ def test_a_suggestion_with_nothing_to_detect_leaves_intact(text: str) -> None:
 def test_server_values_are_never_marked_but_the_model_text_around_them_is() -> None:
     """El precio, la promoción y sus condiciones (cifras, `%`, «semana») son del servidor; el
     `{{{c1}}}` deja llaves del modelo y un número igual a un valor de la evidencia también sale."""
-    template = "Hola, el {{c1}} cuesta {{c2}} con {{c3}} ({{c4}}). Antes era 1249.90, mira {{{c2}}}"
+    template = "Hola, el {{c1}} cuesta {{c2}} con {{c3}} ({{c4}}). Antes vi 1249.90, mira {{{c2}}}"
     raw = reply(template,
                 claim("c1", "PRODUCT_NAME", "tu_v", "name"),
                 claim("c2", "PRICE", "tu_p", "prices.0.amount"),
@@ -116,7 +154,7 @@ def test_server_values_are_never_marked_but_the_model_text_around_them_is() -> N
     assert rendered.ok and rendered.findings == ()
     out = substitute(rendered)
     assert out.text == (
-        f"Hola, el Collar Rojo cuesta S/ 1,249.90 con Promo Verano (Solo esta semana). {M} era {M},"
+        f"Hola, el Collar Rojo cuesta S/ 1,249.90 con Promo Verano (Solo esta semana). {M} vi {M},"
         f" mira {M}S/ 1,249.90{M}"
     )
     assert [found.type for found in out.findings] == ["DISCOUNT", "FIGURE", "MARKUP", "MARKUP"]
@@ -133,6 +171,18 @@ def test_the_guard_findings_move_with_the_text() -> None:
     assert out.problems == rendered.problems and len(out.inserted) == 4
 
 
+def test_model_text_glued_to_a_server_value_or_between_two_prices_is_marked() -> None:
+    glued = substitute(
+        Rendered("Rojo.tiendita y Rojo . dog", (), (), False, None, ((0, 4), (16, 20)))
+    )
+    assert glued.text == f"Rojo{M} y Rojo {M}"
+    prices = "S/ 40.00 y S/ 30.00, S/ 20.00 + IGVS/ 10.00 Collar S/ 5.00"
+    server = ((0, 8), (11, 19), (21, 35), (35, 43), (44, 50), (51, 58))
+    out = substitute(Rendered(prices, (), (), False, None, server))
+    assert out.text == f"S/ 40.00{M}S/ 30.00{M}S/ 20.00 + IGVS/ 10.00 Collar S/ 5.00"
+    assert [f.type for f in out.findings] == ["DISCOUNT", "DISCOUNT"]
+
+
 def test_the_summary_marks_without_substituting() -> None:
     text = "El cliente pide 2 collares para el lunes; vio el precio en tienda.pe"
     found = mark(text)
@@ -147,7 +197,7 @@ def test_too_many_spans_keep_the_findings_bounded() -> None:
     assert len(found) == MAX_FINDINGS and found[-1].end == len(many)
     out = substitute(plain(many))  # la sugerencia no se puede usar: solo la marca
     assert (out.text, out.findings) == (M, (Finding("TOO_LONG", 0, len(M)),))
-    long = substitute(plain("a 1 " * (BODY_MAX // 4)))  # cabe, pero no con sus marcas
+    long = substitute(plain("x" * (BODY_MAX - 16) + " 1 y 2"))  # cabe, pero no con sus marcas
     assert long.text == M and [p.code for p in long.problems] == ["TOO_LONG"]
 
 
@@ -158,10 +208,28 @@ def test_too_many_spans_keep_the_findings_bounded() -> None:
         (["¿Me pasas con una persona real?"], False, "ASKED_FOR_PERSON"),
         (["Quiero hablar con alguien"], False, "ASKED_FOR_PERSON"),
         (["¿Eres un bot? Pásame con el encargado"], True, "ASKED_FOR_PERSON"),
+        (["Quiero un ＡＳＥＳＯＲ"], False, "ASKED_FOR_PERSON"),
+        (["Un ase\u200bsor"], False, "ASKED_FOR_PERSON"),
+        (["Con un agente"], False, "ASKED_FOR_PERSON"),
+        (["Con tu jefe"], False, "ASKED_FOR_PERSON"),
+        (["Un ejecutivo"], False, "ASKED_FOR_PERSON"),
+        (["Pásame con alguien"], False, "ASKED_FOR_PERSON"),
+        (["Que me atienda alguien"], False, "ASKED_FOR_PERSON"),
+        (["Es una ESTAFA, quiero un asesor"], True, "ASKED_FOR_PERSON"),  # el orden de motivos
+        (["Voy a poner un reclamo"], True, "UPSET"),
         (["esto es una ESTAFA!!!"], False, "UPSET"),
         (["Voy a poner un reclamo"], False, "UPSET"),
         (["QUIERO MI PEDIDO YA"], False, "UPSET"),  # mayúsculas sostenidas
-        (["¿Y mi pedido?!!!"], False, "UPSET"),
+        (["NO PUEDE SER!!!"], False, "UPSET"),
+        (["YA BASTA!!!"], False, "UPSET"),  # con «!!!»
+        (["YA BASTA"], False, None),
+        (["OK!!!"], False, None),
+        (["Mi perro come harto"], False, None),
+        (["¿Tienen máquina para cortar pelo?"], False, None),
+        (["¿no le molesta?"], False, None),
+        (["Bolsas para basura"], False, None),
+        (["Quiero el ROYAL CANIN MAXI ADULT"], False, None),
+        (["Hola!!!"], False, None),
         (["¿Tienen collares rojos?"], True, "MODEL"),
         (["¿Tienen collares rojos?"], False, None),
         ([], False, None),
@@ -182,12 +250,18 @@ def test_with_handoff_the_suggestion_is_the_fixed_text_never_the_model_text() ->
     assert "atiendo" not in out.text and out.inserted == ((0, len(fixed)),)
     asked, found = suggestion(plain("Te paso el precio: S/ 30"), ["Quiero un asesor"])
     assert (asked.text, found.reason) == (fixed, "ASKED_FOR_PERSON")
+    failed = render(reply("Cuesta {{c1}}", claim("c1", "PRICE", "tu_fail", "prices.0.amount"),
+                          handoff=True), EVIDENCE, NOW)  # fmt: skip
+    assert failed.findings and failed.problems
+    dropped, _ = suggestion(failed, [])
+    assert (dropped.text, dropped.findings, dropped.problems) == (fixed, (), ())
     kept, found = suggestion(plain("Claro, te ayudo"), ["Hola"])
     assert (kept.text, found) == ("Claro, te ayudo", Handoff(False))
 
 
 @pytest.mark.parametrize("value", ["", "  ", None, 5, "Te llamamos en 24 horas", "x" * 5000,
-                                   f"Revisa {M}", "Escríbenos a tienda.pe"])  # fmt: skip
+                                   f"Revisa {M}", "Escríbenos a tienda.pe", "\u202eHola",
+                                   "Ho\u200bla"])  # fmt: skip
 def test_the_handoff_text_is_checked_at_startup_and_on_every_use(value: object) -> None:
     with override_settings(AI_HANDOFF_REPLY=value):
         with pytest.raises(ImproperlyConfigured):
