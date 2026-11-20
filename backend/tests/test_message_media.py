@@ -980,6 +980,7 @@ DROPS = {
     "apps/conversations/migrations/0040_social_channels.py",  # F7b-04a
     "apps/conversations/migrations/0042_social_ingress.py",  # F7b-04b
     "apps/pricing/migrations/0004_promotions_frozen.py",
+    "apps/pricing/migrations/0009_ai_exposable_guard.py",  # F8-07f: solo al deshacerla
     "apps/quotes/migrations/0002_approvals_and_discount_policies.py",
     "apps/ai_gateway/migrations/0002_budget_and_calls.py",  # F8-05: solo al deshacerla
     "apps/ai_gateway/migrations/0004_daily_budget.py",  # F8-05b2: solo al deshacerla

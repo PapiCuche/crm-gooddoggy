@@ -8,19 +8,20 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
+import psycopg
 import pytest
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
 
 from apps.access.selectors import execution_context
 from apps.pricing import services
-from apps.pricing.models import PriceList, Promotion
+from apps.pricing.models import Promotion
 from apps.pricing.services import PriceQuery, PromotionApplied
 from core.tenancy.scope import tenant_scope
 from tests import test_authorization
 from tests.test_memberships import ctx
 from tests.test_prices import price_list
-from tests.test_pricing_engine import LIMA, T0, US, human, public_ai, row
+from tests.test_pricing_engine import LIMA, MARK, T0, US, human, public_ai, row
 from tests.test_promotion_tables import D1, D8, NOW, final, promo, shop, stock, tree
 
 world, _shop = test_authorization.world, shop
@@ -231,9 +232,10 @@ def test_a_promotion_that_does_not_lower_the_price_to_something_positive_is_skip
     assert (got.promotion_id, got.final_amount) == (fallback, Decimal("3959.10"))  # no se recorta
 
 
-def test_public_ai_only_sees_exposable_promotions(world: Any, shop: Any) -> None:
-    with tenant_scope(ctx(world.a)):
-        PriceList.objects.filter(pk=shop.listed).update(ai_exposable=True)
+def test_public_ai_only_sees_exposable_promotions(
+    world: Any, shop: Any, migrator: psycopg.Connection[Any]
+) -> None:
+    migrator.execute(MARK, [[shop.listed]])  # como el propietario: `crm_app` no la marca
     hidden = promo(world.a, [shop.listed], [{"variant_id": shop.variant}], value="30", priority=5)
     shown = promo(world.a, [shop.listed], [{"brand_id": shop.make}], ai_exposable=True, priority=1)
     query = PriceQuery(shop.variant, shop.listed, NOW)
