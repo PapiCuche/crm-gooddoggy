@@ -45,7 +45,8 @@ WHO = ("org", "tenant", "contact", "convers", "customer", "client", "user", "usu
        "actor", "branch", "sucursal", "account", "phone", "telefono", "email", "correo", "owner",
        "seller", "vendedor", "person", "company", "empresa", "buyer", "comprador", "lead", "deal",
        "negocio", "opportunit", "oportunidad", "message", "mensaje", "chat", "thread", "agent",
-       "staff", "waid", "psid", "dni", "rut", "uid")  # fmt: skip
+       "staff", "waid", "psid", "uid")  # fmt: skip
+IDS = frozenset({"dni", "rut"})  # cortos: solo como palabra entera (`fruta` y `rutina`, no)
 SECRET = ("cost", "margin", "margen", "intern", "onhand", "reserv", "warehouse", "almacen",
           "bodega", "location", "ubicacion", "note", "nota", "comment", "comentario",
           "observacion", "supplier", "proveedor", "vendor", "sku", "barcode", "barra", "gtin",
@@ -136,7 +137,8 @@ def _words(key: str) -> list[str]:
 
 
 def _identity(name: str) -> bool:
-    return any(who in "".join(_words(name)) for who in WHO)
+    words = _words(name)
+    return bool(IDS & set(words)) or any(who in "".join(words) for who in WHO)
 
 
 def _secret(key: str) -> bool:

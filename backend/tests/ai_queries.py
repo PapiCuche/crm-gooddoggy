@@ -26,12 +26,25 @@ WRITES = re.compile(
     re.IGNORECASE,
 )  # `update` también caza `FOR UPDATE` y `FOR NO KEY UPDATE`; `into`, `SELECT … INTO`
 LITERAL = re.compile(r"\b[Ee]'(?:[^'\\]|\\.|'')*'|'(?:[^']|'')*'")  # un texto no es SQL
-# Los textos y los comentarios salen antes de buscar: `FOR/**/SHARE` es `FOR SHARE`
-NOISE = re.compile(LITERAL.pattern + r"|/\*.*?\*/|--[^\n]*", re.DOTALL)
+# Antes de buscar, de izquierda a derecha (manda lo que abre primero): los textos, también
+# `$tag$…$tag$`, salen; los comentarios son un espacio (`FOR/**/SHARE` es `FOR SHARE`); y un
+# identificador entre comillas guarda sus palabras (`"nextval"(…)` sigue siendo `nextval`), sin
+# las comillas ni los `--` o `/*` que lleve dentro.
+NOISE = re.compile(
+    LITERAL.pattern + r'|\$([A-Za-z_]\w*|)\$.*?\$\1\$|"(?:[^"]|"")*"|/\*.*?\*/|--[^\n]*',
+    re.DOTALL,
+)
+
+
+def _quiet(found: re.Match[str]) -> str:
+    text = found[0]
+    if text[0] == '"':
+        return '"' + re.sub(r"\W", " ", text[1:-1]) + '"'
+    return " " if text[0] in "/-" else "''"
 
 
 def _bare(statement: str) -> str:
-    return NOISE.sub(lambda m: " " if m[0][0] in "/-" else "''", statement)
+    return NOISE.sub(_quiet, statement)
 
 
 def writes(statements: list[str]) -> list[str]:

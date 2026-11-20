@@ -59,6 +59,12 @@ PLANTED = [
     "SELECT pg_terminate_backend(1)", "SELECT pg_cancel_backend(1)", "CHECKPOINT",
     "SECURITY LABEL ON TABLE t IS 'x'", "PREPARE TRANSACTION 'x'", "PREPARE p AS SELECT 1",
     "EXECUTE p",
+    # los textos `$$…$$` y los identificadores entre comillas no se tragan lo que sigue
+    "SELECT $$'$$; DELETE FROM t; SELECT $$'$$", "SELECT $a$'$a$; DELETE FROM t; SELECT $a$'$a$",
+    "SELECT $$--$$; DELETE FROM t", "SELECT $$/*$$; DELETE FROM t; SELECT $$*/$$",
+    "SELECT 1 AS \"a'b\"; DELETE FROM t; SELECT 1 AS \"c'd\"", 'SELECT 1 AS "--"; DELETE FROM t',
+    'SELECT 1 AS "/*"; DELETE FROM t; SELECT 1 AS "*/"', 'SELECT "pg_advisory_lock"(1)',
+    "CREATE FUNCTION f() RETURNS int AS $$ SELECT 1 $$ LANGUAGE sql",
 ]  # fmt: skip
 READS = [
     "SELECT set_config('app.tenant_id', %s, true), set_config('app.user_id', %s, true)",
@@ -68,6 +74,7 @@ READS = [
     "SET LOCAL lock_timeout = '1s'", "SET TRANSACTION ISOLATION LEVEL SERIALIZABLE",
     "SET CONSTRAINTS ALL DEFERRED", 'SELECT "t"."reset_at", \'a--b\', \'/*\' FROM "t"',
     "SELECT 1 -- se borra con delete\n", "SELECT E'it''s \\\\ ok'",
+    "SELECT $$delete$$, $x$ ; SET x = 1 $x$", 'SELECT "t"."it\'s" FROM "t"',
 ]  # fmt: skip
 
 
@@ -120,7 +127,7 @@ QUERY = SEARCH_PRODUCT.fields["query"]
 FIELDS = ("оrg_id", "cliente_id", "conversacion_id", "conversa_tion", "usuario", "telefono",
           "correo", "owner_id", "seller_id", "person_id", "company_id", "lead_id", "deal_id",
           "uid", "ｑuery", "qu ery", "sucursal_id", "vendedor", "empresa_id", "comprador",
-          "mensaje", "agente_id", "oportunidad_id", "negocio_id", "dni", "rut", "message_id",
+          "mensaje", "agente_id", "oportunidad_id", "negocio_id", "dni", "rut_id", "message_id",
           "chat", "thread_id", "wa_id", "psid", "staff_id", "buyer_id")  # fmt: skip
 OUTPUTS = ("ѕku", "ｓｋｕ", "skü", "descripción", "descripcion", "margen", "notas_internas",
            "proveedor", "almacen", "codigo_barras", "existencias", "ubicacion", "reservado",
@@ -151,6 +158,8 @@ def test_registry_still_takes_the_public_keys_of_the_catalog_and_price_tools() -
     for output in ({"products": [catalog.ROW]}, price, {"short-description": str}):
         check(replace(SEARCH_PRODUCT, name="otra_tool", output=output))
     check(replace(SEARCH_PRODUCT, name="otra_tool", fields={"variant_id": Uuid("x")}))
+    for word in ("fruta", "rutina", "midnight"):  # `rut` y `dni`, solo como palabra entera
+        check(replace(SEARCH_PRODUCT, name="otra_tool", fields={word: QUERY}))
 
 
 @pytest.mark.parametrize("where", ["output", "leaf", "fields"])
