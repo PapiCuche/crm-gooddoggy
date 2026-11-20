@@ -146,6 +146,17 @@ def _price_list(
     return found
 
 
+def ai_price_lists(ectx: ExecutionContext, limit: int) -> list[tuple[UUID, str]]:
+    """Las listas (id y nombre) que la IA puede citar a esta persona (ADR-034 §6, D-F8-06): activas,
+    las que `PUBLIC_AI` ve (marcadas por el propietario, nunca la interna) y que la persona ve por
+    sí misma (`visible_price_lists`); la predeterminada primero, como mucho `limit`."""
+    alias = require_scope(ectx.tenant)
+    seen = visible_price_lists(ectx).values("id")
+    lists = _lists(ectx, Audience.PUBLIC_AI).using(alias).filter(is_active=True, pk__in=seen)
+    rows = lists.order_by("-is_default", "sort_order", "name", "id")[:limit]
+    return [(row.pk, row.name) for row in rows]
+
+
 def price_list_currency(ctx: ExecutionContext, price_list_id: UUID) -> str | None:
     """La moneda de una lista no borrada que el actor ve (como `visible_price_lists`), o `None`: lo
     que no ve no se distingue de lo que no existe. Para quien configura algo por lista (F5-09b4)."""

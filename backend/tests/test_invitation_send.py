@@ -34,6 +34,7 @@ from tests.logs import log_text
 from tests.test_invitation_accept import waiting_for_a_lock
 from tests.test_invitation_preview import ask as preview
 from tests.test_invitations_table import invite as stored_invitation
+from tests.test_invitations_table import unguarded
 from tests.test_invite import ask as invite_route
 from tests.test_memberships import join
 from tests.test_self_context import signed
@@ -241,7 +242,8 @@ def test_fifteen_minutes_later_or_from_another_organization_it_is_sent(
     stored_invitation(rbac.b, "nueva@example.com", other, send_count=1)  # de otra organización
     stored_invitation(rbac.a, "nueva@example.com", rbac.ana, status="REVOKED", send_count=1)
     migrator.execute("UPDATE user_invitations SET sent_at = now()")  # la de B, recién
-    migrator.execute(
+    unguarded(
+        migrator,
         "UPDATE user_invitations SET sent_at = now() - interval '16 minutes'"
         " WHERE organization_id = %s",
         [rbac.a],
@@ -272,7 +274,9 @@ def test_inviting_the_same_address_again_within_fifteen_minutes_is_a_429(
     assert 14 * 60 < int(answer.headers["Retry-After"]) <= 15 * 60
     assert len(migrator.execute(ROW.split(" WHERE")[0]).fetchall()) == rows  # ni fila
     assert len(migrator.execute(EVENTS).fetchall()) == 3 and len(sent.outbox) == events
-    migrator.execute(SET.format("sent_at = now() - interval '15 minutes 1 second'"), [invitation])
+    unguarded(
+        migrator, SET.format("sent_at = now() - interval '15 minutes 1 second'"), [invitation]
+    )
     assert invite_route(ana, "nueva@example.com", [rbac.target.pk]).status_code == 201
 
 
