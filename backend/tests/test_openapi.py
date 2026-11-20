@@ -155,6 +155,7 @@ def test_schema_endpoint_serves_the_contract_without_internal_routes() -> None:
         "/api/v1/o/{org_slug}/pricing/price-lists/{price_list_id}/",
         "/api/v1/o/{org_slug}/pricing/price-lists/{price_list_id}/prices/",  # F3-44
         "/api/v1/o/{org_slug}/pricing/price-lists/{price_list_id}/margins/",  # F3-46d
+        "/api/v1/o/{org_slug}/pricing/price-lists/{price_list_id}/ai-exposable/",  # F8-07b
         "/api/v1/o/{org_slug}/pricing/variants/{variant_id}/price-history/",  # F3-44b
         "/api/v1/o/{org_slug}/pricing/variants/{variant_id}/costs/",  # F3-46c
         "/api/v1/o/{org_slug}/pricing/promotions/",  # F3-48d

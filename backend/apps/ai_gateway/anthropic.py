@@ -10,7 +10,7 @@ from typing import Any
 
 from django.conf import settings
 
-from apps.ai_gateway import llm, probe
+from apps.ai_gateway import llm, probe, turns
 from apps.ai_gateway.llm import Outcome, ProviderError
 from core import http
 from core.observability.logging import get_logger
@@ -86,7 +86,9 @@ def _parse(raw: bytes, request_id: str) -> llm.LLMResponse:
         calls = tuple(b for b in blocks if type(b) is llm.ToolCall)
         text = "".join(b.text for b in blocks if type(b) is llm.Text)
         usage, stop = _usage(data["usage"]), str(data["stop_reason"])
-    except ValueError, KeyError, TypeError, AttributeError, RecursionError:
+        if calls:  # F8-07d: se reenviará tal cual; si no pasaría `turns.check`, es ilegible
+            turns.reply(blocks)
+    except ValueError, KeyError, TypeError, AttributeError, RecursionError, turns.Rejected:
         raise ProviderError(Outcome.PROVIDER_UNAVAILABLE, billed=True,  # pudo cobrarla
                             request_id=request_id) from None  # fmt: skip
     return llm.LLMResponse(text, calls, stop, usage, request_id, blocks)

@@ -20,7 +20,6 @@ export interface PriceListCreateRequest {
   kind: PriceListKindEnum;
   is_default?: boolean;
   required_permission?: PricePermissionEnum;
-  ai_exposable?: boolean;
   payment_condition?: PriceListPaymentConditionEnum | NullEnum | null;
   is_active?: boolean;
   /**

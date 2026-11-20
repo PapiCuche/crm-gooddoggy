@@ -9,5 +9,7 @@ class AiAgentsConfig(AppConfig):
 
     def ready(self) -> None:
         from apps.ai_agents import registry, tools  # noqa: F401, PLC0415
+        from apps.ai_agents.tools import stock  # noqa: PLC0415
 
         registry.freeze()
+        stock.few_units()  # F8-07d: un umbral inválido no arranca (y en cada llamada, sin leer)

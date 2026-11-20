@@ -24,6 +24,11 @@ def _variants() -> QuerySet[ProductVariant]:
     return live_variants().filter(status=ACTIVE, ai_visible=True)
 
 
+def published_variants() -> QuerySet[ProductVariant]:
+    """Las variantes publicadas de productos publicados, con su producto (también `get_stock`)."""
+    return _variants().filter(product__status=ACTIVE, product__ai_visible=True)
+
+
 def _published() -> QuerySet[Product]:
     shown = products().filter(status=ACTIVE, ai_visible=True)
     return shown.filter(pk__in=_variants().values("product_id"))
