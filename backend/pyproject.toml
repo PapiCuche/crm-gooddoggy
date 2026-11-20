@@ -193,8 +193,9 @@ forbidden_modules = [
 # contactos y medios para otras lecturas que el contexto no usa, y que solo `apps` importe
 # `context` lo sostiene el contrato de F8-08d. F8-08g (#1024): el runtime del copiloto llama al
 # modelo solo por `gateway.complete` (ADR-034 §2: toda llamada pasa por `ai_gateway`), que abre la
-# clave y mira el interruptor. La excepción es solo esa arista: otro módulo de `ai_agents` que
-# importe el gateway sigue rompiendo este contrato. Los demás contratos no cambian.
+# clave y mira el interruptor. `ignore_imports` quita esa arista de todo el grafo: el contrato
+# `protected` de F8-08g impide que otro módulo llegue al gateway a través del runtime, y una prueba
+# fija que el runtime solo usa `complete` y `GatewayError` del gateway. Los demás no cambian.
 ignore_imports = [
     "apps.ai_agents.records -> apps.audit.services",
     "apps.ai_agents.context -> apps.conversations.selectors",
@@ -229,6 +230,14 @@ name = "Solo el runtime del copiloto importa su registro (F8-08b)"
 type = "forbidden"
 source_modules = ["apps.ai_agents.tools", "apps.ai_agents.registry", "apps.ai_agents.fields", "apps.ai_agents.models", "apps.ai_agents.apps", "apps.ai_agents.migrations", "apps.ai_agents.context", "apps.ai_agents.guard", "apps.ai_agents.detectors"]
 forbidden_modules = ["apps.ai_agents.records"]
+
+[[tool.importlinter.contracts]]
+# F8-08g (#1024): la arista `copilot -> ai_gateway.gateway` está ignorada arriba; si otro módulo
+# importara el runtime, llegaría por él a la clave y al interruptor sin que nadie lo viera.
+name = "Nadie importa el runtime del copiloto salvo su ruta (F8-08g)"
+type = "protected"
+protected_modules = ["apps.ai_agents.copilot"]
+allowed_importers = []  # F8-08h (#771) añade aquí su módulo de ruta, a propósito
 
 [[tool.importlinter.contracts]]
 name = "Fronteras de alta: solo provisioning importa los bootstrap.py de L2 (F2-06)"

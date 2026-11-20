@@ -3,9 +3,13 @@ punta contra la API falsa (`tests.ai_sim`) con respuestas guionizadas (`tool_use
 → final): scopes cortos, tools de solo lectura, topes, plazo total, un reintento y el registro.
 PostgreSQL con el rol `crm_app`; todos los datos son ficticios."""
 
+import ast
 import json
 import logging
+import pathlib
 import re
+import time
+import tomllib
 from dataclasses import dataclass, field
 from datetime import timedelta
 from types import SimpleNamespace
@@ -21,9 +25,10 @@ from django.db import connection, transaction
 from django.test import override_settings
 from django.utils import timezone
 
+from apps.access.selectors import AccessDenied, Denied
 from apps.ai_agents import context, copilot, detectors
 from apps.ai_agents.copilot import FINISH, LIMITED, CopilotError, NotFound
-from apps.ai_agents.guard import Malformed
+from apps.ai_agents.guard import Finding, Malformed, Rendered
 from apps.ai_gateway import gateway
 from apps.organizations.models import OrganizationMembership as Membership
 from core.tenancy.scope import tenant_scope
@@ -34,6 +39,7 @@ from tests.factories import make_user
 from tests.test_ai_copilot_context import conversation, say
 from tests.test_ai_gateway import USAGE, budget, world
 from tests.test_ai_read_tools import active
+from tests.test_ai_tools_hardening import BACKEND
 from tests.test_authorization import give
 from tests.test_memberships import ctx, join
 
@@ -59,7 +65,7 @@ def final(template: str, *claims: tuple[str, ...], handoff: bool = False) -> lis
     return [{"type": "text", "text": json.dumps(reply)}]
 
 
-SEARCH, GOOD = [use("toolu_1")], final("Tenemos {{c1}}.", NAME)
+SEARCH, GOOD, GRANATE = [use("toolu_1")], final("Tenemos {{c1}}.", NAME), "Tenemos Collar Granate."
 FIGURES = final("Tenemos {{c1}} a 30 soles.", NAME)
 PLAIN = final("Hola, ¿qué color buscas?")
 
@@ -82,14 +88,13 @@ class Scripted(FakeAnthropic):
 
 @pytest.fixture
 def desk(world: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
-    """En A: ana con `ai.use` y las lecturas, un collar publicado y la conversación del cliente
-    (sin asignar), con una nota interna; presupuesto de 1 USD."""
+    """En A: ana con los permisos, un collar y la conversación (sin asignar, con una nota)."""
     budget(migrator, world.a, "1")
     with tenant_scope(ctx(world.a)) as tenant:
         membership = Membership.objects.get(user=world.ana).pk
-        collar = active(tenant, "Collar Granate")
+        active(tenant, "Collar Granate")
     give(world.a, membership, GRANTS)
-    w = SimpleNamespace(**vars(world), collar=collar, convo=conversation(world.a, CONTACT))
+    w = SimpleNamespace(**vars(world), convo=conversation(world.a, CONTACT))
     say(w, ASK)
     say(w, NOTE, direction="INTERNAL", message_type="NOTE", sender_type="USER",
         sender_user_id=w.ana.pk)  # fmt: skip
@@ -97,9 +102,9 @@ def desk(world: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch) 
     return w
 
 
-def run(w: SimpleNamespace, *replies: list[dict[str, Any]], user: Any = None) -> Any:
+def run(w: SimpleNamespace, *replies: list[dict[str, Any]]) -> Any:
     w.fake.replies = list(replies)
-    return copilot.suggest(ctx(w.a, user or w.ana), w.convo)
+    return copilot.suggest(ctx(w.a, w.ana), w.convo)
 
 
 def fails(w: SimpleNamespace, *replies: list[dict[str, Any]]) -> str:
@@ -129,16 +134,11 @@ def nothing_saved(migrator: DB) -> bool:
 def test_a_full_run_writes_only_ai_records_and_never_sends_notes_or_contact_data(
     desk: SimpleNamespace, migrator: DB, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """tool → final con un hallazgo → un reintento → final. Todo fuera de transacción; solo se
-    escribe `ai_*` y `audit_logs`, nada en `messages` ni en el outbox."""
+    """tool → final con un hallazgo → un reintento → final, todo fuera de transacción."""
     messages = rows(migrator, "SELECT count(*) FROM messages")
     with caplog.at_level(logging.DEBUG), captured() as seen:
         draft = run(desk, SEARCH, FIGURES, GOOD)
-    assert (draft.text, draft.findings, draft.handoff_reason) == (
-        "Tenemos Collar Granate.",
-        (),
-        None,
-    )
+    assert (draft.text, draft.findings, draft.handoff_reason) == (GRANATE, (), None)
     assert desk.fake.atomic == [False] * 3  # el gateway ya lo exige
     bodies = desk.fake.bodies()
     assert [sorted(t["name"] for t in b["tools"]) for b in bodies] == [SUGGEST] * 3
@@ -155,9 +155,8 @@ def test_a_full_run_writes_only_ai_records_and_never_sends_notes_or_contact_data
     queued = "SELECT count(*) FROM outbox_events WHERE event_type = 'message.queued'"
     assert rows(migrator, queued) == [(0,)]
     held = [r[0] for r in rows(migrator, "SELECT id FROM ai_budget_reservations ORDER BY 1")]
-    [(run_id, reservations, retried, outcome)] = rows(
-        migrator, "SELECT id, reservation_ids, retried, outcome FROM ai_runs"
-    )
+    record = "SELECT id, reservation_ids, retried, outcome FROM ai_runs"
+    [(run_id, reservations, retried, outcome)] = rows(migrator, record)
     assert (run_id, sorted(reservations), retried, outcome) == (draft.run_id, held, True, "OK")
     assert len(held) == 3 and codes(migrator) == ["OK"]
     saved = "SELECT id, text, run_id FROM ai_suggestions"
@@ -172,8 +171,7 @@ def test_a_full_run_writes_only_ai_records_and_never_sends_notes_or_contact_data
 def test_the_retry_happens_once_and_then_the_draft_keeps_its_findings(
     desk: SimpleNamespace, migrator: DB
 ) -> None:
-    """Una respuesta ilegible pide el reintento con el motivo del esquema; si el reintento vuelve
-    a fallar, no hay otro: el borrador sale con sus marcas. Exactamente 2 reservas finales."""
+    """Ilegible → reintento con el motivo del esquema → con cifras: sale con sus marcas."""
     draft = run(desk, [{"type": "text", "text": "no es json"}], final("Cuesta 30 soles."))
     assert len(desk.fake.calls) == 2 and len(rows(migrator, "SELECT 1 FROM ai_llm_calls")) == 2
     retry = desk.fake.bodies()[1]["messages"][-1]["content"]
@@ -183,12 +181,22 @@ def test_the_retry_happens_once_and_then_the_draft_keeps_its_findings(
     assert runs(migrator) == [("OK", 0, 2, True, {"FIGURE": 1})]
 
 
+@pytest.mark.parametrize("template", ["", " \n ", "hola\x00", "hola\x07", "hola\ud800", None])
+def test_an_answer_the_database_could_not_store_is_malformed_and_twice_ends_the_run(
+    desk: SimpleNamespace, migrator: DB, template: str | None
+) -> None:
+    reply = [{"type": "text", "text": "no es json"}] if template is None else final(template)
+    assert fails(desk, reply, reply) == "AI_MALFORMED"
+    assert len(desk.fake.calls) == 2 and nothing_saved(migrator)
+    assert runs(migrator) == [("AI_MALFORMED", 0, 2, True, {})]
+
+
 def test_after_five_tool_calls_the_rest_get_a_fixed_error_and_the_model_must_finish(
     desk: SimpleNamespace, migrator: DB
 ) -> None:
     rounds = [[use(f"toolu_{n}")] for n in range(1, 7)]
     draft = run(desk, *rounds, GOOD)
-    assert draft.text == "Tenemos Collar Granate." and len(desk.fake.calls) == 7
+    assert draft.text == GRANATE and len(desk.fake.calls) == 7
     assert codes(migrator) == ["OK"] * 5 + ["TOOL_LIMIT"]
     answers = [b["messages"][-1]["content"] for b in desk.fake.bodies()]
     assert {"type": "text", "text": FINISH} in answers[5] and len(answers[4]) == 1
@@ -208,34 +216,38 @@ def test_a_model_that_never_finishes_is_stopped_after_the_tool_calls_and_three_m
 def test_the_loop_stops_before_paying_a_turn_that_would_not_fit(
     desk: SimpleNamespace, migrator: DB, limit: dict[str, int]
 ) -> None:
-    """Con 3 turnos, la respuesta a una segunda llamada ya no se podría contestar; con 3 bloques,
-    el turno con el resultado no cabe: se para sin llamar otra vez (`AI_TURN_INVALID`)."""
     with override_settings(AI_TURN_LIMITS={**settings.AI_TURN_LIMITS, **limit}):
         assert fails(desk, SEARCH, GOOD) == "AI_TURN_INVALID"
     assert len(desk.fake.calls) == 1 and nothing_saved(migrator)
     assert runs(migrator) == [("AI_TURN_INVALID", 1, 1, False, {})]
 
 
-def test_no_call_starts_past_the_total_deadline(
-    desk: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Plazo de 50 s: la primera llamada recibe los 50 s (no los 60 del proveedor) y tarda 45; la
-    segunda no cabe y ni empieza."""
-    now, asked = [1000.0], []
-    real = gateway.complete
+@pytest.mark.parametrize(("wait", "took", "sent", "done"), [(0, 45, 50, ["OK"]), (20, 35, 30, []),
+                                                       (60, 0, None, [])])  # fmt: skip
+def test_no_call_starts_or_runs_past_the_total_deadline(
+    desk: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch,
+    wait: int, took: int, sent: int | None, done: list[str],
+) -> None:  # fmt: skip
+    """Plazo de 50 s; el proveedor recibe lo que queda al enviar (esperar la reserva cuenta)."""
+    now, real, reserve = [1000.0], gateway.complete, gateway._reserve
 
-    def slow(tenant: Any, request: Any, seconds: float) -> Any:
-        asked.append(seconds)
-        reply = real(tenant, request, seconds=seconds)
-        now[0] += 45
+    def slow(tenant: Any, request: Any, deadline: float) -> Any:
+        assert deadline == 1050
+        reply = real(tenant, request, deadline=deadline)
+        now[0] += took
         return reply
 
-    monkeypatch.setattr(copilot, "clock", lambda: now[0])
+    def held(*args: Any) -> Any:
+        now[0] += wait
+        return reserve(*args)
+
+    monkeypatch.setattr(time, "monotonic", lambda: now[0])
     monkeypatch.setattr(gateway, "complete", slow)
+    monkeypatch.setattr(gateway, "_reserve", held)
     assert fails(desk, SEARCH, GOOD) == "AI_DEADLINE"
-    assert asked == [50] and desk.fake.timeouts[0].read_timeout <= 50
-    assert len(desk.fake.calls) == 1 and nothing_saved(migrator)
-    assert runs(migrator) == [("AI_DEADLINE", 1, 1, False, {})]
+    assert [t.read_timeout for t in desk.fake.timeouts] == ([sent] if sent else [])
+    assert nothing_saved(migrator) and codes(migrator) == done
+    assert runs(migrator) == [("AI_DEADLINE", len(done), 1, False, {})]
 
 
 def test_an_injected_request_changes_no_tool_and_an_unoffered_tool_ends_the_run(
@@ -248,26 +260,47 @@ def test_an_injected_request_changes_no_tool_and_an_unoffered_tool_ends_the_run(
     assert runs(migrator) == [("PROVIDER_UNAVAILABLE", 0, 1, False, {})]
 
 
+def test_a_tool_use_id_the_record_could_not_keep_ends_the_run_before_any_tool(
+    desk: SimpleNamespace, migrator: DB
+) -> None:
+    assert fails(desk, [use("t" * 65)]) == "PROVIDER_UNAVAILABLE"  # la API admite 128
+    assert codes(migrator) == [] and runs(migrator) == [("PROVIDER_UNAVAILABLE", 0, 1, False, {})]
+
+
+@pytest.mark.parametrize("lost", ["membership", "ai.use"])
+def test_losing_ai_use_or_the_membership_midway_stops_before_the_next_paid_call(
+    desk: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch, lost: str
+) -> None:
+    real = gateway.complete
+
+    def complete(tenant: Any, request: Any, deadline: float) -> Any:
+        if desk.fake.calls and lost == "membership":
+            raise AccessDenied(Denied.MEMBERSHIP)
+        reply = real(tenant, request, deadline=deadline)
+        if lost == "ai.use":
+            migrator.execute("DELETE FROM role_permissions WHERE permission_code = 'ai.use'")
+        return reply
+
+    monkeypatch.setattr(gateway, "complete", complete)
+    assert fails(desk, SEARCH, GOOD) == "ACCESS_DENIED" and len(desk.fake.calls) == 1
+    assert runs(migrator) == [("ACCESS_DENIED", 1, 1, False, {})] and nothing_saved(migrator)
+
+
 def test_a_foreign_variant_is_not_found_and_does_not_change_the_draft(
     desk: SimpleNamespace, migrator: DB
 ) -> None:
     with tenant_scope(ctx(desk.b)) as tenant:
         foreign = active(tenant, "Collar Onix").variants.get().pk
     calls = [use("toolu_1"), use("toolu_2", "get_stock", variant_id=str(foreign))]
-    assert run(desk, calls, GOOD).text == "Tenemos Collar Granate."
+    assert run(desk, calls, GOOD).text == GRANATE
     assert codes(migrator) == ["OK", "NOT_FOUND"]
     [_, answer] = desk.fake.bodies()[1]["messages"][-1]["content"]
-    assert answer["content"] == [
-        {"type": "text", "text": '{"error":{"code":"NOT_FOUND"},"ok":false}'}
-    ]
+    assert answer["content"][0]["text"] == '{"error":{"code":"NOT_FOUND"},"ok":false}'
 
 
 def test_who_cannot_see_the_conversation_gets_the_same_not_found_without_any_call(
     desk: SimpleNamespace, migrator: DB
 ) -> None:
-    """Un miembro de B (con todo en B), la conversación de otra persona, sin `ai.use`, sin
-    `conversations.view`, una que no existe y un actor de sistema: sin llamar, reservar ni
-    escribir."""
     bob, eva, leo = (make_user(email=f"{n}@example.com") for n in ("bob", "eva", "leo"))
     give(desk.b, join(desk.b, bob).pk, GRANTS)
     give(desk.a, join(desk.a, eva).pk, {"conversations.view": "OWN"})
@@ -306,7 +339,7 @@ def test_the_handoff_reads_only_what_the_customer_wrote_after_the_last_reply(
     say(desk, "¿y en rojo?")
     assert run(desk, PLAIN).handoff_reason is None
     say(desk, "mejor pásame con una persona")
-    draft = run(desk, FIGURES)
+    draft = run(desk, [{"type": "text", "text": "no es json"}])  # ni así hay reintento
     assert (draft.text, draft.handoff_reason) == (detectors.handoff_reply(), "ASKED_FOR_PERSON")
     assert len(desk.fake.calls) == 2
     reasons = "SELECT handoff_reason, retried FROM ai_runs ORDER BY created_at"
@@ -316,30 +349,50 @@ def test_the_handoff_reads_only_what_the_customer_wrote_after_the_last_reply(
 def test_now_comes_from_the_database_clock_after_the_tools(
     desk: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Con el reloj de la aplicación una hora atrás, la evidencia recién leída no es «del
-    futuro»: el guard compara con el reloj de la base."""
+    """Con el reloj de la aplicación una hora atrás, la evidencia no es «del futuro»."""
     behind = timezone.now() - timedelta(hours=1)
     monkeypatch.setattr(timezone, "now", lambda: behind)
-    assert run(desk, SEARCH, GOOD).text == "Tenemos Collar Granate."
+    assert run(desk, SEARCH, GOOD).text == GRANATE
     assert len(desk.fake.calls) == 2
 
 
 def test_a_draft_past_the_record_limits_is_saved_as_the_mark(
     desk: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """`[verificar]` alarga el texto: si el borrador pasara de 10 000 caracteres o de 100 hallazgos
-    (topes de la base), se guarda solo la marca con `TOO_LONG`, nunca se pierde el run."""
+    """Más de 10 000 caracteres o de 100 hallazgos (los CHECK): solo la marca, con el run."""
     monkeypatch.setattr(detectors, "BODY_MAX", 10**6)
     monkeypatch.setattr(detectors, "MAX_FINDINGS", 10**6)
     draft = run(desk, final("1 a " * 1000))
     assert draft.text == "[verificar]" and [f.type for f in draft.findings] == ["TOO_LONG"]
     assert rows(migrator, "SELECT char_length(text) FROM ai_suggestions") == [(11,)]
+    many = tuple(Finding("FIGURE", 0, 1) for _ in range(101))  # y cada tope por separado
+    for text, found, kind in (("x", many, "TOO_LONG"), (" ", (), "MALFORMED")):
+        kept = copilot._kept(Rendered(text, found, (), False, None))
+        assert (kept.text, [f.type for f in kept.findings]) == ("[verificar]", [kind])
 
 
-def test_the_runtime_refuses_an_open_transaction(desk: SimpleNamespace) -> None:
-    with transaction.atomic(), pytest.raises(RuntimeError):
+def test_the_runtime_refuses_an_open_transaction_before_reading_anything(desk: Any) -> None:
+    with transaction.atomic(), captured() as seen, pytest.raises(RuntimeError, match="suggest"):
         run(desk, GOOD)
-    assert desk.fake.calls == []
+    assert desk.fake.calls == [] and seen == []
+
+
+def test_the_runtime_reaches_the_gateway_only_for_complete_and_nobody_imports_it() -> None:
+    """La arista `copilot -> gateway` está ignorada en todo el grafo (pyproject.toml)."""
+    tree = ast.parse(pathlib.Path(str(copilot.__file__)).read_text())
+    found = {(node.module, alias.name) for node in ast.walk(tree)
+             if isinstance(node, ast.ImportFrom) for alias in node.names}  # fmt: skip
+    reached = {i for i in found if "ai_gateway" in str(i[0]) and i[0] != "apps.ai_gateway.llm"}
+    assert reached == {("apps.ai_gateway", "gateway"), ("apps.ai_gateway.gateway", "GatewayError")}
+    assert not [n for n in ast.walk(tree) if isinstance(n, ast.Import) and "gateway" in ast.dump(n)]
+    names = [n for n in ast.walk(tree) if isinstance(n, ast.Name) and n.id == "gateway"]
+    used = [n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute)
+            and isinstance(n.value, ast.Name) and n.value.id == "gateway"]  # fmt: skip
+    assert used == ["complete"] and len(names) == 1
+    contracts = tomllib.loads((BACKEND / "pyproject.toml").read_text())["tool"]["importlinter"]
+    [mine] = [c for c in contracts["contracts"]
+              if c.get("protected_modules") == ["apps.ai_agents.copilot"]]  # fmt: skip
+    assert (mine["type"], mine["allowed_importers"]) == ("protected", [])
 
 
 def test_the_context_caps_each_message_and_keeps_the_newest_within_its_size(
@@ -360,11 +413,8 @@ def test_the_context_caps_each_message_and_keeps_the_newest_within_its_size(
     assert isinstance(sent, str) and "mensaje-3" in sent and "mensaje-2" not in sent
 
 
-@pytest.mark.parametrize(
-    "change",
-    [{"AI_COPILOT_TOOL_CALLS": v} for v in (0, 11, "5", True, None)]
-    + [{"AI_COPILOT_DEADLINE": v} for v in (19, 56, 50.0, "50")],
-)
+@pytest.mark.parametrize("change", [{"AI_COPILOT_TOOL_CALLS": v} for v in (0, 11, "5", True, None)]
+                         + [{"AI_COPILOT_DEADLINE": v} for v in (19, 56, 50.0, "50")])  # fmt: skip
 def test_bad_runtime_caps_stop_the_startup_and_every_call(
     desk: SimpleNamespace, change: dict[str, Any]
 ) -> None:

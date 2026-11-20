@@ -119,15 +119,13 @@ def settle(
 
 
 def complete(
-    ctx: TenantContext,
-    request: LLMRequest,
-    provider: str = "ANTHROPIC",
-    seconds: float | None = None,
-) -> LLMResponse:
+    ctx: TenantContext, request: LLMRequest, provider: str = "ANTHROPIC",
+    deadline: float | None = None,
+) -> LLMResponse:  # fmt: skip
     """Una llamada al modelo con el presupuesto de la organización de `ctx`. Se llama **fuera** de
     toda transacción (abre las suyas). `GatewayError` con el código si no hay respuesta. F8-08g:
-    `seconds` acorta el plazo del proveedor (lo que le queda al copiloto); la respuesta y el error
-    llevan el id de su reserva."""
+    `deadline` (`time.monotonic()`) acota el plazo del proveedor, medido justo antes de enviar; si
+    ya pasó, la reserva se libera sin enviar. La respuesta y el error llevan el id de su reserva."""
     if connections["default"].in_atomic_block:
         raise RuntimeError("complete() abre sus transacciones: ninguna puede estar abierta")
     if not switch.globally_on():  # antes de todo: el respaldo del despliegue
@@ -163,8 +161,14 @@ def complete(
     if held is None:  # fuera del scope: el aviso del corte ya está confirmado
         raise GatewayError(Outcome.AI_BUDGET_EXHAUSTED)
     started = time.monotonic()  # la reserva ya está confirmada: no hay transacción abierta
+    seconds = float(params["seconds"])
+    if deadline is not None:
+        seconds = min(seconds, deadline - started)
+    if seconds <= 0:  # el turno esperó al interruptor o a la reserva más de lo que quedaba
+        settle(ctx, held, Outcome.PROVIDER_UNAVAILABLE, Decimal(0), None, started)
+        raise GatewayError(Outcome.PROVIDER_UNAVAILABLE, held)
     try:
-        reply = adapter.send(key, body, min(float(params["seconds"]), seconds or params["seconds"]))
+        reply = adapter.send(key, body, seconds)
     except ProviderError as error:
         if error.billed:  # salió y no hubo respuesta: cuenta entera
             settle(ctx, held, Outcome.PROVIDER_UNCERTAIN, None, None, started, error.request_id)

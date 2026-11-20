@@ -97,9 +97,7 @@ def limit() -> int:
 
 
 def caps() -> tuple[int, int]:
-    """`AI_COPILOT_TOOL_CALLS` (1 a 10) y `AI_COPILOT_DEADLINE` (20 a 55 s) del runtime (F8-08g);
-    `ImproperlyConfigured` si no son enteros en rango. Aquí y no en el runtime: el arranque no
-    puede importar el runtime (llega a `records`)."""
+    """`AI_COPILOT_TOOL_CALLS` (1 a 10) y `AI_COPILOT_DEADLINE` (20 a 55 s), o el error (F8-08g)."""
     calls, deadline = settings.AI_COPILOT_TOOL_CALLS, settings.AI_COPILOT_DEADLINE
     if type(calls) is not int or not 1 <= calls <= 10:
         raise ImproperlyConfigured("AI_COPILOT_TOOL_CALLS")
