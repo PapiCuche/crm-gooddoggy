@@ -4,6 +4,7 @@ almacenes vivos, activos y `is_sellable` (decisión del orquestador en #770); un
 lleva stock es `NOT_TRACKED`. El modelo solo ve la franja; el número exacto va en la evidencia
 (`facts`), para el vendedor. Nunca almacenes, ubicaciones, `on_hand`, reservas ni costos."""
 
+from datetime import datetime
 from typing import Any
 
 from django.conf import settings
@@ -37,7 +38,7 @@ def band(units: int | None, few: int) -> str:
     return FEW_UNITS if units <= few else AVAILABLE
 
 
-def _stock(ectx: ExecutionContext, args: dict[str, Any]) -> Found:
+def _stock(ectx: ExecutionContext, args: dict[str, Any], as_of: datetime) -> Found:
     few = few_units()
     variant = published_variants().filter(pk=args["variant_id"]).first()
     if variant is None:
