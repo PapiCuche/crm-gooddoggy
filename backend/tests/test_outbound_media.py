@@ -202,6 +202,16 @@ def test_a_caption_is_at_most_what_whatsapp_takes_in_utf16_units(
     assert message.body == fits and outbound_media.units(fits) == outbound_media.CAPTION_MAX
 
 
+def test_a_caption_with_the_verify_mark_is_refused_before_anything_is_stored(
+    world: SimpleNamespace, migrator: Any
+) -> None:
+    """F8-08a: el pie de foto también sale al cliente."""
+    with pytest.raises(commands.UnverifiedContent):
+        queue(world, talk(world), caption="Precio: [ VERIFICAR ]")
+    stored = "SELECT (SELECT count(*) FROM files), (SELECT count(*) FROM messages)"
+    assert migrator.execute(stored).fetchone() == (0, 0)
+
+
 def test_an_image_is_queued_with_its_file_once_and_a_replay_needs_the_same_file(
     world: SimpleNamespace, migrator: Any
 ) -> None:

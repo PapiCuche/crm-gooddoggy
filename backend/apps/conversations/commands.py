@@ -72,6 +72,7 @@ from core.outbox import emit
 from core.sequences import allocate
 from core.tenancy.context import TenantContext
 from core.tenancy.scope import require_scope
+from core.text import has_verify_mark
 
 REOPEN_HOURS = 72  # D-INB-2: una RESOLVED recibe mensajes hasta 72 h después; luego se cierra
 WINDOW_HOURS = 24  # la ventana de WhatsApp: un entrante con más de 24 h no reabre nada
@@ -108,6 +109,11 @@ class BadReference(ValueError):
 
 class ClientMessageConflict(Exception):
     """Ese `client_message_id` ya es de otro mensaje (otro texto u otra conversación)."""
+
+
+class UnverifiedContent(Exception):
+    """El texto lleva la marca `[verificar]` del copiloto, también disfrazada (ADR-034 §9.3): un
+    dato sin evidencia que nunca sale al cliente."""
 
 
 class StaleVersion(Exception):
@@ -459,7 +465,8 @@ def record_outbound(
     `ClientMessageConflict`; `DoesNotExist` (también fuera del alcance de `messages.send`);
     `AccessDenied` sin el permiso. `purpose` (`policy.PURPOSES`; sin valor por omisión: quien llama
     dice para qué escribe): un seguimiento (`FOLLOW_UP`) a quien se dio de baja es `ConsentRevoked`,
-    la respuesta (`CUSTOMER_REPLY`) no. Plantillas: F7-10. Con `media` (F7-09b, el blob limpio ya
+    la respuesta (`CUSTOMER_REPLY`) no. `UnverifiedContent` si el texto (o el pie de foto) lleva la
+    marca `[verificar]` (F8-08a). Plantillas: F7-10. Con `media` (F7-09b, el blob limpio ya
     guardado por `outbound_media.prepare`) el mensaje es de su tipo y crea su archivo `CLEAN`; un
     reintento es el mismo solo con el mismo archivo (`sha256`)."""
     alias = require_scope(ctx)
@@ -472,6 +479,8 @@ def record_outbound(
         _uuid(client_message_id, "id"),
     )
     text = _body(body)
+    if has_verify_mark(text):  # lo mismo que se guarda y se envía; antes de la transacción
+        raise UnverifiedContent
     if media is not None and outbound_media.units(text) > outbound_media.CAPTION_MAX:  # WhatsApp
         raise ValueError(f"pie de foto: hasta {outbound_media.CAPTION_MAX} unidades UTF-16")
     with transaction.atomic(using=alias):

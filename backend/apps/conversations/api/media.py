@@ -151,7 +151,8 @@ def _read(request: Request, handler: outbound_media.Capped) -> dict[str, Any]:
         description="Pone en cola una imagen (JPEG, PNG) o un PDF para el cliente, con la política "
         "del texto; idempotente por `client_message_id` (202; 200 con el mismo archivo). Pide "
         "`messages.send` y `conversations.view`. El archivo pasa por el antivirus antes de "
-        "guardarse. 409: la política o `CLIENT_MESSAGE_ID_TAKEN`; 411 sin `Content-Length`; 413 "
+        "guardarse. 400 `UNVERIFIED_CONTENT`: el pie de foto lleva la marca `[verificar]`. 409: "
+        "la política o `CLIENT_MESSAGE_ID_TAKEN`; 411 sin `Content-Length`; 413 "
         "`MEDIA_TOO_LARGE`; 415 `MEDIA_TYPE_NOT_ALLOWED` (el tipo real); 422 `MEDIA_INFECTED` o "
         "`MEDIA_TOO_COMPLEX` (pasa los topes del antivirus: no se pudo revisar entero); 429 "
         "`RATE_LIMITED`; 503 `MEDIA_SCAN_UNAVAILABLE` (sin veredicto: nada se guardó, reintentar).",

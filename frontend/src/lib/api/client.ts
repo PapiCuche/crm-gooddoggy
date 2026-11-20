@@ -7407,7 +7407,7 @@ export const getConversationMediaSendUrl = (orgSlug: string, conversationId: str
 };
 
 /**
- * Pone en cola una imagen (JPEG, PNG) o un PDF para el cliente, con la política del texto; idempotente por `client_message_id` (202; 200 con el mismo archivo). Pide `messages.send` y `conversations.view`. El archivo pasa por el antivirus antes de guardarse. 409: la política o `CLIENT_MESSAGE_ID_TAKEN`; 411 sin `Content-Length`; 413 `MEDIA_TOO_LARGE`; 415 `MEDIA_TYPE_NOT_ALLOWED` (el tipo real); 422 `MEDIA_INFECTED` o `MEDIA_TOO_COMPLEX` (pasa los topes del antivirus: no se pudo revisar entero); 429 `RATE_LIMITED`; 503 `MEDIA_SCAN_UNAVAILABLE` (sin veredicto: nada se guardó, reintentar).
+ * Pone en cola una imagen (JPEG, PNG) o un PDF para el cliente, con la política del texto; idempotente por `client_message_id` (202; 200 con el mismo archivo). Pide `messages.send` y `conversations.view`. El archivo pasa por el antivirus antes de guardarse. 400 `UNVERIFIED_CONTENT`: el pie de foto lleva la marca `[verificar]`. 409: la política o `CLIENT_MESSAGE_ID_TAKEN`; 411 sin `Content-Length`; 413 `MEDIA_TOO_LARGE`; 415 `MEDIA_TYPE_NOT_ALLOWED` (el tipo real); 422 `MEDIA_INFECTED` o `MEDIA_TOO_COMPLEX` (pasa los topes del antivirus: no se pudo revisar entero); 429 `RATE_LIMITED`; 503 `MEDIA_SCAN_UNAVAILABLE` (sin veredicto: nada se guardó, reintentar).
  */
 export const conversationMediaSend = async (
   orgSlug: string,
@@ -7685,7 +7685,7 @@ export const getConversationMessagesSendUrl = (orgSlug: string, conversationId: 
 };
 
 /**
- * Pone en cola un mensaje al cliente (`QUEUED`; el envío por el canal es de la tarea de salida), idempotente por `client_message_id`: 202 la primera vez y 200 con el mismo mensaje en un reintento igual. Pide `messages.send` y `conversations.view`; no hace falta ver al contacto (el `body` de la respuesta sigue la regla de la lectura). 409: `CONVERSATION_CLOSED`, `CHANNEL_UNAVAILABLE` (canal sin conectar), `CONTACT_BLOCKED`, `WINDOW_CLOSED` (pasó la ventana de atención del canal desde el último mensaje del cliente), `CONSENT_REVOKED` (fuera de la ventana, con la etiqueta Human Agent, el cliente se dio de baja en este canal) o `CLIENT_MESSAGE_ID_TAKEN` (ese id es de otro texto, otra conversación u otra persona).
+ * Pone en cola un mensaje al cliente (`QUEUED`; el envío por el canal es de la tarea de salida), idempotente por `client_message_id`: 202 la primera vez y 200 con el mismo mensaje en un reintento igual. Pide `messages.send` y `conversations.view`; no hace falta ver al contacto (el `body` de la respuesta sigue la regla de la lectura). 400 `UNVERIFIED_CONTENT`: el texto lleva la marca `[verificar]` del copiloto, también disfrazada (letras parecidas, otro ancho, caracteres que no se ven o mayúsculas). 409: `CONVERSATION_CLOSED`, `CHANNEL_UNAVAILABLE` (canal sin conectar), `CONTACT_BLOCKED`, `WINDOW_CLOSED` (pasó la ventana de atención del canal desde el último mensaje del cliente), `CONSENT_REVOKED` (fuera de la ventana, con la etiqueta Human Agent, el cliente se dio de baja en este canal) o `CLIENT_MESSAGE_ID_TAKEN` (ese id es de otro texto, otra conversación u otra persona).
  */
 export const conversationMessagesSend = async (
   orgSlug: string,
