@@ -33,6 +33,7 @@ from tests.test_ai_price_tool import ask, store
 from tests.test_ai_read_tools import allow, run, shop, world
 from tests.test_authorization import acting
 from tests.test_memberships import ctx
+from tests.test_pricing_engine import person
 from tests.test_promotion_tables import promo
 
 pytestmark = pytest.mark.usefixtures("tenant_db")
@@ -235,9 +236,10 @@ def test_prices_resolve_at_the_evidence_instant_not_at_the_scope_start(
     su `as_of`: se cita el que rige en `as_of`."""
     allow(store.world, "prices.view")
     failed: list[BaseException] = []
+    pricer = person(store.world, {"prices.manage": None})  # la base se lo pide (pricing/0011)
 
     def change() -> None:
-        tenant = ctx(store.world.a, store.world.ana)
+        tenant = ctx(store.world.a, pricer)
         try:
             with tenant_scope(tenant):
                 set_price(tenant, variant_id=store.shop.big.pk, price_list_id=store.lists["TIE"],
