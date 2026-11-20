@@ -71,6 +71,9 @@ def test_it_lists_every_invitation_of_the_organization_newest_first_and_none_of_
         "expires_at": rows[1]["expires_at"],
         "invited_by": str(rbac.ana.pk),
         "created_at": made[2]["created_at"],
+        "sent_at": None,
+        "send_count": 0,
+        "delivery": "NOT_SENT",
     }
     assert datetime.fromisoformat(rows[1]["expires_at"]) < datetime.fromisoformat(
         rows[1]["created_at"]

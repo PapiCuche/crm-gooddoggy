@@ -84,6 +84,7 @@ export * from "./costPage";
 export * from "./costSetRequest";
 export * from "./costSourceEnum";
 export * from "./currentPrice";
+export * from "./deliveryEnum";
 export * from "./directionEnum";
 export * from "./discountPoliciesListParams";
 export * from "./discountPolicy";

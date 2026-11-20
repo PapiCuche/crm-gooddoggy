@@ -5096,15 +5096,16 @@ paths:
           description: ''
     post:
       operationId: invitations_create
-      description: 'Deja creada la invitación de una persona, pendiente y con los
-        roles que tendrá al aceptar, y pide su correo, que sale después con el enlace.
-        400: correo al que no se puede escribir, o `role_ids` vacío, con un rol repetido
+      description: 'Deja creada la invitación de una persona (201), pendiente y con
+        los roles que tendrá al aceptar, y pide su correo, que sale después con el
+        enlace. Si el correo tiene una pendiente, la renueva (200, F2-130e). 400:
+        correo al que no se puede escribir, o `role_ids` vacío, con un rol repetido
         o que no es de la organización. 403: sin `users.invite` y `users.manage`,
-        o con un rol que el actor no podría asignar. 409: `ALREADY_MEMBER`, `INVITATION_PENDING`,
-        `INVITATION_LIMIT` (50 pendientes) o `LAST_OWNER` (la organización no tiene
-        rol Owner y no admite ningún cambio). 429: 100 invitaciones en 24 h, o `INVITATION_SEND_TOO_SOON`
-        con `Retry-After`: la organización envió una invitación a ese correo hace
-        menos de 15 minutos.'
+        o con un rol que el actor no podría asignar (al renovar, también los que tenía).
+        409: `ALREADY_MEMBER`, `INVITATION_SEND_LIMIT`, `INVITATION_LIMIT` (50 pendientes)
+        o `LAST_OWNER` (la organización no tiene rol Owner y no admite ningún cambio).
+        429: 100 invitaciones en 24 h; con `Retry-After`, `INVITATION_ADDRESS_LIMIT`
+        o `INVITATION_SEND_TOO_SOON` (ver el reenvío).'
       parameters:
       - in: path
         name: org_slug
@@ -5128,11 +5129,79 @@ paths:
               schema:
                 $ref: '#/components/schemas/Invitation'
           description: ''
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Invitation'
+          description: ''
         '400':
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/invitations/{invitation_id}/resend/:
+    post:
+      operationId: invitations_resend
+      description: |-
+        Reenvía una invitación pendiente, caducada o no: la renueva con sus roles y las reglas de
+        invitar (ADR-020 §1). El enlace anterior deja de valer. 409: `INVALID_TRANSITION`,
+        `ALREADY_MEMBER`, `INVITATION_SEND_LIMIT` (5 envíos), `INVITATION_ROLE_GONE` o `LAST_OWNER`.
+        429 con `Retry-After`: `INVITATION_ADDRESS_LIMIT` (3 envíos a ese correo en 24 h) o
+        `INVITATION_SEND_TOO_SOON` (15 minutos entre dos).
+      parameters:
+      - in: path
+        name: invitation_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - members
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Invitation'
           description: ''
         '401':
           content:
@@ -13521,6 +13590,12 @@ components:
       - price_id
       - starts_at
       - tax_included
+    DeliveryEnum:
+      enum:
+      - NOT_SENT
+      - SENT
+      - NOT_DELIVERED
+      type: string
     DirectionEnum:
       enum:
       - INBOUND
@@ -13764,13 +13839,30 @@ components:
         created_at:
           type: string
           format: date-time
+        sent_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: El último envío.
+        send_count:
+          type: integer
+          description: Cuántas veces se envió (de 0 a 5).
+        delivery:
+          allOf:
+          - $ref: '#/components/schemas/DeliveryEnum'
+          description: '`NOT_DELIVERED`: el último enlace se emitió y contó sin entrega
+            confirmada.'
+          readOnly: true
       required:
       - created_at
+      - delivery
       - email
       - expires_at
       - id
       - invited_by
       - role_ids
+      - send_count
+      - sent_at
       - status
     InvitationAcceptRequest:
       type: object

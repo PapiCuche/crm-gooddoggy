@@ -13,7 +13,7 @@ from typing import NamedTuple
 from uuid import UUID
 
 from django.db import IntegrityError, connection, transaction
-from django.db.models import F, Max
+from django.db.models import F, Func, Max
 from django.db.models.functions import Now
 from django.utils import timezone
 
@@ -52,6 +52,8 @@ INVITATION_LIFETIME = timedelta(days=7)
 INVITATIONS_PENDING_MAX = 50
 INVITATIONS_DAILY_MAX = 100
 INVITATION_SEND_GAP = timedelta(minutes=15)  # entre dos envíos al mismo correo (§3)
+ADDRESS_DAILY_SENDS = 3  # a un correo en 24 h, de todas las invitaciones (F2-130e, el dueño)
+ADDRESS_WINDOW = timedelta(hours=24)
 SEND_REQUESTED = "invitation.send_requested"  # evento del outbox: solo identificadores
 # Para quien no importa los modelos del módulo (ADR-017).
 INVITATION_ROLES_MAX = INVITATION_MAX_ROLES
@@ -83,6 +85,14 @@ class SendTooSoon(Exception):
         self.wait = wait
 
 
+class AddressLimit(SendTooSoon):
+    """La organización ya envió `ADDRESS_DAILY_SENDS` invitaciones a ese correo en 24 horas."""
+
+
+class SendLimit(Exception):
+    """La invitación ya se envió `INVITATION_MAX_SENDS` veces: se revoca y se invita de nuevo."""
+
+
 class InvitationRef(NamedTuple):
     """Una invitación, para quien no importa los modelos del módulo (ADR-017)."""
 
@@ -93,6 +103,32 @@ class InvitationRef(NamedTuple):
     expires_at: datetime
     invited_by_id: UUID
     created_at: datetime
+    sent_at: datetime | None = None
+    send_count: int = 0
+    delivered_at: datetime | None = None
+    linked: bool = False  # tiene un enlace emitido; el hash no sale de la tabla
+
+
+def _ref(invitation: UserInvitation) -> InvitationRef:
+    return InvitationRef(*(getattr(invitation, field) for field in _REF_FIELDS))
+
+
+_REF_FIELDS = (
+    *("pk", "email", "role_ids", "status", "expires_at", "invited_by_id", "created_at"),
+    *("sent_at", "send_count", "delivered_at", "linked"),
+)
+DELIVERIES = ("NOT_SENT", "SENT", "NOT_DELIVERED")
+_APPEND_NOW = Func(F("send_times"), Now(), function="array_append")
+
+
+def shown_delivery(
+    status: str, linked: bool, sent_at: datetime | None, delivered_at: datetime | None
+) -> str:
+    """Si salió el correo del último enlace (F2-130e). `NOT_DELIVERED`: se emitió y contó sin que
+    conste entregado (falló la entrega, o se perdió el acuse del COMMIT y no se reenvió)."""
+    if sent_at is None or (status == UserInvitation.Status.PENDING and not linked):
+        return DELIVERIES[0]
+    return DELIVERIES[1] if delivered_at is not None else DELIVERIES[2]
 
 
 def shown_status(status: str, expires_at: datetime) -> str:
@@ -197,8 +233,7 @@ def create_invitation(
         pending = rows.filter(status=UserInvitation.Status.PENDING)
         if pending.filter(email=email).exists():
             raise InvitationPending
-        if wait := _send_wait(alias, email):
-            raise SendTooSoon(wait)
+        _may_send(alias, email)
         if pending.count() >= INVITATIONS_PENDING_MAX:
             raise TooManyPending
         now = timezone.now()
@@ -225,6 +260,51 @@ def create_invitation(
         invitation.invited_by_id,
         invitation.created_at,
     )
+
+
+def pending_invitation(ctx: TenantContext, *, email: str) -> UUID | None:
+    """La invitación pendiente (caducada o no) de `email` en la organización de `ctx`, o `None`."""
+    rows = UserInvitation.objects.using(require_scope(ctx)).filter(email=email)
+    found: UUID | None = (
+        rows.filter(status=UserInvitation.Status.PENDING).values_list("pk", flat=True).first()
+    )
+    return found
+
+
+def renew_invitation(
+    ctx: TenantContext, *, invitation_id: UUID, role_ids: Collection[UUID]
+) -> InvitationRef:
+    """Renueva una invitación pendiente, caducada o no (ADR-020 §1 y §3): esos roles (ya
+    comprobados), caducidad nueva, el usuario de `ctx` invita y el enlace anterior deja de valer.
+    Lo audita y pide su correo; la tarea cuenta el envío, y la cuenta no vuelve a 0. Lanza
+    `InvalidTransition`, `AlreadyMember`, `SendLimit` o `SendTooSoon` sin escribir; la de otra
+    organización, `DoesNotExist`. Quien llama tiene el bloqueo de RBAC: después, la fila."""
+    alias = require_scope(ctx)
+    if ctx.user_id is None:
+        raise ValueError("una invitación la renueva una persona")
+    with transaction.atomic(using=alias):  # savepoint: el cambio, su auditoría y su evento
+        rows = UserInvitation.objects.using(alias).select_for_update(no_key=True)
+        invitation = rows.get(pk=invitation_id)
+        if invitation.status != UserInvitation.Status.PENDING:
+            raise InvalidTransition(invitation.status)
+        if has_membership(ctx, email=invitation.email):
+            raise AlreadyMember
+        if invitation.send_count >= INVITATION_MAX_SENDS:
+            raise SendLimit
+        _may_send(alias, invitation.email)
+        before = [str(role_id) for role_id in invitation.role_ids]
+        changes = {"invited_by": [invitation.invited_by_id, ctx.user_id]}
+        changes["expires_at"] = [invitation.expires_at, timezone.now() + INVITATION_LIFETIME]
+        invitation.role_ids = sorted(UUID(str(role_id)) for role_id in role_ids)
+        invitation.invited_by_id, invitation.expires_at = ctx.user_id, changes["expires_at"][1]
+        invitation.token_hash = invitation.delivered_at = None
+        fields = ["role_ids", "invited_by", "expires_at", "token_hash", "delivered_at"]
+        invitation.save(using=alias, update_fields=[*fields, "updated_at"])
+        changes["role_ids"] = [before, [str(role_id) for role_id in invitation.role_ids]]
+        entity, renewed = Entity("invitation", invitation.pk), {"renewal": True}
+        record(ctx, "membership.invited", entity, changes, {**renewed, "email": invitation.email})
+        outbox.emit(ctx, SEND_REQUESTED, aggregate_type="invitation", aggregate_id=invitation.pk)
+    return _ref(invitation)
 
 
 def invitation_role_ids(ctx: TenantContext, *, invitation_id: UUID) -> list[UUID]:
@@ -256,15 +336,7 @@ def revoke_invitation(ctx: TenantContext, *, invitation_id: UUID) -> InvitationR
             record(ctx, "membership.invitation_revoked", entity, changes)
         elif invitation.status != status.REVOKED:
             raise InvalidTransition(invitation.status)
-    return InvitationRef(
-        invitation.pk,
-        invitation.email,
-        invitation.role_ids,
-        invitation.status,
-        invitation.expires_at,
-        invitation.invited_by_id,
-        invitation.created_at,
-    )
+    return _ref(invitation)
 
 
 def find_invitation(token_hash: str) -> tuple[UUID, UUID] | None:
@@ -355,6 +427,28 @@ def accept_invitation(
     return UUID(str(membership.pk))
 
 
+def _may_send(alias: str, email: str) -> None:
+    """Lanza `SendTooSoon` (`AddressLimit`: tope diario) si ahora no se puede enviar a `email`."""
+    if wait := _address_wait(alias, email):
+        raise AddressLimit(wait)
+    if wait := _send_wait(alias, email):
+        raise SendTooSoon(wait)
+
+
+def _address_wait(alias: str, email: str) -> int:
+    """Segundos hasta poder enviar a `email` sin pasar de `ADDRESS_DAILY_SENDS` en `ADDRESS_WINDOW`,
+    con todas las invitaciones a ese correo. Con el bloqueo de RBAC: se cuentan en serie."""
+    now = timezone.now()
+    since = now - ADDRESS_WINDOW
+    rows = UserInvitation.objects.using(alias).filter(email=email, sent_at__gt=since)
+    logs = rows.values_list("send_times", flat=True)
+    times: list[datetime] = sorted(when for log in logs for when in log if when > since)
+    if len(times) < ADDRESS_DAILY_SENDS:
+        return 0
+    left = times[-ADDRESS_DAILY_SENDS] + ADDRESS_WINDOW - now
+    return max(1, math.ceil(left.total_seconds()))
+
+
 def _send_wait(alias: str, email: str) -> int:
     """Segundos que faltan para poder enviar otra vez a `email` (ADR-020 §3): los cuenta el
     último envío de cualquier invitación de la organización a ese correo, en cualquier estado.
@@ -371,8 +465,9 @@ def invitation_to_send(
     """El nombre de la organización de `ctx` y la invitación, bloqueada hasta el final del scope,
     si ahora se le puede enviar el correo que se pidió en `requested_at` (ADR-020 §3). Si no, la
     razón: `state` (no está pendiente, caducó o la organización no admite acceso), `served` (ese
-    pedido ya se envió), `limit` (sus 5 envíos), `too_soon` (15 minutos desde el último envío a
-    ese correo) o `member` (el correo ya tiene membresía). Quien llama tiene el bloqueo de RBAC."""
+    pedido ya se envió), `limit` (sus 5 envíos), `address_limit` (3 envíos a ese correo en 24 h),
+    `too_soon` (15 minutos desde el último envío a ese correo) o `member` (el correo ya tiene
+    membresía). Quien llama tiene el bloqueo de RBAC."""
     alias = require_scope(ctx)
     organizations = Organization.objects.using(alias).filter(
         pk=ctx.organization_id, status__in=ACCESSIBLE_STATUSES
@@ -387,6 +482,8 @@ def invitation_to_send(
         return "served"
     if invitation.send_count >= INVITATION_MAX_SENDS:
         return "limit"
+    if _address_wait(alias, invitation.email):
+        return "address_limit"
     if _send_wait(alias, invitation.email):
         return "too_soon"
     if has_membership(ctx, email=invitation.email):
@@ -398,7 +495,13 @@ def invitation_to_send(
 def store_invitation_link(ctx: TenantContext, *, invitation_id: UUID, token_hash: str) -> None:
     """Guarda el hash del enlace recién generado de una invitación ya bloqueada
     (`invitation_to_send`), con la hora del envío y un envío más. El enlace anterior deja de
-    valer. La base no deja pasar de `INVITATION_MAX_SENDS`."""
-    UserInvitation.objects.using(require_scope(ctx)).filter(pk=invitation_id).update(
-        token_hash=token_hash, sent_at=Now(), send_count=F("send_count") + 1, updated_at=Now()
-    )
+    valer (y no consta entregado). La base no deja pasar de `INVITATION_MAX_SENDS`."""
+    rows = UserInvitation.objects.using(require_scope(ctx)).filter(pk=invitation_id)
+    sent = {"sent_at": Now(), "send_count": F("send_count") + 1, "updated_at": Now()}
+    rows.update(token_hash=token_hash, send_times=_APPEND_NOW, delivered_at=None, **sent)
+
+
+def invitation_delivered(ctx: TenantContext, *, invitation_id: UUID, token_hash: str) -> None:
+    """El servidor de correo aceptó el enlace con ese hash, si sigue siendo el vigente (F2-130e)."""
+    rows = UserInvitation.objects.using(require_scope(ctx))
+    rows.filter(pk=invitation_id, token_hash=token_hash).update(delivered_at=Now())

@@ -6,7 +6,9 @@ En el `tenant_scope` de la organización del evento, con actor `SYSTEM`: el even
 cambia) y, en el orden de invitar, revocar y aceptar, el bloqueo de RBAC y la fila bloqueada. Una
 invitación que ya no se podría aceptar, o que llegó a un tope, no se envía. Si la entrega falla,
 el enlace ya cuenta y vale, y no se reintenta: otro secreto sería otro envío, y la tarea no espera
-15 minutos; quien invita lo vuelve a pedir.
+15 minutos; quien invita lo vuelve a pedir. Entregado el correo, lo anota en otra transacción
+(F2-130e): sin esa nota, la invitación se enseña como no entregada, también si se perdió la
+confirmación del COMMIT y el reintento la encontró ya servida.
 """
 
 import math
@@ -109,4 +111,11 @@ def send(organization_id: UUID, invitation_id: UUID, event_id: UUID) -> str:
     body = BODY.format(organization=name, link=link, days=f"{days} día{'s' * (days != 1)}")
     mail.send(mail.Message(to=email, subject=SUBJECT, body=body, purpose="invitation"))
     logger.info("invitation.sent", **ids)
+    try:  # solo si sigue siendo el enlace vigente; sin la nota, se enseña como no entregado
+        with tenant_scope(ctx):
+            organizations.invitation_delivered(
+                ctx, invitation_id=invitation_id, token_hash=token_hash(secret)
+            )
+    except DatabaseError as error:
+        logger.warning("invitation.delivery_unrecorded", error=type(error).__name__, **ids)
     return "sent"

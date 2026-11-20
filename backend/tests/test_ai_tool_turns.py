@@ -362,6 +362,7 @@ def test_the_model_blocks_go_back_unchanged(world: SimpleNamespace, migrator: An
     assert (reply.text, reply.tool_calls) == ("busco", reply.blocks[3:])
     answer = ToolResult("toolu_7", (Text(RESULT), Image("image/webp", PNG)), True)
     following = ask(Turn("user", "hola"), Turn("assistant", reply.blocks), Turn("user", (answer,)))
+    world.fake.content = [{"type": "text", "text": "listo"}]  # repetir `toolu_7` no se reenviaría
     gateway.complete(ctx(world.a, world.ana), following)
     sent = world.fake.calls[-1]["body"]["messages"]
     assert sent[1] == {"role": "assistant", "content": REPLY}  # byte a byte, en su orden
@@ -382,10 +383,11 @@ BROKEN = {  # respuestas que no se pueden reenviar intactas
 
 @pytest.mark.parametrize("name", BROKEN)
 def test_an_unreadable_reply_block_counts_the_reservation_whole(
-    world: SimpleNamespace, migrator: Any, name: str, caplog: pytest.LogCaptureFixture
-) -> None:
+    world: SimpleNamespace, migrator: Any, name: str, caplog: pytest.LogCaptureFixture,
+    cases: dict[str, Any] = BROKEN,
+) -> None:  # fmt: skip
     budget(migrator, world.a, "1")
-    world.fake.content = BROKEN[name]
+    world.fake.content = cases[name]
     with caplog.at_level(logging.DEBUG), pytest.raises(GatewayError) as caught:
         gateway.complete(ctx(world.a, world.ana), ask(Turn("user", "hola")))
     assert caught.value.outcome == Outcome.PROVIDER_UNAVAILABLE and INPUT not in caplog.text
@@ -432,6 +434,68 @@ def levels(n: int, kind: type) -> dict[str, Any]:
     for _ in range(n - 1):
         value = {"k": value} if kind is dict else [value]
     return {"q": value}
+
+
+USE = {"type": "tool_use", "id": "toolu_7", "name": "search_product", "input": {"q": INPUT}}
+UNSENDABLE = {  # F8-07d: se leen, pero con una llamada a una tool no se podrían reenviar
+    "blank_text": [{"type": "text", "text": " \n"}, USE],
+    "empty_text": [USE, {"type": "text", "text": ""}],
+    "blank_signature": [{"type": "thinking", "thinking": "x", "signature": " "}, USE],
+    "blank_redacted": [{"type": "redacted_thinking", "data": ""}, USE],
+    "deep_input": [{**USE, "input": levels(65, dict)}],
+    "deep_list": [{**USE, "input": levels(65, list)}],
+    "bad_id": [{**USE, "id": "toolu 7"}],
+    "repeated_id": [USE, {**USE, "input": {"q": "b"}}],
+    "unknown_tool": [{**USE, "name": "delete_everything"}],
+}
+
+
+@pytest.mark.parametrize("name", UNSENDABLE)
+def test_a_tool_reply_that_could_not_be_resent_counts_the_reservation_whole(
+    world: SimpleNamespace, migrator: Any, name: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    test_an_unreadable_reply_block_counts_the_reservation_whole(
+        world, migrator, name, caplog, UNSENDABLE
+    )
+
+
+def test_a_tool_reply_that_reuses_an_earlier_tool_use_id_counts_the_reservation_whole(
+    world: SimpleNamespace, migrator: Any
+) -> None:
+    budget(migrator, world.a, "1")
+    world.fake.content = [{**USE, "id": "toolu_1"}]  # ya está en `LOOP`: no se podría reenviar
+    with pytest.raises(GatewayError) as caught:
+        gateway.complete(ctx(world.a, world.ana), ask())
+    assert caught.value.outcome == Outcome.PROVIDER_UNAVAILABLE
+    [(spent, reserved)], [row] = ledger(migrator)
+    assert (row[0], spent, reserved) == ("PROVIDER_UNCERTAIN", row[1], 0)
+    world.fake.content = [{**USE, "id": "toolu_3"}]  # uno nuevo sí
+    assert gateway.complete(ctx(world.a, world.ana), ask()).tool_calls[0].id == "toolu_3"
+
+
+@pytest.mark.parametrize("deep", [64, 1])
+def test_a_resendable_tool_reply_is_kept_whole_and_goes_back_unchanged(
+    world: SimpleNamespace, migrator: Any, deep: int
+) -> None:
+    budget(migrator, world.a, "1")
+    world.fake.content = [{"type": "thinking", "thinking": "", "signature": SIG},
+                          {**USE, "input": levels(deep, dict)}]  # fmt: skip
+    reply = gateway.complete(ctx(world.a, world.ana), ask(Turn("user", "hola")))
+    assert [type(b) for b in reply.blocks] == [Thinking, ToolCall] and reply.tool_calls
+    answer = Turn("user", (ToolResult("toolu_7", (Text("r"),)),))
+    again = ask(Turn("user", "hola"), Turn("assistant", reply.blocks), answer)
+    world.fake.content = [{**USE, "id": "toolu_8"}]  # sigue con otra llamada
+    gateway.complete(ctx(world.a, world.ana), again)
+    assert [row[0] for row in ledger(migrator)[1]] == ["OK", "OK"]
+
+
+def test_a_final_reply_without_tool_calls_is_not_checked_as_resendable(
+    world: SimpleNamespace, migrator: Any
+) -> None:
+    budget(migrator, world.a, "1")
+    world.fake.content = [{"type": "text", "text": " "}, {"type": "text", "text": "hola"}]
+    reply = gateway.complete(ctx(world.a, world.ana), ask(Turn("user", "hola")))
+    assert reply.blocks == (Text(" "), Text("hola")) and reply.text == " hola"  # ninguno se quita
 
 
 @pytest.mark.parametrize("kind", [dict, list])
