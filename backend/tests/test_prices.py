@@ -2,6 +2,8 @@
 `crm_app`, también con dos transacciones a la vez (un hilo y una conexión cada una)."""
 
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any
@@ -19,9 +21,11 @@ from apps.pricing.models import PriceList, ProductPrice
 from apps.pricing.selectors import next_price, price_at, price_history
 from core.tenancy.scope import tenant_scope
 from tests import test_authorization
+from tests.factories import make_user
 from tests.test_authorization import give
 from tests.test_inventory_stock import race
-from tests.test_memberships import ctx
+from tests.test_memberships import ctx, join
+from tests.test_pipelines_tables import as_migrator
 
 world = test_authorization.world
 pytestmark = pytest.mark.usefixtures("tenant_db")
@@ -41,7 +45,16 @@ def price_list(org: UUID, code: str = "REGULAR", **fields: Any) -> UUID:
         return UUID(str(PriceList.objects.create(code=code, **{**wanted, **fields}).pk))
 
 
+@contextmanager
+def seeding(org: UUID) -> Iterator[None]:
+    """Las semillas de precios y promociones, como el migrador: a `crm_app` la base le pide una
+    persona con `prices.manage` (`pricing/0011`), y una semilla no lo es."""
+    with as_migrator(), tenant_scope(ctx(org)):
+        yield
+
+
 def pair(world: Any) -> tuple[UUID, UUID]:
+    give(world.a, world.membership, {"prices.manage": None})  # ana fija los precios (0011)
     return variant(world.a), price_list(world.a)
 
 
@@ -229,7 +242,7 @@ def test_the_runtime_only_closes_a_validity(world: Any) -> None:
         with pytest.raises(DatabaseError, match="permission denied"), tenant_scope(ctx(world.a)):
             connection.cursor().execute(change)
     closed = price.starts_at + DAY
-    with tenant_scope(ctx(world.a)):
+    with tenant_scope(ctx(world.a, world.ana)):
         assert ProductPrice.objects.filter(pk=price.pk).update(ends_at=closed) == 1
     assert rows(world.a) == [(Decimal("100"), price.starts_at, closed, None)]
 
@@ -242,7 +255,7 @@ def test_a_validity_only_closes_forwards(world: Any) -> None:
     now = timezone.now()
 
     def close(pk: UUID, ends_at: datetime | None) -> None:
-        with tenant_scope(ctx(world.a)), connection.cursor() as cursor:
+        with tenant_scope(ctx(world.a, world.ana)), connection.cursor() as cursor:
             cursor.execute("UPDATE product_prices SET ends_at = %s WHERE id = %s", [ends_at, pk])
 
     for pk, ends_at in (
@@ -267,7 +280,7 @@ def test_what_the_database_refuses_even_without_the_service(world: Any) -> None:
     base = {"variant_id": where[0], "price_list_id": where[1], "amount": Decimal("5")}
     base |= {"currency": "PEN", "starts_at": start, "change_reason": "manual"}
     foreign_list = price_list(world.b)
-    with tenant_scope(ctx(world.b)):
+    with seeding(world.b):
         foreign_price = ProductPrice.objects.create(
             **{**base, "variant_id": variant(world.b), "price_list_id": foreign_list}
         )
@@ -282,7 +295,7 @@ def test_what_the_database_refuses_even_without_the_service(world: Any) -> None:
         ({**past, "previous_price_id": foreign_price.pk}, "product_prices_previous_fk"),
         ({**past, "created_by_user_id": uuid4()}, "product_prices_created_by_fk"),
     ):
-        with pytest.raises(IntegrityError, match=name), tenant_scope(ctx(world.a)):
+        with pytest.raises(IntegrityError, match=name), tenant_scope(ctx(world.a, world.ana)):
             ProductPrice.objects.create(**{**base, **broken})
     assert len(rows(world.a)) == 1
 
@@ -307,10 +320,12 @@ def test_history_hides_the_lists_the_actor_does_not_see(world: Any) -> None:
         price_list(world.a),
         price_list(world.a, "MAYORISTA", required_permission="prices.view_wholesale"),
     )
+    give(world.a, world.membership, {"prices.manage": None})  # ana fija los dos (0011)
     put(world, (sku, regular), "100")
     put(world, (sku, wholesale), "90")
-    give(world.a, world.membership, {"prices.view": None})
-    with tenant_scope(ctx(world.a, world.ana)) as tenant:
+    viewer = make_user(email="vista@example.com")  # y quien solo tiene `prices.view` lee
+    give(world.a, join(world.a, viewer).pk, {"prices.view": None})
+    with tenant_scope(ctx(world.a, viewer)) as tenant:
         seen = list(price_history(execution_context(tenant), sku).values_list("price_list_id"))
     assert seen == [(regular,)]
 
