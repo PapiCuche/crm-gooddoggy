@@ -122,7 +122,7 @@ def priced(change: dict[str, Any], **data: Any) -> Evidence:  # `prices(BIG)`, l
 
 
 FULL = reply(
-    "El {{c1}} cuesta {{c2}} (no S/ 10), antes {{c3}} con {{c4}} ({{c5}}), y está {{c6}}.",
+    "El {{c1}} cuesta {{c2}} (no S/ 10), {{c3}} con {{c4}} ({{c5}}), y está {{c6}}.",
     claim("c1", "PRODUCT_NAME", "tu_v", "variants.0.name"),
     claim("c2", "PRICE", "tu_p", "prices.0.amount"),
     claim("c3", "REGULAR_PRICE", "tu_p", "prices.0.regular_amount"),
@@ -136,12 +136,12 @@ def test_a_valid_template_is_rendered_with_the_values_copied_from_the_evidence()
     """El número que el modelo escribió fuera de un placeholder pasa tal cual: lo marca F8-08f."""
     done = render(FULL, EVIDENCE, NOW)
     assert done.text == (
-        "El Grande cuesta S/ 1,249.90 (no S/ 10), antes S/ 1,299.90 con Promo Verano (Solo esta "
-        "semana), y está disponible, con pocas unidades."
+        "El Grande cuesta S/ 1,249.90 (no S/ 10), precio regular S/ 1,299.90 con Promo Verano "
+        "(Solo esta semana), y está disponible, con pocas unidades."
     )
     assert (done.ok, done.findings, done.problems, done.feedback()) == (True, (), (), "")
     assert [done.text[a:b] for a, b in done.inserted] == [
-        "Grande", "S/ 1,249.90", "S/ 1,299.90", "Promo Verano", "Solo esta semana",
+        "Grande", "S/ 1,249.90", "precio regular S/ 1,299.90", "Promo Verano", "Solo esta semana",
         "disponible, con pocas unidades"]  # fmt: skip
     assert done.expires_at == NOW + timedelta(seconds=600) and done.wants_handoff is False
     assert render({**FULL, "wants_handoff": True}, EVIDENCE, NOW).wants_handoff is True
@@ -340,6 +340,8 @@ def test_the_schema_is_strict_and_its_kinds_are_the_registered_tools() -> None:
         assert obj["additionalProperties"] is False and obj["required"] == list(obj["properties"])
     enum = ["PRODUCT_NAME", "PRICE", "REGULAR_PRICE", "PROMOTION", "PROMOTION_TERMS", "STOCK"]
     assert items["properties"]["kind"]["enum"] == enum
+    text = schema["properties"]["reply_template"]["description"]  # las etiquetas no las escribe
+    assert "«precio regular»" in text and "su nombre a cada PRICE: no los escribas" in text
     assert all(TOOLS[tool.name] is tool for kind in KINDS.values() for tool in kind.tools)
     assert {k: [t.name for t in v.tools] for k, v in KINDS.items() if k != "PRODUCT_NAME"} == {
         "PRICE": ["get_price"], "REGULAR_PRICE": ["get_price"], "PROMOTION": ["get_price"],
@@ -397,8 +399,8 @@ def test_with_the_real_tools_the_text_has_their_values_and_never_the_exact_stock
               for c in FULL["claims"]]  # fmt: skip
     done = render({**FULL, "claims": claims}, found, timezone.now())
     assert done.text == (
-        f"El {variants[index]['name']} cuesta S/ 49.90 (no S/ 10), antes S/ 59.90 con Promo "
-        "Verano (Solo esta semana), y está disponible."
+        f"El {variants[index]['name']} cuesta S/ 49.90 (no S/ 10), precio regular S/ 59.90 con "
+        "Promo Verano (Solo esta semana), y está disponible."
     )
     assert done.ok and str(SENTINEL) not in done.text
     exact = render(reply("{{c1}}", claim("c1", "STOCK", "tu_s", "available")), found,
@@ -433,7 +435,7 @@ def test_prices_of_a_variant_come_from_one_get_price_call_and_each_before_from_i
     otra llamada para la misma variante no: tras un cambio de precio sería un descuento falso."""
     now_a, now_b = (claim(f"c{n + 1}", "PRICE", "tu_p", f"prices.{n}.amount") for n in (0, 1))
     done = render(reply("Antes {{c1}}, ahora {{c2}}", now_a, now_b), EVIDENCE, NOW)
-    assert done.ok and done.text == "Antes S/ 1,249.90, ahora US$ 57.50"  # la redacción: #1023
+    assert done.ok and done.text == "Antes Precio Publico: S/ 1,249.90, ahora Tienda: US$ 57.50"
     later = claim("c2", "PRICE", "n", "prices.0.amount")  # otra llamada, tras un cambio de precio
     n = priced({"amount": "999.00"})
     done = render(reply("Antes {{c1}}, ahora {{c2}}", now_a, later), {**EVIDENCE, "n": n}, NOW)
@@ -456,3 +458,29 @@ def test_prices_of_a_variant_come_from_one_get_price_call_and_each_before_from_i
     regular_n = claim("c3", "REGULAR_PRICE", "n", "prices.0.regular_amount")
     assert codes("{{c1}} y {{c2}}, antes {{c3}}", now_a, later, regular_n, n=n) == [
         "PRICE_TWICE", "SUBJECT_MISMATCH"]  # fmt: skip
+
+
+def test_the_server_labels_the_before_price_and_each_list_when_a_variant_has_several() -> None:
+    """Las etiquetas son texto del servidor (en `inserted`): el «antes» nunca pasa por lo que se
+    paga y el modelo no pone nombre a una lista; con una sola lista por variante, sin nombre."""
+    now, before = claim("c1", "PRICE", "e", "prices.0.amount"), claim(
+        "c2", "REGULAR_PRICE", "e", "prices.0.regular_amount")  # fmt: skip
+    done = render(reply("Cuesta {{c2}} (lista {{c1}})", now, before), {"e": priced({})}, NOW)
+    assert done.ok and done.text == "Cuesta precio regular S/ 1,299.90 (lista S/ 1,249.90)"
+    assert [done.text[a:b] for a, b in done.inserted] == [
+        "precio regular S/ 1,299.90", "S/ 1,249.90"]  # fmt: skip
+    untaxed = {"e": priced({"tax_included": False})}
+    taxed = render(reply("{{c1}}, {{c2}}", now, before), untaxed, NOW)
+    assert taxed.text == "S/ 1,249.90 + IGV, precio regular S/ 1,299.90 + IGV"
+    lists = (now, claim("c3", "PRICE", "e", "prices.1.amount"))
+    done = render(reply("Precio normal {{c1}}, para ti {{c3}}", *lists), {"e": priced({})}, NOW)
+    assert done.ok and [done.text[a:b] for a, b in done.inserted] == [
+        "Precio Publico: S/ 1,249.90", "Tienda: US$ 57.50"]  # fmt: skip
+    nameless = priced({"price_list": " "})  # sin nombre no se distinguen: no se insertan
+    done = render(reply("{{c1}} y {{c3}}", *lists), {"e": nameless}, NOW)
+    assert done.text == "[verificar] y Tienda: US$ 57.50" and marks(done) == ["VALUE_MISSING"]
+    assert render(reply("{{c1}}", now), {"e": nameless}, NOW).text == "S/ 1,249.90"
+    big, small = (claim(f"c{n + 4}", "PRODUCT_NAME", "tu_v", f"variants.{n}.name") for n in (0, 1))
+    each = ({**now, "evidence_ref": "tu_p"}, claim("c6", "PRICE", "tu_p2", "prices.0.amount"))
+    done = render(reply("El {{c4}} a {{c1}}; el {{c5}} a {{c6}}", big, small, *each), EVIDENCE, NOW)
+    assert done.ok and done.text == "El Grande a S/ 1,249.90; el Chico a S/ 1,249.90"
