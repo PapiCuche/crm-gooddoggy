@@ -33,6 +33,10 @@ pytestmark = pytest.mark.usefixtures("tenant_db")
 INVITER: dict[str, str | None] = {"users.invite": None, "users.manage": None}
 INVALID = {"\x01", "\x1b", "\x7f", "\x85", "\n", "\t", "\u2028", "\u200b", "\u200f", "\u061c"}
 BIDI = {"\u202a", "\u202e", "\u2066", "\u2069"}  # incrustan o aíslan: reordenan lo que se ve
+HIDDEN = {  # F2-131: selectores fuera de su base, marcas que no se ven, ZWNJ/ZWJ fuera de palabra
+    "\ufe01" * 40, "\ufe0f", "\U000e0100", "\u180b", "\u034f", "\u17b5", "\u200c\u200c", "\u200d ",
+    "\u3164" * 40, "\u200d",
+}  # fmt: skip
 
 
 def unchanged(migrator: psycopg.Connection[Any]) -> Any:
@@ -169,14 +173,14 @@ def test_a_name_with_control_or_direction_characters_is_refused_without_echoing_
 ) -> None:
     secret = link(team.a, "nora@cliente.pe", team.ana, role_ids=[team.target.pk])
     before = unchanged(migrator)
-    for char in sorted(INVALID | BIDI):
+    for char in sorted(INVALID | BIDI | HIDDEN):
         sent = NEW | {field: f"Ra{char}quel"}
         answer = take(Client(), secret, **sent)
         status, body = said(answer)
         assert (status, body["code"], list(body["fields"])) == (400, "VALIDATION_ERROR", [field])
         assert "Ra" not in json.dumps(body) and b"quel" not in answer.content, repr(char)
     assert unchanged(migrator) == before  # el enlace no se gasta
-    assert reasons(migrator) == [{"reason": "name"}] * len(INVALID | BIDI)
+    assert reasons(migrator) == [{"reason": "name"}] * len(INVALID | BIDI | HIDDEN)
     stored = json.dumps(migrator.execute(DENIALS).fetchall(), default=str)
     assert "quel" not in stored
 
@@ -192,3 +196,34 @@ def test_a_name_needs_something_to_read_and_is_stored_tidy(
     assert said(take(Client(), secret, **NEW | tidy))[0] == 200
     nora = User.objects.get(email="nora@cliente.pe")
     assert (nora.first_name, nora.last_name) == ("Ana María", "de la Cruz")  # NFC, un espacio
+
+
+def test_a_last_name_is_empty_or_readable_and_joiners_inside_a_word_are_kept(
+    team: Any, migrator: psycopg.Connection[Any]
+) -> None:
+    secret = link(team.a, "nora@cliente.pe", team.ana, role_ids=[team.target.pk])
+    for blank in ("\u2800", "\u0301\u0301", "\U0001f436", "- ."):  # F2-131
+        answer = take(Client(), secret, **NEW | {"last_name": blank})
+        errors = said(answer)[1]["fields"]
+        message = "Escribe tu apellido con alguna letra o cifra, o déjalo vacío."
+        assert errors == {"last_name": [{"code": "invalid", "message": message}]}, repr(blank)
+    assert reasons(migrator) == [{"reason": "name"}] * 4
+    persian = {
+        "first_name": "\u0641\u0627\u0637\u0645\u0647",
+        "last_name": "\u062d\u0633\u06cc\u0646\u200c\u0632\u0627\u062f\u0647",
+    }
+    assert said(take(Client(), secret, **NEW | persian))[0] == 200
+    nora = User.objects.get(email="nora@cliente.pe")
+    assert (nora.first_name, nora.last_name) == tuple(persian.values())  # el ZWNJ, guardado
+
+
+def test_a_password_like_a_name_is_told_in_spanish(team: Any) -> None:
+    secret = link(team.a, "nora@cliente.pe", team.ana, role_ids=[team.target.pk])
+    names = {"first_name": "Valentina Quispe", "last_name": "Huamanchumo Rivas"}
+    for field, said_as in (("first_name", "nombre"), ("last_name", "apellido")):
+        answer = take(Client(), secret, **names, password=names[field])
+        (error,) = said(answer)[1]["fields"]["password"]
+        assert error["message"].endswith(f"similar a la de {said_as}."), error
+    answer = take(Client(), secret, **names, password="nora@cliente.pe")  # noqa: S106
+    (error,) = said(answer)[1]["fields"]["password"]
+    assert error["message"].endswith("similar a la de correo electrónico."), error

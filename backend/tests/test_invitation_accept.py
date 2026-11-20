@@ -58,10 +58,7 @@ AUDITED = (
     "SELECT actor_type, actor_id, entity_type, entity_id, changes, metadata, organization_id"
     " FROM audit_logs WHERE action = 'membership.activated'"
 )
-WAITING = (  # en esta base de pruebas: las demás del servidor no cuentan
-    "SELECT count(*) FROM pg_locks JOIN pg_stat_activity USING (pid)"
-    " WHERE NOT granted AND datname = current_database()"
-)
+WAITING = "SELECT count(*) FROM pg_locks WHERE NOT granted AND pid = %s"  # solo esa conexión
 MEMBERS = (
     "SELECT email, organization_id FROM organization_memberships JOIN users ON users.id = user_id"
 )
@@ -89,13 +86,16 @@ def directly(org: UUID, secret: str, session: Any = None) -> Callable[[TenantCon
     return lambda tenant: members.accept_invitation(tenant, invitation_id, digest(secret), **how)
 
 
-def waiting_for_a_lock(thread: threading.Thread, seconds: float = 10) -> None:
-    """Hasta que una conexión de esta base espera un bloqueo, visto desde otra conexión: seguir
-    vivo un rato no prueba que `thread` llegara al bloqueo (con carga, aún no ha llegado)."""
+def waiting_for_a_lock(
+    thread: threading.Thread, pid: Callable[[], int | None], seconds: float = 10
+) -> None:
+    """Hasta que la conexión de `thread` (su `pg_backend_pid`) espera un bloqueo, visto desde
+    otra conexión: seguir vivo un rato no prueba que llegara al bloqueo (con carga, aún no ha
+    llegado), y otra conexión de la base que espere no es la suya (F2-131)."""
     end = time.monotonic() + seconds
     with psycopg.connect(migrator_conninfo(), autocommit=True) as watcher:
         while thread.is_alive() and time.monotonic() < end:
-            if watcher.execute(WAITING).fetchone() != (0,):
+            if (backend := pid()) and watcher.execute(WAITING, [backend]).fetchone() != (0,):
                 return
             time.sleep(0.02)
     raise AssertionError("la segunda petición no esperó ningún bloqueo")
@@ -121,15 +121,20 @@ def held(
             connection.close()
 
     def run_second() -> None:
-        out["second"] = second()
-        connection.close()
+        try:  # la conexión que usa `second` (el cliente de pruebas no la cierra entre peticiones)
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT pg_backend_pid()")
+                out["pid"] = cursor.fetchone()[0]
+            out["second"] = second()
+        finally:
+            connection.close()  # también si `second` falla
 
     one, two = threading.Thread(target=run_first), threading.Thread(target=run_second)
     one.start()
     try:
         assert wrote.wait(timeout=10) and "first" in out
         two.start()
-        waiting_for_a_lock(two)
+        waiting_for_a_lock(two, lambda: out.get("pid"))
         assert "second" not in out  # espera los bloqueos de la primera
     finally:
         release.set()
