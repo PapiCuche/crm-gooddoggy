@@ -44,6 +44,8 @@ REFUSED = (
     "Ana\U000e01ef",  # el último selector ideográfico
     "\u8279\u180b",  # ni tras un ideograma
     "\u2800\ufe0f",  # tras el braille vacío, que no se ve
+    "Caja 1\ufe0f",  # F8-07e: tras una cifra, solo con la tecla U+20E3 detrás
+    "Caja #\ufe0e 2",
     "\u3164\ufe00",  # ni tras un relleno hangul
     "\u3164\U000e0100",
     "Own\u034fer",  # CGJ, siempre

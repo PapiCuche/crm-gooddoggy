@@ -169,7 +169,7 @@ source_modules = ["apps.ai_gateway"]
 forbidden_modules = ["apps.access.api", "apps.accounts.api", "apps.accounts.tasks", "apps.audit.api", "apps.members.api", "apps.organizations.api", "apps.provisioning"]
 
 [[tool.importlinter.contracts]]
-name = "ai_agents no importa la API, las tareas ni los comandos de nadie: solo lee (ADR-034 §2, §11, F8-07a); pricing.costs ya lo cierra su contrato protected"
+name = "ai_agents no importa la API, las tareas, los comandos ni lo que escribe, descifra o lee personas de nadie: solo lee el catálogo, el inventario y los precios (ADR-034 §2, §11, F8-07a, F8-07e); pricing.costs ya lo cierra su contrato protected"
 type = "forbidden"
 source_modules = ["apps.ai_agents"]
 forbidden_modules = [
@@ -180,6 +180,11 @@ forbidden_modules = [
     "apps.tasks.api", "apps.pricing.floor", "apps.catalog.brands", "apps.catalog.categories",
     "apps.catalog.products", "apps.inventory.stock", "apps.inventory.warehouses", "apps.inventory.imports",
     "apps.inventory.reservations", "apps.inventory.transfers", "apps.conversations.commands",
+    # F8-07e: los servicios que escriben (permisos, auditoría), las llaves y el interruptor de la
+    # IA, el envío por WhatsApp, lo cifrado y los contactos (personas, no catálogo)
+    "apps.access.services", "apps.ai_gateway.switch", "apps.ai_gateway.accounts", "apps.ai_gateway.keys",
+    "apps.audit.services", "apps.conversations.whatsapp", "core.sealed", "apps.contacts.models",
+    "apps.contacts.selectors",
 ]
 
 [[tool.importlinter.contracts]]
