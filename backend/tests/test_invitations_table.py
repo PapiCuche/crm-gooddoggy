@@ -27,6 +27,18 @@ INSERT = (
 )
 
 
+SENDS_GUARD = "user_invitations_sends_guard"
+
+
+def unguarded(migrator: psycopg.Connection[Any], sql: str, params: Any = None) -> None:
+    """Solo en pruebas, como el migrador (propietario): `sql` con el disparador de los envíos
+    (F2-130g) apagado dentro de esa transacción, para envejecer lo enviado. El runtime no puede."""
+    with migrator.transaction():
+        migrator.execute(f"ALTER TABLE user_invitations DISABLE TRIGGER {SENDS_GUARD}")
+        migrator.execute(sql, params)
+        migrator.execute(f"ALTER TABLE user_invitations ENABLE TRIGGER {SENDS_GUARD}")
+
+
 def invite(org: UUID, email: str, by: Any, **fields: Any) -> UserInvitation:
     with tenant_scope(ctx(org)):
         made: UserInvitation = UserInvitation.objects.create(
@@ -174,9 +186,10 @@ def test_the_database_keeps_the_other_rules_of_an_invitation(
     insert(org=world.b)
     with pytest.raises(psycopg.errors.UniqueViolation, match="user_invitations_token_hash_uq"):
         migrator.execute(update.format("token_hash = %s"), [HASH, world.b])  # ni en otra
-    for count in (-1, 6):  # un correo no se envía más de cinco veces por invitación
-        with pytest.raises(psycopg.errors.CheckViolation, match="user_invitations_send_count_ck"):
-            migrator.execute(update.format("send_count = %s"), [count, world.a])
+    with pytest.raises(psycopg.errors.CheckViolation, match=SENDS_GUARD):  # no baja (F2-130g)
+        migrator.execute(update.format("send_count = -1"), [world.a])
+    with pytest.raises(psycopg.errors.CheckViolation, match="user_invitations_send_count_ck"):
+        migrator.execute(update.format("send_count = 6"), [world.a])  # ni pasa de cinco
     migrator.execute(update.format("send_count = 5"), [world.a])
     revoked = "status = 'REVOKED', accepted_at = now()"
     for change in ("status = 'ACCEPTED'", "accepted_at = now()", revoked):  # las dos, o ninguna
