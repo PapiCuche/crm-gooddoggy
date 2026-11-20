@@ -56,6 +56,7 @@ from core.observability.logging import get_logger
 from core.outbox import emit
 from core.tenancy.context import TenantContext
 from core.tenancy.scope import require_scope
+from core.text import unhide
 
 logger = get_logger(__name__)
 ZWJ = "‍"
@@ -108,7 +109,13 @@ def clean_text(raw: str) -> str:
     """El texto de un cliente listo para `record_inbound`: sin controles (salvo el salto de línea y
     el tabulador), sin caracteres de formato invisibles ni controles de dirección (se conservan
     ZWNJ, ZWJ, LRM, RLM y ALM), sin Tags U+E0000–E007F (un canal de inyección de instrucciones
-    para la IA), sin sustitutos ni `\\u0000`, con `\\n` por `\\r\\n`, y recortado a `BODY_MAX`."""
+    para la IA), sin sustitutos ni `\\u0000`, con `\\n` por `\\r\\n`, recortado a `BODY_MAX`
+    y sin lo que no se ve fuera de su sitio (`core.text.unhide`, F8-11: selectores sin base,
+    marcas en cadena, uniones sueltas). Nunca lanza: lo que se guarda es lo que leerá la IA."""
+    return unhide(_scrub(raw))
+
+
+def _scrub(raw: str) -> str:
     text = raw.replace("\r\n", "\n").replace("\r", "\n")
     kept = [
         c for c in text
@@ -122,10 +129,11 @@ def visible(text: str) -> bool:
 
 
 def profile_name(raw: Any) -> str:
-    """El nombre del perfil, saneado, en una línea y de hasta 100 caracteres (o vacío)."""
+    """El nombre del perfil, saneado, en una línea y de hasta 100 caracteres (o vacío). Sin
+    `unhide`: un nombre con datos ocultos lo rechaza después `core.text.name` (F2-131)."""
     if not isinstance(raw, str):
         return ""
-    return _cut(" ".join(clean_text(raw).split()), NAME_MAX).strip()
+    return _cut(" ".join(_scrub(raw).split()), NAME_MAX).strip()
 
 
 def normalize_phone(wa_id: Any) -> str | None:
@@ -297,7 +305,8 @@ def _social_body(message: dict[str, Any]) -> tuple[str, str]:
     reply = message.get("reply_to")
     if visible(body):  # el texto manda, aunque traiga un adjunto
         story = isinstance(reply, dict) and isinstance(reply.get("story"), dict)
-        return _cut(f"{STORY_REPLY}: {body}" if story else body, BODY_MAX), MessageType.TEXT
+        said = f"{STORY_REPLY}: {body}" if story else body
+        return unhide(_cut(said, BODY_MAX)), MessageType.TEXT  # el corte no deja nada suelto
     found = message.get("attachments")
     first = found[0] if isinstance(found, list) and found and isinstance(found[0], dict) else {}
     return SOCIAL_LABELS.get(str(first.get("type")), GENERIC), MessageType.UNSUPPORTED
