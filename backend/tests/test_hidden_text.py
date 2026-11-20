@@ -57,6 +57,9 @@ PAYLOADS = [
     ("a" + ZWJ + "\U0001f600", "a\U0001f600"),
     ("\U0001f600" + ZWNJ + "\U0001f600", "\U0001f600\U0001f600"),  # ZWNJ no une emoji
     ("葛" + IVS + IVS, "葛" + IVS),
+    # F8-07e: cada cifra es base de keycap; VS15/16 tras ella solo con la tecla U+20E3 detrás
+    ("Tel 9" + VS16 + "87 6\ufe0e5 #" + VS16 + " *\ufe0e", "Tel 987 65 # *"),
+    ("1" + VS16 + "\u200b\u20e3", "1" + VS16 + "\u20e3"),  # la tecla tras lo que se quita
     ("a" + "\u0300" * 4 + LRM + "\u0300" * 4, "a" + "\u0300" * 4 + LRM),  # LRM no es una base
     ("hola \U0001f600" + ZWJ + "\U0001d159 adi\u00f3s", "hola \U0001f600 adi\u00f3s"),  # no se ve
     ("\u0628" + ZWNJ + "\u3164\u0628", "\u0628" + ZWNJ + "\u0628"),  # lo que sigue y sí queda
@@ -86,7 +89,7 @@ NORMAL = [
     "Ver \u2194\ufe0e " * 20,  # VS15, forma de texto: tampoco cuenta
     "\U0001f468\u200d\U0001f469\u200d\U0001f467\u200d\U0001f466 " * 5,  # 15 ZWJ entre emoji
     "No \U0001f642\u200d\u2194\ufe0f s\u00ed \U0001f642\u200d\u2195\ufe0f",  # ZWJ antes de un Sm
-    "#\ufe0f\u20e3 *\ufe0f\u20e3 9\ufe0f\u20e3 5\ufe0f \u2049\ufe0f \u3030\ufe0f",  # keycaps y ⁉ 〰
+    "#\ufe0f\u20e3 *\ufe0f\u20e3 9\ufe0f\u20e3 5\ufe0e\u20e3 \u2049\ufe0f \u3030\ufe0f",  # keycaps
     "\u303d\ufe0f \u2122\ufe0f \u00a9\ufe0f \u25b6\ufe0f \u2600\ufe0e",
 ]
 
