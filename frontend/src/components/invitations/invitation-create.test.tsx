@@ -107,7 +107,9 @@ describe("InvitationCreate", () => {
       "Owner",
     ]);
     for (const one of boxes) expect(one).not.toBeChecked();
-    expect(within(form).getByText(/el correo con el enlace todavía no se envía/)).toBeVisible();
+    expect(
+      within(form).getByText(/Le enviaremos un correo con el enlace para aceptar/),
+    ).toBeVisible();
     expect(new XMLSerializer().serializeToString(document.body)).not.toMatch(/rol-|c-\d/);
     fireEvent.click(box(form, "Caja"));
     fireEvent.click(within(form).getByRole("button", { name: "Cancelar" }));
@@ -151,7 +153,7 @@ describe("InvitationCreate", () => {
       role_ids: ["rol-3", "rol-1"],
     });
     const done = screen.getByText(
-      "Invitación a nueva@cliente.pe registrada. Todavía no se envía ningún correo.",
+      "Invitación a nueva@cliente.pe registrada. En unos minutos le llegará el correo con el enlace.",
     );
     expect(done).toHaveAttribute("role", "status");
     expect(done).not.toHaveClass("sr-only");
@@ -198,6 +200,11 @@ describe("InvitationCreate", () => {
       refusal(409, "INVITATION_PENDING"),
       "email",
       "Ese correo ya tiene una invitación, pendiente o caducada.",
+    ],
+    [
+      refusal(429, "INVITATION_SEND_TOO_SOON"),
+      "email",
+      "Ese correo recibió una invitación hace menos de 15 minutos. Espera un poco y vuelve a intentarlo.",
     ],
     [
       refusal(400, "VALIDATION_ERROR", { role_ids: [{ code: "invalid" }] }),

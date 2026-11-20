@@ -81,6 +81,12 @@ def _address(to: str) -> None:
         raise ValueError("to: no es una dirección de correo")
 
 
+def configured() -> bool:
+    """¿`send` tiene a dónde entregar? Para quien guarda algo antes de enviar (F2-130d)."""
+    smtp_host = settings.MAIL_BACKEND != "smtp" or bool(settings.EMAIL_HOST)
+    return settings.MAIL_BACKEND in BACKENDS and bool(settings.DEFAULT_FROM_EMAIL) and smtp_host
+
+
 def send(message: Message) -> None:
     """Entrega `message` o lanza: `ValueError` si el mensaje no es válido (no se intenta),
     `ImproperlyConfigured` si no hay servidor configurado y `MailError` si la entrega falla."""
@@ -88,9 +94,7 @@ def send(message: Message) -> None:
     backend = BACKENDS.get(settings.MAIL_BACKEND)
     if backend is None:
         raise ImproperlyConfigured(f"MAIL_BACKEND desconocido: {settings.MAIL_BACKEND!r}")
-    if not settings.DEFAULT_FROM_EMAIL or (
-        settings.MAIL_BACKEND == "smtp" and not settings.EMAIL_HOST
-    ):
+    if not configured():
         raise ImproperlyConfigured("El correo saliente no está configurado (EMAIL_HOST, MAIL_FROM)")
     email = EmailMessage(
         subject=message.subject,
