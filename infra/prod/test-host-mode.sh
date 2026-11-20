@@ -26,7 +26,7 @@ check() { # <descripción> <esperado> [contenido de host-mode | -sin-archivo-]
 unset CRM_COMPOSE_OVERRIDE || true
 check "sin archivo: dedicado" "" -sin-archivo-
 check "dedicated" "" "dedicated"
-check "vacío: dedicado" "" ""
+check "vacío: para (no supone dedicado)" "ERROR" ""
 check "shared" "/prod/compose.shared.yaml" "shared"
 check "shared con salto de línea y espacios" "/prod/compose.shared.yaml" " shared
 "

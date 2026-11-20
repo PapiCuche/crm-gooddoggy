@@ -99,7 +99,11 @@ for path in /health/live /health/ready /demo; do
   [ "$status" = 404 ] || fail "$path se publica"
 done
 status=$(code "$@" "http://${origin#https://}/")
-[ "$status" = 308 ] || fail "HTTP no redirige a HTTPS"
+# Servidor compartido (ADR-046): delante hay una CDN, y con «Always Use HTTPS» responde ella con 301.
+case "$status:$override" in
+  308:* | 301:?*) ;;
+  *) fail "HTTP no redirige a HTTPS" ;;
+esac
 
 token="smoke-$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
 code "$@" "$origin/webhooks/meta/?hub.mode=subscribe&hub.challenge=1&hub.verify_token=$token" > /dev/null

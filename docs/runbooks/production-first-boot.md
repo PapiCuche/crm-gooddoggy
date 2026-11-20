@@ -134,7 +134,7 @@ sudo install -m 0644 /dev/stdin /etc/crm/backup-recipients.txt   # pega las lín
 Después, en el servidor, un archivo cifrado con todos los archivos de entorno salvo `postgres.env`, que se borra en el paso 5.2:
 
 ```bash
-sudo sh -c 'cd /etc/crm && tar -cf - --exclude=postgres.env -- *.env | age -R backup-recipients.txt' \
+sudo sh -c 'cd /etc/crm && tar -cf - --exclude=postgres.env -- *.env $(ls host-mode 2>/dev/null) | age -R backup-recipients.txt' \
   > "crm-secretos-$(date -u +%Y%m%dT%H%MZ).tar.age"
 ```
 

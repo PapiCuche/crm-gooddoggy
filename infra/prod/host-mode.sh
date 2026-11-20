@@ -5,6 +5,7 @@
 #
 # Se declara UNA vez por servidor, en $CRM_ENV_DIR/host-mode (root:0600), con una sola palabra:
 #   dedicated  (o sin archivo)  ADR-033 tal cual: compose.yaml, el proxy publica 80 y 443;
+#              un archivo vacío NO es «dedicated»: es un error (truncado o restaurado a medias);
 #   shared                      compose.yaml + compose.shared.yaml: el proxy no publica puertos y
 #                               recibe el tráfico del borde público del servidor (ADR-046).
 # Un archivo y no una variable de entorno: `sudo` no pasa las variables, y un despliegue que se
@@ -33,7 +34,7 @@ crm_compose_override() {
     return 1
   }
   case $crm_mode in
-    "" | dedicated) ;;
+    dedicated) ;;
     shared) printf '%s\n' "$1/compose.shared.yaml" ;;
     *)
       echo "$crm_mode_file: modo «$crm_mode» desconocido (dedicated o shared)" >&2

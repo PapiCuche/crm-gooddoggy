@@ -114,6 +114,8 @@ Qué hacer ante un aviso: leer `journalctl -u crm-backup.service -n 50`, corregi
 
 ## 6. Restaurar en un servidor nuevo
 
+**Servidor compartido (ADR-046):** antes de nada, `/etc/crm/host-mode` con `shared` y la red `shared-ingress` (`production-shared-host.md` §1 y §2). Sin ellos, los scripts tratan el servidor como dedicado.
+
 Objetivo: menos de 4 h (RTO). El propietario o su suplente tienen que estar localizables en la primera hora: traen la clave privada, la credencial de lectura y la copia de los secretos (ADR-033 §8.3).
 
 1. Aprovisionar el servidor con el runbook de primer arranque (F1-17): Docker, el repositorio y los archivos de `/etc/crm` restaurados de la copia del propietario, con **las mismas `SECRETS_KEKS`**. Para los roles, contraseñas nuevas en `postgres.env` (root, `0600`), las mismas en `migrate.env` y `runtime.env`.
