@@ -67,15 +67,16 @@ export function AiSwitchPanel() {
   if (!allowed) return null;
 
   // Lo que se dice de un fallo, solo por los códigos de estas rutas; `null`: nada (cancelar el
-  // código, o ir al login). Un 403 de apagar con `STEP_UP_REQUIRED` se dice, no abre el código.
-  const problem = (error: ApiError): string | null => {
+  // código, o ir al login). Apagar no abre el código: un `STEP_UP_REQUIRED` suyo no lo pide.
+  const problem = (error: ApiError, off: boolean): string | null => {
     const cancelled: boolean = isStepUpCancelled(error); // cancelar el código no es un fallo
     if (cancelled || toLogin(error)) return null;
     switch (error.code) {
       case "PERMISSION_DENIED":
         return t("errors.denied");
-      case "RATE_LIMITED":
       case STEP_UP_REQUIRED:
+        return off ? t("errors.failed") : (aiError(error, own)?.text ?? null);
+      case "RATE_LIMITED":
         return aiError(error, own)?.text ?? null;
       default:
         return t("errors.failed");
@@ -83,7 +84,11 @@ export function AiSwitchPanel() {
   };
   // Una lectura en vuelo (al recuperar el foco) se cancela antes de escribir y antes de guardar la
   // respuesta: si llegara después, pintaría el estado de antes encima del nuevo.
-  async function change(run: () => Promise<AiSwitch>, done: (value: AiSwitch) => string) {
+  async function change(
+    run: () => Promise<AiSwitch>,
+    done: (value: AiSwitch) => string,
+    off = false,
+  ) {
     if (sending.current) return;
     sending.current = true;
     setBusy(true);
@@ -97,7 +102,7 @@ export function AiSwitchPanel() {
       setSaid({ text: done(value) });
       setTimeout(() => heading.current?.focus()); // el botón pulsado ya no está
     } catch (error) {
-      const text = problem(error as ApiError);
+      const text = problem(error as ApiError, off);
       setSaid(text ? { text, alert: true } : null);
     } finally {
       sending.current = false;
@@ -108,6 +113,7 @@ export function AiSwitchPanel() {
     void change(
       () => aiSwitchOff(slug),
       () => t("turnOff.done"),
+      true,
     );
   const turnOn = () => {
     if (!noticed) {

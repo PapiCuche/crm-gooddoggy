@@ -39,6 +39,7 @@ INSTALLED_APPS = [
     "apps.tasks",
     "apps.quotes",
     "apps.ai_gateway",  # F8-03a (ADR-034 §2): L1, no importa módulos de negocio
+    "apps.ai_agents",  # F8-07a (ADR-034 §2): L4, el copiloto y su Tool Registry
 ]
 
 MIDDLEWARE = [

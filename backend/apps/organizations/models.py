@@ -4,7 +4,7 @@ sucursales, equipos e integrantes de cada equipo (tenant-owned)."""
 from django.conf import settings
 from django.contrib.postgres.fields import ArrayField
 from django.db import models
-from django.db.models.lookups import Exact, IsNull
+from django.db.models.lookups import Exact, IsNull, LessThanOrEqual
 
 from core.db.models import TenantModel, uuid7_primary_key
 
@@ -239,6 +239,11 @@ INVITATION_MAX_SENDS = 5  # los correos que se envían por una invitación (ADR-
 INVITATION_EMAIL = r"^[\x21-\x3f\x5b-\x7e]+@[\x21-\x3f\x5b-\x7e]+$"
 
 
+_cardinality = models.Func(
+    models.F("send_times"), function="cardinality", output_field=models.IntegerField()
+)
+
+
 def _roles(function: str, *args: models.Value) -> models.Func:
     """Una función de PostgreSQL sobre `role_ids`, para su restricción."""
     return models.Func(
@@ -284,6 +289,14 @@ class UserInvitation(TenantModel):
     sent_at = models.DateTimeField(null=True)
     # Cuántas veces se envió su correo: el tope lo pone la base (ADR-020 §3).
     send_count = models.SmallIntegerField(default=0, db_default=0)
+    # Cuándo salió cada envío: el tope diario por correo los cuenta (F2-130e, decisión del dueño).
+    send_times = ArrayField(
+        models.DateTimeField(),
+        default=list,
+        db_default=models.Value([], ArrayField(models.DateTimeField())),
+    )
+    # El servidor de correo aceptó el enlace vigente (F2-130e). NULL con `sent_at`: no entregado.
+    delivered_at = models.DateTimeField(null=True)
     accepted_at = models.DateTimeField(null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -332,6 +345,15 @@ class UserInvitation(TenantModel):
                 | (~models.Q(status="ACCEPTED") & models.Q(accepted_at__isnull=True)),
                 name="user_invitations_accepted_ck",
             ),
+            models.CheckConstraint(  # entregado, solo lo que se envió y después de enviarlo
+                condition=models.Q(delivered_at__isnull=True)
+                | models.Q(sent_at__isnull=False, delivered_at__gte=models.F("sent_at")),
+                name="user_invitations_delivered_ck",
+            ),
+            models.CheckConstraint(  # a lo sumo una hora por envío contado
+                condition=models.Q(LessThanOrEqual(_cardinality, models.F("send_count"))),
+                name="user_invitations_send_times_ck",
+            ),
         ]
         indexes = [  # lado referenciante de la FK a la membresía de quien invita
             models.Index(
@@ -341,3 +363,8 @@ class UserInvitation(TenantModel):
 
     def __str__(self) -> str:
         return str(self.pk)
+
+    @property
+    def linked(self) -> bool:
+        """¿Tiene un enlace emitido? Solo el hecho, nunca el hash."""
+        return self.token_hash is not None

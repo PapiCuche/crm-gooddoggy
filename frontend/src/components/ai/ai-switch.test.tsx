@@ -187,15 +187,27 @@ describe("Interruptor de la IA (F8-06b)", () => {
     show(MANAGE);
     const region = await panel();
     expect(await within(region).findByText("Nunca")).toBeVisible();
-    const group = await turnOn(false);
+    expect(within(region).getByText("Esta organización").nextElementSibling).toHaveTextContent(
+      "Apagada",
+    );
+    expect(within(region).getByText("Todo el sistema").nextElementSibling).toHaveTextContent(
+      "Encendida",
+    );
+    await press("Encender la IA");
+    const group = screen.getByRole("group", { name: "Encender la IA" });
+    const box = within(group).getByRole("checkbox");
+    await waitFor(() => expect(document.activeElement).toBe(box)); // el foco va a la casilla
+    expect(box).not.toHaveAccessibleDescription();
+    fireEvent.click(within(group).getByRole("button", { name: "Sí, encender" }));
     expect(within(group).getByRole("alert")).toHaveTextContent(
       "Marca la confirmación del aviso de datos",
     );
+    expect(box).toHaveAccessibleDescription(/^Marca la confirmación del aviso de datos/);
+    expect(box).toHaveAttribute("aria-invalid", "true");
     expect(calls(api, ON)).toEqual([]);
-    expect(within(group).getByRole("checkbox")).toHaveAccessibleName(
-      /aviso de tratamiento de datos está publicado/,
-    );
-    fireEvent.click(within(group).getByRole("checkbox"));
+    expect(box).toHaveAccessibleName(/aviso de tratamiento de datos está publicado/);
+    fireEvent.click(box);
+    expect(box).not.toHaveAccessibleDescription();
     fireEvent.click(within(group).getByRole("button", { name: "Sí, encender" }));
     await verify();
     expect(await within(region).findByText("La IA está encendida.")).toBeVisible();
@@ -238,6 +250,10 @@ describe("Interruptor de la IA (F8-06b)", () => {
     expect(within(region).getByText(/apagada en todo el sistema/)).toBeVisible();
     expect(within(region).getByText("Todo el sistema").nextElementSibling).toHaveTextContent(
       "Apagada",
+    );
+    // la fila de la organización dice la suya, no la del sistema
+    expect(within(region).getByText("Esta organización").nextElementSibling).toHaveTextContent(
+      "Encendida",
     );
     expect(within(region).queryByRole("button", { name: /sistema|servidor/ })).toBeNull();
     // la organización sí se apaga y se enciende: queda lista para cuando el servidor la encienda
@@ -299,14 +315,19 @@ describe("Interruptor de la IA (F8-06b)", () => {
     expect(within(await panel()).queryByRole("alert")).toBeNull();
   });
 
-  it("una lectura en vuelo no pisa lo que devolvió apagar", async () => {
+  it("una lectura en vuelo se cancela antes de apagar y no pisa lo que devolvió", async () => {
     let release: (value: Response) => void = () => {};
     let read = 0;
+    let signal: AbortSignal | null | undefined;
+    const aborted: boolean[] = []; // la lectura retenida, vista cuando sale el POST de apagar
     const api = mockApi({ [LIST]: ok([]), [OFF]: ok(state({ enabled: false })) });
     const real = api.getMockImplementation()!;
     api.mockImplementation((input, init) => {
-      if (`${init?.method ?? "GET"} ${String(input)}` !== GET) return real(input, init);
+      const route = `${init?.method ?? "GET"} ${String(input)}`;
+      if (route === OFF) aborted.push(signal?.aborted ?? false);
+      if (route !== GET) return real(input, init);
       if (++read === 1) return Promise.resolve(new Response(JSON.stringify(state())));
+      signal = init?.signal;
       return new Promise<Response>((done) => (release = done)); // la del foco, retenida
     });
     const view = show(OWNER);
@@ -316,9 +337,49 @@ describe("Interruptor de la IA (F8-06b)", () => {
     await waitFor(() => expect(read).toBe(2));
     await press("Apagar la IA");
     expect(await within(region).findByText("La IA está apagada.")).toBeVisible();
+    expect(aborted).toEqual([true]);
     release(new Response(JSON.stringify(state()))); // llega tarde, con el estado de antes
     await new Promise((done) => setTimeout(done, 50));
     expect(within(region).getByText("La IA está apagada.")).toBeVisible();
+  });
+
+  it("una lectura que empieza mientras se apaga tampoco pisa lo que devolvió", async () => {
+    let answer: (value: Response) => void = () => {};
+    let release: (value: Response) => void = () => {};
+    let read = 0;
+    const api = mockApi({ [LIST]: ok([]) });
+    const real = api.getMockImplementation()!;
+    api.mockImplementation((input, init) => {
+      const route = `${init?.method ?? "GET"} ${String(input)}`;
+      if (route === OFF) return new Promise<Response>((done) => (answer = done)); // retenido
+      if (route !== GET) return real(input, init);
+      if (++read === 1) return Promise.resolve(new Response(JSON.stringify(state())));
+      return new Promise<Response>((done) => (release = done)); // la del foco, retenida
+    });
+    const view = show(OWNER);
+    const region = await panel();
+    expect(await within(region).findByText("La IA está encendida.")).toBeVisible();
+    await press("Apagar la IA");
+    expect(await within(region).findByRole("button", { name: "Apagando…" })).toBeVisible();
+    void view.client.refetchQueries({ queryKey: [`${BASE}/switch/`] });
+    await waitFor(() => expect(read).toBe(2));
+    answer(new Response(JSON.stringify(state({ enabled: false }))));
+    expect(await within(region).findByText("La IA está apagada.")).toBeVisible();
+    release(new Response(JSON.stringify(state()))); // llega tarde, con el estado de antes
+    await new Promise((done) => setTimeout(done, 50));
+    expect(within(region).getByText("La IA está apagada.")).toBeVisible();
+  });
+
+  it("si apagar falla sin poder leer el estado, lo dice con su aviso", async () => {
+    mockApi({ [GET]: fail(500, "INTERNAL_ERROR"), [OFF]: fail(500, "INTERNAL_ERROR") });
+    show(KILL);
+    await press("Apagar la IA");
+    const region = await panel();
+    expect(await within(region).findByText(/^No se pudo cambiar el estado/)).toHaveAttribute(
+      "role",
+      "alert",
+    );
+    expect(within(region).getByText("Si es urgente, puedes apagarla igualmente.")).toBeVisible();
   });
 
   it("el Owner (los dos permisos) ve las cuentas, sin la nota, y puede encender", async () => {
@@ -351,6 +412,26 @@ describe("Interruptor de la IA (F8-06b)", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
+  it.each([
+    ["sin error", ok([])],
+    ["con otro error", fail(500, "INTERNAL_ERROR")],
+  ])("después de encender, la lista de cuentas (%s) no se vuelve a leer", async (_, list) => {
+    let tried = 0;
+    const api = mockApi({
+      [GET]: ok(state({ enabled: false })),
+      [LIST]: list,
+      [ON]: () => (++tried === 1 ? STEP : ok(state())),
+      [STEP_UP]: ok({ step_up_expires_in: 900 }),
+    });
+    show(OWNER);
+    await waitFor(() => expect(calls(api, LIST)).toHaveLength(1));
+    await turnOn();
+    await verify();
+    expect(await screen.findByText("La IA quedó encendida en esta organización.")).toBeVisible();
+    await new Promise((done) => setTimeout(done, 50));
+    expect(calls(api, LIST)).toHaveLength(1);
+  });
+
   it("con el sistema y la organización apagados lo dicen las dos filas y el aviso", async () => {
     mockApi({ [GET]: ok(state({ enabled: false, global_enabled: false })), [LIST]: ok([]) });
     show(MANAGE);
@@ -361,7 +442,7 @@ describe("Interruptor de la IA (F8-06b)", () => {
     }
   });
 
-  it("apagar con STEP_UP_REQUIRED lo dice sin abrir el código; el aviso se va al reintentar", async () => {
+  it("apagar con STEP_UP_REQUIRED falla sin pedir un código que no abre; el aviso se va al reintentar", async () => {
     let release: (value: Response) => void = () => {};
     let tried = 0;
     const api = mockApi({ [GET]: ok(state()), [LIST]: ok([]), [OFF]: STEP });
@@ -374,7 +455,10 @@ describe("Interruptor de la IA (F8-06b)", () => {
     show(MANAGE);
     await press("Apagar la IA");
     const region = await panel();
-    expect(await within(region).findByRole("alert")).toHaveTextContent("Confirma tu identidad");
+    expect(await within(region).findByRole("alert")).toHaveTextContent(
+      "No se pudo cambiar el estado de la IA.",
+    );
+    expect(within(region).queryByText(/Confirma tu identidad|código/)).toBeNull();
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(calls(api, STEP_UP)).toEqual([]);
     await press("Apagar la IA");
@@ -384,6 +468,20 @@ describe("Interruptor de la IA (F8-06b)", () => {
     release(new Response(JSON.stringify(state({ enabled: false }))));
     expect(await within(region).findByText("La IA está apagada.")).toBeVisible();
     expect(within(region).queryByRole("alert")).toBeNull();
+  });
+
+  it("encender con STEP_UP_REQUIRED también después del código pide confirmar otra vez", async () => {
+    const api = mockApi({
+      [GET]: ok(state({ enabled: false })),
+      [LIST]: ok([]),
+      [ON]: STEP,
+      [STEP_UP]: ok({ step_up_expires_in: 900 }),
+    });
+    show(MANAGE);
+    const group = await turnOn();
+    await verify();
+    expect(await within(group).findByRole("alert")).toHaveTextContent("Confirma tu identidad");
+    expect(calls(api, ON)).toHaveLength(2);
   });
 
   it.each([
