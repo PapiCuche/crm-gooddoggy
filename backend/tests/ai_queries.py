@@ -17,7 +17,7 @@ from psycopg._cursor_base import BaseCursor
 WRITES = re.compile(
     r"\b(insert|update|delete|merge|truncate|copy|lock|create|alter|drop|grant|revoke|call|into"
     r"|nextval|setval|refresh|vacuum|reindex|cluster|notify|pg_notify|do|checkpoint|prepare"
-    r"|execute|pg_terminate_backend|pg_cancel_backend"
+    r"|execute|pg_terminate_backend|pg_cancel_backend|unicode_escaped_identifier"
     r"|lo_(create|creat|unlink|import|export|from_bytea|put|truncate|write))\b"
     r"|\bfor\s+(key\s+)?share\b|\bpg_\w*advisory|\bcomment\s+on\b|\bsecurity\s+label\b"
     r"|\bset_config\s*\((?![^()]*,[^(),]*,\s*true\s*\))"  # sin `true`: queda en la sesión
@@ -27,19 +27,24 @@ WRITES = re.compile(
 )  # `update` también caza `FOR UPDATE` y `FOR NO KEY UPDATE`; `into`, `SELECT … INTO`
 LITERAL = re.compile(r"\b[Ee]'(?:[^'\\]|\\.|'')*'|'(?:[^']|'')*'")  # un texto no es SQL
 # Antes de buscar, de izquierda a derecha (manda lo que abre primero): los textos, también
-# `$tag$…$tag$`, salen; los comentarios son un espacio (`FOR/**/SHARE` es `FOR SHARE`); y un
-# identificador entre comillas guarda sus palabras (`"nextval"(…)` sigue siendo `nextval`), sin
-# las comillas ni los `--` o `/*` que lleve dentro.
+# `$tag$…$tag$` (no el `$` dentro de un nombre, `a$b$`), salen; los comentarios son un espacio
+# (`FOR/**/SHARE` es `FOR SHARE`); un identificador entre comillas queda en sus palabras, sin
+# comillas (`"set_config"(…)` es `set_config(…)`); y uno `U&"…"`, que puede esconder cualquier
+# nombre con escapes y nunca lo genera el ORM, se marca.
 NOISE = re.compile(
-    LITERAL.pattern + r'|\$([A-Za-z_]\w*|)\$.*?\$\1\$|"(?:[^"]|"")*"|/\*.*?\*/|--[^\n]*',
+    LITERAL.pattern + r"|(?<![\w$])\$([^\W\d]\w*|)\$.*?\$\1\$"
+    r'|(?:\b[Uu]&)?"(?:[^"]|"")*"|/\*.*?\*/|--[^\n]*',
     re.DOTALL,
 )
+ESCAPED = " unicode_escaped_identifier "  # lo que `WRITES` marca en lugar de un `U&"…"`
 
 
 def _quiet(found: re.Match[str]) -> str:
     text = found[0]
+    if text[0] in "Uu":
+        return ESCAPED
     if text[0] == '"':
-        return '"' + re.sub(r"\W", " ", text[1:-1]) + '"'
+        return " " + re.sub(r"\W", " ", text[1:-1]) + " "
     return " " if text[0] in "/-" else "''"
 
 

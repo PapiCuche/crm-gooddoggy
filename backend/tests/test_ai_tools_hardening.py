@@ -65,6 +65,15 @@ PLANTED = [
     "SELECT 1 AS \"a'b\"; DELETE FROM t; SELECT 1 AS \"c'd\"", 'SELECT 1 AS "--"; DELETE FROM t',
     'SELECT 1 AS "/*"; DELETE FROM t; SELECT 1 AS "*/"', 'SELECT "pg_advisory_lock"(1)',
     "CREATE FUNCTION f() RETURNS int AS $$ SELECT 1 $$ LANGUAGE sql",
+    # tercera revisión: `$` en un nombre, etiquetas no ASCII o anidadas, `"set_config"` y `U&"…"`
+    "SELECT 1 AS a$b$; DELETE FROM t; SELECT 1 AS x$b$",
+    "SELECT 1 AS a$$; DELETE FROM t; SELECT 1 AS b$$",
+    "SELECT 1 AS a$$b$; DELETE FROM t; SELECT 1 AS x$b$",
+    "SELECT $é$'$é$; DELETE FROM t; SELECT $é$'$é$",
+    "SELECT $a$ $b$ ' $a$; DELETE FROM t; SELECT ' '", "SELECT \"set_config\"('app.x', 'y', false)",
+    "SELECT pg_catalog.\"set_config\"('app.x', 'y', false)",
+    'SELECT U&"pg\\005fadvisory\\005flock"(1)',
+    "SELECT U&\"\\006Eextval\"('s')", 'SELECT U&"lo\\005fcreate"(0)',
 ]  # fmt: skip
 READS = [
     "SELECT set_config('app.tenant_id', %s, true), set_config('app.user_id', %s, true)",
@@ -75,6 +84,7 @@ READS = [
     "SET CONSTRAINTS ALL DEFERRED", 'SELECT "t"."reset_at", \'a--b\', \'/*\' FROM "t"',
     "SELECT 1 -- se borra con delete\n", "SELECT E'it''s \\\\ ok'",
     "SELECT $$delete$$, $x$ ; SET x = 1 $x$", 'SELECT "t"."it\'s" FROM "t"',
+    "SELECT 1 AS a$b$, '; DELETE FROM t; SELECT 1 AS x$b$, '",  # la escritura va en un texto
 ]  # fmt: skip
 
 
