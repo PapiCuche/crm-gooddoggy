@@ -37,8 +37,7 @@ function unreachable(error: unknown): never {
   throw new ApiError(0, "NETWORK_ERROR");
 }
 
-// `onStatus`: el código de una respuesta correcta, para quien distingue un 200 de un 201 (invitar
-// otra vez a un correo pendiente renueva su invitación: 200). No llega a `fetch`.
+// `onStatus`: el código de una respuesta correcta (renovar una invitación, 200; crearla, 201).
 export type ApiFetchOptions = RequestInit & { onStatus?: (status: number) => void };
 
 export async function apiFetch<T>(

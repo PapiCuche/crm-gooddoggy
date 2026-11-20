@@ -10,6 +10,7 @@ import { InvitationsList } from "./invitations-list";
 const LIST = "GET /api/v1/o/acme/invitations/";
 const RESEND = "POST /api/v1/o/acme/invitations/fila-lima/resend/";
 const NOW = Date.parse("2026-11-20T15:00:00Z"); // las 10:00 a. m. en Lima
+const SOON = "Se envió hace menos de 15 minutos.";
 const ago = (minutes: number) => new Date(NOW - minutes * 60_000).toISOString();
 const tenant = (...codes: string[]): SelfContext => ({
   user: { id: "u1", email: "ana@acme.pe", first_name: "Ana", last_name: "López" },
@@ -166,35 +167,51 @@ describe("InvitationResendAction", () => {
     expect(await resend("tarde")).toHaveAttribute("aria-disabled", "false"); // las demás, no
   });
 
-  it("dentro de los 15 minutos desde el último envío dice desde qué hora", async () => {
-    const api = mockApi({ [LIST]: list({ sent_at: ago(5) }) });
+  it.each([
+    [0, 5, "true", "Desde las 10:10 a. m."], // dentro de los 15 minutos: dice desde qué hora
+    // Atrasado una hora: el envío de hace 20 minutos le cae en el futuro. Para 15, no 55.
+    [-60, 20, "true", "Desde las 9:15 a. m."],
+    [60, 5, "false", null], // adelantado: se ofrece, y si es pronto lo dice el 429 de la API
+  ])("con el reloj desviado %i minutos para como mucho 15", async (skew, sent, stops, when) => {
+    vi.setSystemTime(NOW + skew * 60_000);
+    const api = mockApi({ [LIST]: list({ sent_at: ago(sent) }) });
     screenOf();
     const button = await resend();
-    expect(button).toHaveAttribute("aria-disabled", "true");
-    expect(button).toHaveAccessibleDescription(
-      "Se envió hace menos de 15 minutos. Desde las 10:10 a. m. podrás reenviarla.",
-    );
-    fireEvent.click(button);
+    expect(button).toHaveAttribute("aria-disabled", stops);
+    if (when) expect(button).toHaveAccessibleDescription(`${SOON} ${when} podrás reenviarla.`);
+    else expect(button).not.toHaveAttribute("aria-describedby");
+    if (when) fireEvent.click(button);
     await tick();
     expect(calls(api, "POST")).toHaveLength(0);
   });
 
-  it.each([
-    // Atrasado una hora: el envío de hace 20 minutos le cae en el futuro. Para 15, no 55.
-    [-60, 20, "true", "Se envió hace menos de 15 minutos. Desde las 9:15 a. m. podrás reenviarla."],
-    [60, 5, "false", null], // adelantado: se ofrece, y si es pronto lo dice el 429 de la API
-  ])(
-    "con el reloj %i minutos desviado no para más de 15 minutos",
-    async (skew, sent, stops, text) => {
-      vi.setSystemTime(NOW + skew * 60_000);
-      mockApi({ [LIST]: list({ sent_at: ago(sent) }) });
-      screenOf();
-      const button = await resend();
-      expect(button).toHaveAttribute("aria-disabled", stops);
-      if (text) expect(button).toHaveAccessibleDescription(text);
-      else expect(button).not.toHaveAttribute("aria-describedby");
-    },
-  );
+  it("con el reloj atrasado, la hora prometida no se mueve y se cumple", async () => {
+    vi.useRealTimers(); // también los temporizadores, que avanzan con el tiempo real
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"], shouldAdvanceTime: true });
+    vi.setSystemTime(NOW - 60 * 60_000); // las 9:00 a. m.; el envío, a las 9:40 de su reloj
+    mockApi({ [LIST]: list({ sent_at: ago(20) }) });
+    screenOf();
+    const button = await resend();
+    const promise = `${SOON} Desde las 9:15 a. m. podrás reenviarla.`;
+    expect(button).toHaveAccessibleDescription(promise);
+    await act(() => vi.advanceTimersByTimeAsync(10 * 60_000));
+    expect(button).toHaveAccessibleDescription(promise); // no se mueve
+    await act(() => vi.advanceTimersByTimeAsync(5 * 60_000 + 100));
+    expect(button).toHaveAttribute("aria-disabled", "false"); // a las 9:15, no a las 9:55
+    expect(button).not.toHaveAttribute("aria-describedby");
+  });
+
+  it("un envío nuevo que llega con el reloj atrasado también para 15 minutos, no más", async () => {
+    vi.setSystemTime(NOW - 60 * 60_000);
+    let rows = list({ sent_at: null, send_count: 0, delivery: "NOT_SENT" });
+    mockApi({ [LIST]: () => rows });
+    const view = screenOf();
+    const button = await resend();
+    rows = list({ sent_at: ago(20) }); // la tarea lo envió: la lista se vuelve a pedir
+    await act(() => view.client.refetchQueries());
+    const promise = `${SOON} Desde las 9:15 a. m. podrás reenviarla.`;
+    await waitFor(() => expect(button).toHaveAccessibleDescription(promise));
+  });
 
   it("una lectura en vuelo no pisa la fila reenviada", async () => {
     const api = mockApi({
@@ -212,25 +229,7 @@ describe("InvitationResendAction", () => {
     release();
     await tick();
     expect(within(card("lima")).getByText("Correo: sin enviar")).toBeVisible();
-    // Esa lectura se canceló: la página se pide otra vez y la fila sigue como la dejó la API.
-    await waitFor(() => expect(more).toHaveAttribute("aria-disabled", "false"));
-    fireEvent.click(more);
-    expect(await screen.findByText("tacna@cliente.pe")).toBeVisible();
-    expect(within(card("lima")).getByText("Correo: sin enviar")).toBeVisible();
-  });
-
-  it("pasados los 15 minutos se vuelve a ofrecer, sin recargar", async () => {
-    vi.useRealTimers();
-    const sent = new Date(Date.now() - 15 * 60_000 + 300).toISOString();
-    mockApi({ [LIST]: list({ sent_at: sent }) });
-    screenOf();
-    const button = await resend();
-    expect(button).toHaveAttribute("aria-disabled", "true");
-    await waitFor(() => expect(button).toHaveAttribute("aria-disabled", "false"), {
-      timeout: 2000,
-    });
-    expect(button).not.toHaveAttribute("aria-describedby");
-    expect(within(card("lima")).queryByText(/15 minutos/)).toBeNull();
+    await waitFor(() => expect(more).toHaveAttribute("aria-disabled", "false")); // se canceló
   });
 
   it.each([

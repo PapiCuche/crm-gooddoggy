@@ -47,6 +47,14 @@ export function InvitationResendAction({
   const sending = useRef(false); // dos pulsaciones seguidas no son dos peticiones
   const [now, setNow] = useState(() => Date.now());
   const [held, setHeld] = useState<Block | null>(null); // lo que dijo la API al pulsar
+  // Cuándo se vio este `sent_at` por primera vez: un momento fijo, no `now`, que avanza.
+  const [seen, setSeen] = useState(() => ({ sent: invitation.sent_at, at: Date.now() }));
+  const fresh = seen.sent === invitation.sent_at;
+  useEffect(() => {
+    if (fresh) return;
+    const timer = setTimeout(() => setSeen({ sent: invitation.sent_at, at: Date.now() }));
+    return () => clearTimeout(timer);
+  }, [fresh, invitation.sent_at]);
   const { email } = invitation;
   const here = () => {
     const active = document.activeElement;
@@ -94,9 +102,10 @@ export function InvitationResendAction({
     if (!busy) sending.current = false; // como «Revocar»: cuando la pantalla ya lo enseña
   });
 
-  // El reloj del navegador puede ir atrasado (o el `sent_at`, quedar en su futuro): la pantalla
-  // no para más de 15 minutos desde ahora. Quien manda es el 429 de la API, con su `Retry-After`.
-  const free = Math.min(Date.parse(invitation.sent_at ?? "") + GAP, now + GAP);
+  // Con el reloj atrasado, como mucho 15 minutos desde que se vio ese envío (hasta anotarlo, un
+  // instante, sin ese tope); quien manda es el 429 de la API con su `Retry-After`.
+  const seenUntil = fresh ? seen.at + GAP : Infinity;
+  const free = Math.min(Date.parse(invitation.sent_at ?? "") + GAP, seenUntil);
   const block: Block | null =
     held?.reason === "maxed"
       ? held
