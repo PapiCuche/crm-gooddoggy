@@ -3,11 +3,12 @@
 Las tools se registran en código y se comprueban **al cargar** (si no, Django no arranca): solo
 `READ` y `PUBLIC_SAFE`, sin argumentos de identidad, con una salida cerrada y sin claves de
 costos, márgenes, listas internas o ubicaciones, y con un permiso no sensible. Tras arrancar, el
-registro se cierra. `invoke` corre con el `ExecutionContext` de **la persona** en el
-`tenant_scope` de su organización: valida la entrada sin devolverla, exige el permiso, comprueba
-la forma de la salida y devuelve el sobre `{ok, data | error, meta}` para el modelo y la evidencia,
-que se queda en el servidor (con sus `facts`, F8-07d: lo exacto que el modelo no ve, como el stock).
-El log lleva solo la tool, el código y la duración."""
+registro se cierra y cada llamada vuelve a comprobar su tool (F8-07e). `invoke` corre con el
+`ExecutionContext` de **la persona** en el `tenant_scope` de su organización: valida la entrada
+sin devolverla, exige el permiso, comprueba la forma de la salida y devuelve el sobre
+`{ok, data | error, meta}` para el modelo y la evidencia, que se queda en el servidor (con sus
+`facts`, F8-07d: lo exacto que el modelo no ve, como el stock). El log lleva solo la tool, el
+código y la duración."""
 
 import json
 import re
@@ -35,14 +36,18 @@ logger = get_logger(__name__)
 MAX_BYTES = 8192  # el sobre en UTF-8; si no cabe, `RESULT_TOO_LARGE` (nunca un JSON cortado)
 MAX_FIELDS = 4
 NAME = re.compile(r"[a-z][a-z0-9_]{2,40}")
+KEY = re.compile(r"[A-Za-z0-9_-]+")  # F8-07e: en ASCII, o `ѕku` (cirílica) y `ｓｋｕ` se colarían
 CAMEL = re.compile(r"([a-z0-9])([A-Z])")
 # Se buscan en la clave normalizada (minúsculas, camelCase partido, sin separadores): `orgId`,
 # `OrganizationID` y `tenantid` son identidad; `unitCost`, `BarCode` y `SKU`, salida prohibida.
-WHO = ("org", "tenant", "contact", "conversation", "customer", "user", "member", "actor",
-       "branch", "account", "phone", "email")  # fmt: skip
-SECRET = ("cost", "margin", "internal", "onhand", "reserved", "warehouse", "location", "note",
-          "supplier", "sku", "barcode", "purchase", "stock", "description")  # fmt: skip
-CODES = frozenset({"ean", "gtin", "upc"})  # cortos: solo como palabra entera
+# También en español y sus sinónimos (F8-07e).
+WHO = ("org", "tenant", "contact", "convers", "customer", "client", "user", "usuario", "member",
+       "actor", "branch", "account", "phone", "telefono", "email", "correo", "owner", "seller",
+       "person", "company", "lead", "deal", "uid")  # fmt: skip
+SECRET = ("cost", "margin", "margen", "interna", "onhand", "reserv", "warehouse", "almacen",
+          "location", "ubicacion", "note", "nota", "supplier", "proveedor", "sku", "barcode",
+          "barra", "purchase", "compra", "stock", "existencia", "descrip")  # fmt: skip
+CODES = ("ean", "gtin", "upc", "isbn", "mpn")  # cortos: al principio de una palabra (`ean13`)
 LEAVES = (str, int, float, bool, type(None))  # una hoja abierta (dict, list…) dejaría pasar todo
 
 
@@ -131,9 +136,11 @@ def _identity(name: str) -> bool:
 
 
 def _secret(key: str) -> bool:
-    """La descripción corta es pública; la larga, no."""
-    joined = re.sub(r"(^|_)short_description(?=_|$)", "_", "_".join(_words(key)))
-    return bool(CODES & set(_words(key))) or any(w in joined.replace("_", "") for w in SECRET)
+    """La descripción corta es pública (la clave entera, nada más); la larga, no."""
+    words = _words(key)
+    if words == ["short", "description"]:
+        return False
+    return any(w.startswith(CODES) for w in words) or any(w in "".join(words) for w in SECRET)
 
 
 def _keys(shape: object) -> Iterator[str]:
@@ -148,15 +155,18 @@ def _keys(shape: object) -> Iterator[str]:
         raise ToolRejected("salida")
 
 
-def check(spec: ToolSpec) -> None:
-    """`ToolRejected` si la tool no puede estar en el registro de este corte."""
+def _vet(spec: ToolSpec) -> None:
+    """Lo de `check` salvo el nombre repetido. También en cada llamada (F8-07e): una forma que
+    cambió tras el registro (`ROW` es un dict) no llega a ejecutarse."""
     if spec.risk is not Risk.READ or spec.audience is not Audience.PUBLIC_SAFE:
         raise ToolRejected("solo READ y PUBLIC_SAFE")
-    if not NAME.fullmatch(spec.name) or spec.name in TOOLS:
+    if not NAME.fullmatch(spec.name):
         raise ToolRejected("nombre")
-    if not 0 < len(spec.fields) <= MAX_FIELDS or any(_identity(n) for n in spec.fields):
+    if not 0 < len(spec.fields) <= MAX_FIELDS:
         raise ToolRejected("argumentos")
-    if any(not key or _secret(key) for key in _keys(spec.output)):
+    if any(not KEY.fullmatch(name) or _identity(name) for name in spec.fields):
+        raise ToolRejected("argumentos")
+    if any(not KEY.fullmatch(key) or _secret(key) for key in _keys(spec.output)):
         raise ToolRejected("salida")
     try:
         sensitive = definition(spec.permission).is_sensitive
@@ -164,6 +174,13 @@ def check(spec: ToolSpec) -> None:
         raise ToolRejected("permiso") from None
     if sensitive:
         raise ToolRejected("permiso")
+
+
+def check(spec: ToolSpec) -> None:
+    """`ToolRejected` si la tool no puede estar en el registro de este corte."""
+    if spec.name in TOOLS:
+        raise ToolRejected("nombre")
+    _vet(spec)
 
 
 def register(spec: ToolSpec) -> ToolSpec:
@@ -207,6 +224,13 @@ def _dump(envelope: dict[str, Any]) -> str:
                       allow_nan=False)  # fmt: skip
 
 
+def fits(data: dict[str, Any], kind: str) -> bool:
+    """¿Cabe `data` en el sobre de `MAX_BYTES`, con el `meta` más largo? Para que una tool corte
+    filas en lugar de fallar con `RESULT_TOO_LARGE` (F8-07e)."""
+    meta = {"evidence_id": str(UUID(int=0)), "kind": kind, "as_of": "0" * 32}  # +00:00 con µs
+    return len(_dump({"ok": True, "data": data, "meta": meta}).encode()) <= MAX_BYTES
+
+
 def _failed(code: str) -> Invocation:
     return Invocation(False, _dump({"ok": False, "error": {"code": code}}), None, code)
 
@@ -219,7 +243,11 @@ def _now(ectx: ExecutionContext) -> datetime:
 
 
 def _run(spec: ToolSpec | None, ectx: ExecutionContext, raw: object) -> Invocation:
-    if spec is None or spec.risk is not Risk.READ or spec.audience is not Audience.PUBLIC_SAFE:
+    try:
+        if spec is None:
+            raise ToolRejected("desconocida")
+        _vet(spec)
+    except ToolRejected:
         return _failed("UNKNOWN_TOOL")
     spec.precheck()
     try:
