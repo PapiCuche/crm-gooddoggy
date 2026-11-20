@@ -196,7 +196,7 @@ def test_an_organization_sends_one_address_at_most_three_invitations_a_day(
     with tenant_scope(ctx(rbac.a, rbac.ana)) as tenant:
         members.revoke_invitation(tenant, invitation_id=first)
     second, outcome = send_now(rbac, migrator)  # revocar e invitar otra vez: cuenta igual
-    assert outcome == "sent"
+    assert outcome == "sent" and code(resend(ana, second))[1] == "INVITATION_ADDRESS_LIMIT"
     age(migrator)
     before = totals(migrator)
     for answer in (resend(ana, second), ask(ana, "nueva@example.com", [rbac.target.pk])):
@@ -269,6 +269,9 @@ def test_the_list_says_whether_the_last_link_went_out(
         unnoted, _ = send_now(rbac, migrator, "sin-nota@example.com")
     shown = ("NOT_SENT", "SENT", "NOT_DELIVERED", "NOT_DELIVERED")  # cola, bien, rebota, sin-nota
     assert list(delivery(ana).values()) == list(reversed(shown))
+    with tenant_scope(ctx(rbac.a)) as tenant:  # un enlace nuevo no consta entregado
+        organizations.store_invitation_link(tenant, invitation_id=ok, token_hash="1" * 64)
+    assert row(migrator, ok)[7] is False
     age(migrator)
     assert resend(ana, ok).json()["delivery"] == "NOT_SENT"  # espera su enlace nuevo
     for hashed in (
