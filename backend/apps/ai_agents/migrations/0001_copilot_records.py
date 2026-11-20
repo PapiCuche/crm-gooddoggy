@@ -192,9 +192,11 @@ def _drop(apps: Any, schema_editor: Any) -> None:
 class Migration(migrations.Migration):
     initial = True
 
+    # Las primeras que dan las claves de las FK: una prueba que lleva `conversations` a una
+    # migración anterior (y vuelve solo esa app) no deshace esta.
     dependencies = [
-        ("conversations", "0052_channel_health_future_check"),
-        ("organizations", "0013_invitation_sends_guard"),
+        ("conversations", "0001_inbox_tables"),
+        ("organizations", "0003_organization_memberships"),
     ]
 
     operations = [
