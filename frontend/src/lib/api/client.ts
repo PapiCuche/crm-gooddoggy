@@ -30,6 +30,8 @@ import type {
   AiProviderKeyRequest,
   AiProviderModelRequest,
   AiProviderTest,
+  AiSwitch,
+  AiSwitchOnRequest,
   AssignRequest,
   Assignment,
   AuditListParams,
@@ -2822,7 +2824,7 @@ export const getAiProviderAccountsTestUrl = (orgSlug: string, accountId: string)
 };
 
 /**
- * Prueba la clave de la cuenta contra el proveedor (`ai.manage` y segundo factor reciente) con la llamada más barata, sin reintentos, y la audita (`ai.account.tested`). 200 con el código: `OK`, `CREDENTIALS_REJECTED`, `PROVIDER_BILLING` o `PROVIDER_UNAVAILABLE`; nunca el cuerpo del proveedor ni la clave. 404: no existe, es de otra organización o está desactivada. 429 `RATE_LIMITED`: el tope por persona de las escrituras, con `Retry-After`.
+ * Prueba la clave de la cuenta contra el proveedor (`ai.manage` y segundo factor reciente) con la llamada más barata, sin reintentos, y la audita (`ai.account.tested`). 200 con el código: `OK`, `CREDENTIALS_REJECTED`, `PROVIDER_BILLING` o `PROVIDER_UNAVAILABLE`; nunca el cuerpo del proveedor ni la clave. 404: no existe, es de otra organización o está desactivada. 409 `AI_DISABLED`: `AI_ENABLED` apagado. 429 `RATE_LIMITED`: el tope por persona de las escrituras, con `Retry-After`.
  */
 export const aiProviderAccountsTest = async (
   orgSlug: string,
@@ -2898,6 +2900,309 @@ export const useAiProviderAccountsTest = <TError = ErrorType<Error>, TContext = 
   TContext
 > => {
   return useMutation(getAiProviderAccountsTestMutationOptions(options), queryClient);
+};
+
+export const getAiSwitchRetrieveUrl = (orgSlug: string) => {
+  return `/api/v1/o/${orgSlug}/ai/switch/`;
+};
+
+/**
+ * El interruptor de la organización y el del despliegue (`ai.kill_switch` o `ai.manage`, sin segundo factor). La IA llama solo con los dos encendidos; los dos nacen apagados.
+ */
+export const aiSwitchRetrieve = async (
+  orgSlug: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<AiSwitch> => {
+  return apiFetch<AiSwitch>(getAiSwitchRetrieveUrl(orgSlug), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getAiSwitchRetrieveQueryKey = (orgSlug: string) => {
+  return [`/api/v1/o/${orgSlug}/ai/switch/`] as const;
+};
+
+export const getAiSwitchRetrieveQueryOptions = <
+  TData = Awaited<ReturnType<typeof aiSwitchRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof aiSwitchRetrieve>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getAiSwitchRetrieveQueryKey(orgSlug);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof aiSwitchRetrieve>>> = ({ signal }) =>
+    aiSwitchRetrieve(orgSlug, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: orgSlug !== null && orgSlug !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof aiSwitchRetrieve>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type AiSwitchRetrieveQueryResult = NonNullable<Awaited<ReturnType<typeof aiSwitchRetrieve>>>;
+export type AiSwitchRetrieveQueryError = ErrorType<Error>;
+
+export function useAiSwitchRetrieve<
+  TData = Awaited<ReturnType<typeof aiSwitchRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  options: {
+    query: Partial<UseQueryOptions<Awaited<ReturnType<typeof aiSwitchRetrieve>>, TError, TData>> &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof aiSwitchRetrieve>>,
+          TError,
+          Awaited<ReturnType<typeof aiSwitchRetrieve>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useAiSwitchRetrieve<
+  TData = Awaited<ReturnType<typeof aiSwitchRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof aiSwitchRetrieve>>, TError, TData>> &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof aiSwitchRetrieve>>,
+          TError,
+          Awaited<ReturnType<typeof aiSwitchRetrieve>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useAiSwitchRetrieve<
+  TData = Awaited<ReturnType<typeof aiSwitchRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof aiSwitchRetrieve>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function useAiSwitchRetrieve<
+  TData = Awaited<ReturnType<typeof aiSwitchRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof aiSwitchRetrieve>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getAiSwitchRetrieveQueryOptions(orgSlug, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+export const getAiSwitchOffUrl = (orgSlug: string) => {
+  return `/api/v1/o/${orgSlug}/ai/switch/off/`;
+};
+
+/**
+ * Apaga la IA de la organización (`ai.kill_switch` o `ai.manage`, sin segundo factor ni tope por persona) y lo audita (`ai.kill_switch.activated`). La siguiente llamada recibe `AI_DISABLED`; la que ya reservó termina. Apagada ya, no cambia nada.
+ */
+export const aiSwitchOff = async (
+  orgSlug: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<AiSwitch> => {
+  return apiFetch<AiSwitch>(getAiSwitchOffUrl(orgSlug), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getAiSwitchOffMutationKey = () => ["aiSwitchOff"] as const;
+
+export const getAiSwitchOffMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof aiSwitchOff>>,
+    TError,
+    AiSwitchOffMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof aiSwitchOff>>,
+  TError,
+  AiSwitchOffMutationVariables,
+  TContext
+> => {
+  const mutationKey = getAiSwitchOffMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof aiSwitchOff>>,
+    AiSwitchOffMutationVariables
+  > = (props) => {
+    const { orgSlug } = props ?? {};
+
+    return aiSwitchOff(orgSlug, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type AiSwitchOffMutationResult = NonNullable<Awaited<ReturnType<typeof aiSwitchOff>>>;
+
+export type AiSwitchOffMutationError = ErrorType<Error>;
+export type AiSwitchOffMutationVariables = { orgSlug: string };
+
+export const useAiSwitchOff = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof aiSwitchOff>>,
+      TError,
+      AiSwitchOffMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof aiSwitchOff>>,
+  TError,
+  AiSwitchOffMutationVariables,
+  TContext
+> => {
+  return useMutation(getAiSwitchOffMutationOptions(options), queryClient);
+};
+
+export const getAiSwitchOnUrl = (orgSlug: string) => {
+  return `/api/v1/o/${orgSlug}/ai/switch/on/`;
+};
+
+/**
+ * Enciende la IA de la organización (`ai.manage` y segundo factor reciente) con la confirmación del aviso de datos y lo audita (`ai.kill_switch.deactivated`). No enciende `AI_ENABLED`. Encendida ya, no cambia nada. 429 `RATE_LIMITED`: el tope por persona de las escrituras, con `Retry-After`.
+ */
+export const aiSwitchOn = async (
+  orgSlug: string,
+  aiSwitchOnRequest: AiSwitchOnRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<AiSwitch> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<AiSwitch>(getAiSwitchOnUrl(orgSlug), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(aiSwitchOnRequest),
+  });
+};
+
+export const getAiSwitchOnMutationKey = () => ["aiSwitchOn"] as const;
+
+export const getAiSwitchOnMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof aiSwitchOn>>,
+    TError,
+    AiSwitchOnMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof aiSwitchOn>>,
+  TError,
+  AiSwitchOnMutationVariables,
+  TContext
+> => {
+  const mutationKey = getAiSwitchOnMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof aiSwitchOn>>,
+    AiSwitchOnMutationVariables
+  > = (props) => {
+    const { orgSlug, data } = props ?? {};
+
+    return aiSwitchOn(orgSlug, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type AiSwitchOnMutationResult = NonNullable<Awaited<ReturnType<typeof aiSwitchOn>>>;
+export type AiSwitchOnMutationBody = AiSwitchOnRequest;
+export type AiSwitchOnMutationError = ErrorType<Error>;
+export type AiSwitchOnMutationVariables = { orgSlug: string; data: AiSwitchOnRequest };
+
+export const useAiSwitchOn = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof aiSwitchOn>>,
+      TError,
+      AiSwitchOnMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof aiSwitchOn>>,
+  TError,
+  AiSwitchOnMutationVariables,
+  TContext
+> => {
+  return useMutation(getAiSwitchOnMutationOptions(options), queryClient);
 };
 
 export const getAuditListUrl = (orgSlug: string, params?: AuditListParams) => {
@@ -10007,7 +10312,7 @@ export const getInvitationsCreateUrl = (orgSlug: string) => {
 };
 
 /**
- * Deja creada la invitación de una persona, pendiente y con los roles que tendrá al aceptar. Todavía no envía el correo. 400: correo al que no se puede escribir, o `role_ids` vacío, con un rol repetido o que no es de la organización. 403: sin `users.invite` y `users.manage`, o con un rol que el actor no podría asignar. 409: `ALREADY_MEMBER`, `INVITATION_PENDING`, `INVITATION_LIMIT` (50 pendientes) o `LAST_OWNER` (la organización no tiene rol Owner y no admite ningún cambio). 429: 100 invitaciones en 24 h.
+ * Deja creada la invitación de una persona, pendiente y con los roles que tendrá al aceptar, y pide su correo, que sale después con el enlace. 400: correo al que no se puede escribir, o `role_ids` vacío, con un rol repetido o que no es de la organización. 403: sin `users.invite` y `users.manage`, o con un rol que el actor no podría asignar. 409: `ALREADY_MEMBER`, `INVITATION_PENDING`, `INVITATION_LIMIT` (50 pendientes) o `LAST_OWNER` (la organización no tiene rol Owner y no admite ningún cambio). 429: 100 invitaciones en 24 h, o `INVITATION_SEND_TOO_SOON` con `Retry-After`: la organización envió una invitación a ese correo hace menos de 15 minutos.
  */
 export const invitationsCreate = async (
   orgSlug: string,

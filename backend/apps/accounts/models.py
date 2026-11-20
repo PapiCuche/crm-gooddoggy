@@ -54,9 +54,10 @@ class UserManager(BaseUserManager["User"]):
 
 class User(AbstractBaseUser):
     id = uuid7_primary_key()
-    email = models.EmailField(max_length=254, unique=True)  # siempre canónico (emails.py)
-    first_name = models.CharField(max_length=150, blank=True)
-    last_name = models.CharField(max_length=150, blank=True)
+    # `verbose_name`: el nombre del campo en el mensaje de `password_too_similar` (F2-131).
+    email = models.EmailField("correo electrónico", max_length=254, unique=True)  # canónico
+    first_name = models.CharField("nombre", max_length=150, blank=True)
+    last_name = models.CharField("apellido", max_length=150, blank=True)
     is_active = models.BooleanField(default=True)
     is_platform_staff = models.BooleanField(default=False)
     # Época de sesión: cada sesión guarda la que había al iniciarla; revocar la incrementa y las

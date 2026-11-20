@@ -42,6 +42,8 @@ x-runtime: &runtime
     APP_ORIGIN: http://localhost:${PROXY_HOST_PORT:-8080}
     # Accesos de prueba (ADR-026): slug de la organización de pruebas; vacío = desactivado.
     DJANGO_TEST_ACCOUNTS_ORGANIZATION: ${DJANGO_TEST_ACCOUNTS_ORGANIZATION:-}
+    # IA (ADR-034 §5, F8-06): el interruptor global, apagado por omisión.
+    AI_ENABLED: ${AI_ENABLED:-false}
     # Canal de WhatsApp (ADR-029, Proposed): apagado por omisión; apagado no exige nada.
     META_ENABLED: ${META_ENABLED:-false}
     META_APP_SECRETS: ${META_APP_SECRETS:-}

@@ -13,7 +13,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.access.selectors import AccessDenied, Denied, execution_context, has_permission
-from apps.ai_gateway import keys, probe
+from apps.ai_gateway import keys, probe, switch
 from apps.ai_gateway.models import AccountStatus, AIProviderAccount
 from apps.audit.services import Entity, Result, record
 from core.tenancy.context import TenantContext
@@ -26,6 +26,10 @@ class AccountExists(Exception):  # noqa: N818 — un estado, no un fallo
 
 class AccountNotFound(Exception):  # noqa: N818 — un estado, no un fallo
     """La organización no tiene una cuenta activa de ese proveedor."""
+
+
+class Disabled(Exception):  # noqa: N818 — un estado, no un fallo
+    """`AI_ENABLED` apagado: no se abre ninguna clave ni se prueba (F8-06)."""
 
 
 class InvalidModel(ValueError):  # noqa: N818 — nunca lleva el modelo pedido
@@ -124,9 +128,12 @@ def change_model(ctx: TenantContext, *, provider: str, model: str) -> AIProvider
 
 def check(ctx: TenantContext, *, provider: str) -> probe.Probe:
     """Prueba la clave de la cuenta activa contra el proveedor y audita solo el código.
-    `AccountNotFound`, `sealed.SealError` (la clave guardada no se abre), `AccessDenied`."""
+    `AccountNotFound`, `sealed.SealError`, `AccessDenied`, `Disabled` (`AI_ENABLED` apagado, F8-06;
+    el interruptor de la organización no la para: la clave se prueba antes de encender)."""
     alias = require_scope(ctx)
     _allowed(ctx)
+    if not switch.globally_on():
+        raise Disabled
     account = AIProviderAccount.objects.using(alias).filter(provider=provider).first()
     if account is None or account.status != AccountStatus.ACTIVE:
         raise AccountNotFound

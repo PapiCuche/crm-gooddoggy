@@ -13,8 +13,8 @@ import type { ApiError } from "@/lib/http";
 const MAX_ROLES = 20; // el límite de la API
 
 // Invitar a una persona (F2-84), con `POST /api/v1/o/{slug}/invitations/` (F2-80): su correo y
-// los roles que tendrá al aceptar. La invitación queda registrada; el correo todavía no se
-// envía (D-F2-14), y el formulario lo dice. Qué roles puede dar cada quien lo decide la API: la
+// los roles que tendrá al aceptar. La invitación queda registrada y su correo sale después, con
+// el enlace (F2-130d); el formulario lo dice. Qué roles puede dar cada quien lo decide la API: la
 // pantalla ofrece todos y explica la respuesta. El camino de envío es el de `FieldsForm`.
 export function InvitationCreate({
   slug,
@@ -96,6 +96,8 @@ export function InvitationCreate({
   function explained(error: ApiError) {
     if (error.code === "ALREADY_MEMBER") return { field: "email" as const, text: t("member") };
     if (error.code === "INVITATION_PENDING") return { field: "email" as const, text: t("pending") };
+    if (error.code === "INVITATION_SEND_TOO_SOON")
+      return { field: "email" as const, text: t("soon") };
     if (error.code === "INVITATION_LIMIT") return { text: t("limit") };
     if (error.code === "RATE_LIMITED") return { text: t("daily") };
     const fields = error.code === "VALIDATION_ERROR" ? (error.fields ?? {}) : {};

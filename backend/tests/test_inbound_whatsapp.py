@@ -428,6 +428,29 @@ def test_the_profile_name_is_cleaned_and_a_missing_one_falls_back_to_the_phone(
     assert names["+51900000002"] == "+51900000002"
 
 
+@pytest.mark.parametrize(
+    "profile",
+    [
+        "Ana" + "\ufe01" * 40,
+        "Ana\ufe0f",
+        "Ana" + "\u3164" * 40,
+        "Ana \U0001f468\u200d\U0001f469\u200d\U0001f467",
+    ],
+)
+def test_a_profile_name_with_hidden_data_or_a_joined_emoji_falls_back_to_the_phone(
+    crm: SimpleNamespace, profile: str
+) -> None:
+    """F2-131: `create_contact` lo rechaza y el teléfono es el nombre; el webhook no falla."""
+    from tests.test_meta_webhook import post
+
+    make(crm.a)
+    value = webhooks.value(messages=[message("wamid.1")], name=profile)
+    assert post(webhooks.deliver(webhooks.encode(webhooks.envelope(value)))).status_code == 200
+    assert ingress.process() == {"PROCESSED": 1}
+    assert [c.display_name for c in snap(crm.a).contacts] == ["+51900000001"]
+    assert len(snap(crm.a).messages) == 1
+
+
 def test_a_bad_sender_is_ignored_with_a_code_and_creates_nothing(
     crm: SimpleNamespace, migrator: DB
 ) -> None:

@@ -39,6 +39,7 @@ from apps.organizations.services import (
     AlreadyMember,
     InvalidTransition,
     InvitationPending,
+    SendTooSoon,
     TooManyInvitations,
     TooManyPending,
     UnknownBranch,
@@ -261,12 +262,13 @@ _REFUSED = {
         request=InviteSerializer,
         responses={201: InvitationSerializer, **errors(400, 401, 403, 404, 409, 429)},
         description="Deja creada la invitación de una persona, pendiente y con los roles que "
-        "tendrá al aceptar. Todavía no envía el correo. 400: correo al que no se puede "
-        "escribir, o `role_ids` vacío, con un rol repetido o que no es de la organización. "
-        "403: sin `users.invite` y `users.manage`, o con un rol que el actor no podría "
-        "asignar. 409: `ALREADY_MEMBER`, `INVITATION_PENDING`, `INVITATION_LIMIT` (50 "
+        "tendrá al aceptar, y pide su correo, que sale después con el enlace. 400: correo al "
+        "que no se puede escribir, o `role_ids` vacío, con un rol repetido o que no es de la "
+        "organización. 403: sin `users.invite` y `users.manage`, o con un rol que el actor no "
+        "podría asignar. 409: `ALREADY_MEMBER`, `INVITATION_PENDING`, `INVITATION_LIMIT` (50 "
         "pendientes) o `LAST_OWNER` (la organización no tiene rol Owner y no admite ningún "
-        "cambio). 429: 100 invitaciones en 24 h.",
+        "cambio). 429: 100 invitaciones en 24 h, o `INVITATION_SEND_TOO_SOON` con `Retry-After`: "
+        "la organización envió una invitación a ese correo hace menos de 15 minutos.",
     ),
 )
 class InvitationsView(generics.ListAPIView[Any]):
@@ -301,6 +303,11 @@ class InvitationsView(generics.ListAPIView[Any]):
             raise serializers.ValidationError({"role_ids": [message]}) from None
         except tuple(_REFUSED) as refused:
             raise ApiError(*_REFUSED[type(refused)]) from None
+        except SendTooSoon as soon:
+            message = "Ese correo recibió una invitación hace menos de 15 minutos."
+            error = ApiError("INVITATION_SEND_TOO_SOON", 429, message)
+            error.wait = soon.wait  # el manejador de errores lo pasa a `Retry-After`
+            raise error from None
         return Response(InvitationSerializer(invitation).data, status=201)
 
 

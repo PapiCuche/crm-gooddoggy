@@ -23,8 +23,8 @@ import type { ApiError } from "@/lib/http";
 import { cn } from "@/lib/utils";
 
 import { AccountAction, aiError, KeyForm } from "./ai-key-actions";
+import { KILL_SWITCH, MANAGE } from "./ai-switch";
 
-const MANAGE = "ai.manage";
 const STATUS = {
   ACTIVE: { Icon: Check, tone: "text-success" },
   DISABLED: { Icon: Unplug, tone: "text-muted" },
@@ -36,7 +36,8 @@ const STATUS = {
 // vez, sin reintentos ni al recuperar el foco. Guardar y rotar actualizan la caché con lo que
 // devuelven; borrar (o un 404) marca la cuenta como borrada en la caché y vuelve a leer la lista
 // una vez. De la clave solo se enseñan los últimos cuatro caracteres que manda la API.
-export function AiProviderAccounts() {
+// `children` (en `/ia`, el interruptor de F8-06) va entre la introducción y las cuentas.
+export function AiProviderAccounts({ children }: { children?: ReactNode }) {
   const t = useTranslations("ai");
   const errors = useTranslations("errors");
   const own = useTranslations("ai.errors");
@@ -54,7 +55,9 @@ export function AiProviderAccounts() {
   });
   const heading = useRef<HTMLHeadingElement>(null);
   const [said, setSaid] = useState<{ text: string; alert?: boolean } | null>(null);
-  const [dismissed, setDismissed] = useState(false); // el código de la lista, cancelado
+  // El código de la lista, cancelado. Con el interruptor encima no se abre solo al llegar: un
+  // diálogo modal no se interpone entre quien llega en un incidente y «Apagar la IA».
+  const [dismissed, setDismissed] = useState(children != null);
   const reload = () => void list.refetch();
   const put = (account: AiProviderAccount) => {
     queryClient.setQueryData<AiProviderAccount[]>(key, (rows = []) =>
@@ -82,7 +85,9 @@ export function AiProviderAccounts() {
     (error.status === 404 || error.code === "AI_ACCOUNT_EXISTS") && reload();
 
   let body: ReactNode;
-  if (!allowed || list.error?.code === "PERMISSION_DENIED") {
+  if (!allowed && permissions.some((grant) => grant.code === KILL_SWITCH)) {
+    body = <p className="text-muted">{t("switch.accountsNote")}</p>; // el Supervisor solo apaga
+  } else if (!allowed || list.error?.code === "PERMISSION_DENIED") {
     body = <p role="alert">{t("denied")}</p>;
   } else if (list.data) {
     const rows = list.data;
@@ -170,6 +175,7 @@ export function AiProviderAccounts() {
           {said.text}
         </p>
       ) : null}
+      {children}
       {body}
     </section>
   );

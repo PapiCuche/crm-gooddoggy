@@ -297,18 +297,24 @@ describe("navegación del shell", () => {
     ]);
   });
 
-  it("«Inteligencia artificial» pide `ai.manage` y va antes de «Auditoría»", async () => {
-    route.pathname = "/o/acme/ia";
-    const view = (code: string) => ({ code, scopes: [] });
-    expect((await links([view("ai.use"), view("audit.view")])).flat()).not.toContain("/o/acme/ia");
-    cleanup();
-    expect(await links([view("audit.view"), view("ai.manage")])).toEqual([
-      ["/o/acme", null],
-      ["/o/acme/ia", "page"],
-      ["/o/acme/auditoria", null],
-    ]);
-    expect(document.title).toBe("Inteligencia artificial · Acme SAC · Good Doggy CRM");
-  });
+  // Basta uno: `ai.kill_switch` solo apaga (el Supervisor), `ai.manage` gestiona todo.
+  it.each(["ai.manage", "ai.kill_switch"])(
+    "«Inteligencia artificial» sale con `%s` solo y va antes de «Auditoría»",
+    async (code) => {
+      route.pathname = "/o/acme/ia";
+      const view = (code: string) => ({ code, scopes: [] });
+      expect((await links([view("ai.use"), view("audit.view")])).flat()).not.toContain(
+        "/o/acme/ia",
+      );
+      cleanup();
+      expect(await links([view("audit.view"), view(code)])).toEqual([
+        ["/o/acme", null],
+        ["/o/acme/ia", "page"],
+        ["/o/acme/auditoria", null],
+      ]);
+      expect(document.title).toBe("Inteligencia artificial · Acme SAC · Good Doggy CRM");
+    },
+  );
 
   it("«Precios» sale con cualquiera de los permisos de lectura o `prices.manage`, tras «Inventario»", async () => {
     route.pathname = "/o/acme/precios/listas";
