@@ -137,7 +137,8 @@
         "branch_changed": "Sucursal de un miembro cambiada",
         "invited": "Persona invitada",
         "invitation_revoked": "Invitación revocada",
-        "created": "Miembro añadido por un operador"
+        "created": "Miembro añadido por un operador",
+        "activated": "Invitación aceptada"
       },
       "role": {
         "created": "Rol creado",

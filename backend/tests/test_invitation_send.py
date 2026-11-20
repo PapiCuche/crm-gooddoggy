@@ -378,6 +378,9 @@ def test_the_task_takes_the_rbac_lock_before_the_row_like_revoke_and_accept(
 
     def task() -> None:
         try:
+            with connection.cursor() as cursor:  # la conexión de la tarea, para ver su espera
+                cursor.execute("SELECT pg_backend_pid()")
+                out["pid"] = cursor.fetchone()[0]
             out["task"] = run(rbac.a, invitation, event)
         except Exception as error:  # noqa: BLE001
             out["task"] = type(error).__name__
@@ -388,9 +391,10 @@ def test_the_task_takes_the_rbac_lock_before_the_row_like_revoke_and_accept(
     one.start()
     assert locked.wait(10)
     two.start()
-    waiting_for_a_lock(two)
+    waiting_for_a_lock(two, lambda: out.get("pid"))
     time.sleep(0.3)  # sin el bloqueo de RBAC, la tarea ya tendría la fila
     go.set()
     one.join(30)
     two.join(30)
+    out.pop("pid")
     assert out == {"row": True, "task": "sent"} and tries == [invitation]

@@ -19118,12 +19118,15 @@ components:
           type: string
           format: email
           readOnly: true
+          title: Correo electrónico
         first_name:
           type: string
           readOnly: true
+          title: Nombre
         last_name:
           type: string
           readOnly: true
+          title: Apellido
       required:
       - email
       - first_name
