@@ -21,7 +21,7 @@ from apps.contacts.models import Contact
 from apps.conversations.models import ChannelAccount, ContactIdentity, Credential
 from core.tenancy.context import TenantContext
 from core.tenancy.scope import require_scope
-from core.text import FILLERS
+from core.text import name as clean_name
 
 SOCIAL_NAMES = {"MESSENGER": "Cliente de Messenger", "INSTAGRAM": "Cliente de Instagram"}
 NAME_MAX = 100
@@ -32,13 +32,17 @@ RAW_MAX = 1000  # lo que se mira de un dato del perfil antes de sanearlo
 def untrusted(raw: Any, limit: int) -> str:
     """Un dato del perfil que escribe el cliente, como nombre: NFC, en una línea, sin controles,
     formato invisible ni marcas o controles de dirección (BIDI), sin Tags, acotado a `limit` y con
-    alguna letra o cifra que se vea. Vacío si no queda nada así."""
+    alguna letra o cifra que se vea (`core.text.name`: sin selectores de variación fuera de su
+    sitio). Vacío si no queda nada así."""
     if not isinstance(raw, str):
         return ""
     spaced = "".join(" " if c.isspace() else c for c in raw[:RAW_MAX])
     kept = "".join(c for c in unicodedata.normalize("NFC", spaced) if c.isprintable())
     text = " ".join(kept.split())[:limit].strip()
-    return text if any(c.isalnum() and c not in FILLERS for c in text) else ""
+    try:  # la regla de `update_contact` (`core.text.name`): sin datos ocultos, o vale `@usuario`
+        return clean_name(text, limit)
+    except ValueError:
+        return ""
 
 
 def _placeholder(alias: str, identity_id: Any) -> ContactIdentity | None:

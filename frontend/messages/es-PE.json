@@ -137,7 +137,8 @@
         "branch_changed": "Sucursal de un miembro cambiada",
         "invited": "Persona invitada",
         "invitation_revoked": "Invitación revocada",
-        "created": "Miembro añadido por un operador"
+        "created": "Miembro añadido por un operador",
+        "activated": "Invitación aceptada"
       },
       "role": {
         "created": "Rol creado",
@@ -475,14 +476,15 @@
       "rolesInvalid": "Alguno de los roles elegidos ya no existe en la organización. Cierra el formulario y vuelve a abrirlo.",
       "member": "Ese correo ya es miembro de la organización.",
       "pending": "Ese correo ya tiene una invitación, pendiente o caducada.",
+      "soon": "Ese correo recibió una invitación hace menos de 15 minutos. Espera un poco y vuelve a intentarlo.",
       "limit": "La organización ya tiene 50 invitaciones pendientes o caducadas: es el máximo.",
       "daily": "La organización ya creó 100 invitaciones en las últimas 24 horas. Inténtalo más tarde.",
       "denied": "No tienes permiso para invitar con esos roles.",
-      "notSent": "Por ahora la invitación solo queda registrada: el correo con el enlace todavía no se envía.",
+      "notSent": "Le enviaremos un correo con el enlace para aceptar. El enlace vale 7 días.",
       "submit": "Invitar",
       "busy": "Invitando…",
       "cancel": "Cancelar",
-      "done": "Invitación a {email} registrada. Todavía no se envía ningún correo."
+      "done": "Invitación a {email} registrada. En unos minutos le llegará el correo con el enlace."
     },
     "revoke": {
       "open": "Revocar",
@@ -2727,6 +2729,42 @@
     "verify": "Confirmar con mi código",
     "empty": "Todavía no hay ninguna clave guardada.",
     "missing": "No encontramos el proveedor de IA de esta organización. Recarga la página.",
+    "switch": {
+      "title": "Estado de la IA",
+      "intro": "Apagarla corta las siguientes llamadas de {organization} al proveedor de IA; la que ya estaba en curso termina. No afecta a los canales ni al Inbox.",
+      "loading": "Cargando el estado de la IA…",
+      "denied": "No tienes permiso para ver el estado de la IA.",
+      "effective": { "ON": "La IA está encendida.", "OFF": "La IA está apagada." },
+      "organization": "Esta organización",
+      "system": "Todo el sistema",
+      "changed": "Último cambio",
+      "never": "Nunca",
+      "state": { "ON": "Encendida", "OFF": "Apagada" },
+      "globalOff": "La IA está apagada en todo el sistema. Se enciende en el servidor, no desde esta pantalla: mientras siga apagada, la IA no funciona aunque esta organización esté encendida.",
+      "turnOff": {
+        "open": "Apagar la IA",
+        "busy": "Apagando…",
+        "done": "La IA quedó apagada en esta organización."
+      },
+      "turnOn": {
+        "open": "Encender la IA",
+        "title": "Encender la IA",
+        "notice": "Confirmo que el aviso de tratamiento de datos está publicado: qué datos salen a un proveedor de IA, para qué y su transferencia fuera del país.",
+        "required": "Marca la confirmación del aviso de datos para encender la IA.",
+        "submit": "Sí, encender",
+        "busy": "Encendiendo…",
+        "cancel": "Cancelar",
+        "done": "La IA quedó encendida en esta organización.",
+        "doneGlobalOff": "Esta organización quedó encendida, pero la IA sigue apagada hasta que se encienda en el servidor."
+      },
+      "onlyManage": "Para encenderla hace falta el permiso de gestionar la IA.",
+      "accountsNote": "La clave y el proveedor de IA los gestiona quien tiene el permiso de gestionar la IA.",
+      "errors": {
+        "denied": "No tienes permiso para cambiar el estado de la IA.",
+        "failed": "No se pudo cambiar el estado de la IA. Vuelve a intentarlo."
+      },
+      "readFailed": "Si es urgente, puedes apagarla igualmente."
+    },
     "provider": { "ANTHROPIC": "Anthropic", "UNKNOWN": "Otro proveedor" },
     "status": { "ACTIVE": "Activa", "DISABLED": "Borrada", "UNKNOWN": "Estado desconocido" },
     "fields": {

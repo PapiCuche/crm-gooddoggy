@@ -5097,12 +5097,14 @@ paths:
     post:
       operationId: invitations_create
       description: 'Deja creada la invitación de una persona, pendiente y con los
-        roles que tendrá al aceptar. Todavía no envía el correo. 400: correo al que
-        no se puede escribir, o `role_ids` vacío, con un rol repetido o que no es
-        de la organización. 403: sin `users.invite` y `users.manage`, o con un rol
-        que el actor no podría asignar. 409: `ALREADY_MEMBER`, `INVITATION_PENDING`,
+        roles que tendrá al aceptar, y pide su correo, que sale después con el enlace.
+        400: correo al que no se puede escribir, o `role_ids` vacío, con un rol repetido
+        o que no es de la organización. 403: sin `users.invite` y `users.manage`,
+        o con un rol que el actor no podría asignar. 409: `ALREADY_MEMBER`, `INVITATION_PENDING`,
         `INVITATION_LIMIT` (50 pendientes) o `LAST_OWNER` (la organización no tiene
-        rol Owner y no admite ningún cambio). 429: 100 invitaciones en 24 h.'
+        rol Owner y no admite ningún cambio). 429: 100 invitaciones en 24 h, o `INVITATION_SEND_TOO_SOON`
+        con `Retry-After`: la organización envió una invitación a ese correo hace
+        menos de 15 minutos.'
       parameters:
       - in: path
         name: org_slug
@@ -19116,12 +19118,15 @@ components:
           type: string
           format: email
           readOnly: true
+          title: Correo electrónico
         first_name:
           type: string
           readOnly: true
+          title: Nombre
         last_name:
           type: string
           readOnly: true
+          title: Apellido
       required:
       - email
       - first_name
