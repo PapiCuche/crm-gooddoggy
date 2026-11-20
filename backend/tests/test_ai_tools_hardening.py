@@ -74,6 +74,9 @@ PLANTED = [
     "SELECT pg_catalog.\"set_config\"('app.x', 'y', false)",
     'SELECT U&"pg\\005fadvisory\\005flock"(1)',
     "SELECT U&\"\\006Eextval\"('s')", 'SELECT U&"lo\\005fcreate"(0)',
+    # F8-08c: lo que terminaría la transacción de solo lectura de la tool
+    "COMMIT", "end", "ABORT", "ROLLBACK", "rollback work", "BEGIN", "START TRANSACTION",
+    "SELECT 1; COMMIT", "/* c */ COMMIT PREPARED 'x'",
 ]  # fmt: skip
 READS = [
     "SELECT set_config('app.tenant_id', %s, true), set_config('app.user_id', %s, true)",
@@ -85,6 +88,7 @@ READS = [
     "SELECT 1 -- se borra con delete\n", "SELECT E'it''s \\\\ ok'",
     "SELECT $$delete$$, $x$ ; SET x = 1 $x$", 'SELECT "t"."it\'s" FROM "t"',
     "SELECT 1 AS a$b$, '; DELETE FROM t; SELECT 1 AS x$b$, '",  # la escritura va en un texto
+    'ROLLBACK TO SAVEPOINT "s1"', "rollback work to s1", "SELECT CASE WHEN true THEN 1 END",
 ]  # fmt: skip
 
 
@@ -163,8 +167,8 @@ def test_registry_rejects_spanish_non_ascii_and_code_keys(change: dict[str, Any]
 def test_registry_still_takes_the_public_keys_of_the_catalog_and_price_tools() -> None:
     price = {"variant_id": str, "prices": [{"price_list": str, "currency": str, "amount": str,
              "regular_amount": str, "tax_included": bool, "promotion": (str, type(None)),
-             "promotion_terms": (str, type(None)), "valid_until": (str, type(None)),
-             "price_id": str}]}  # fmt: skip
+             "promotion_id": (str, type(None)), "valid_until": (str, type(None)),
+             "price_id": str}], "promotions": [{"promotion_id": str, "terms": str}]}  # fmt: skip
     for output in ({"products": [catalog.ROW]}, price, {"short-description": str}):
         check(replace(SEARCH_PRODUCT, name="otra_tool", output=output))
     check(replace(SEARCH_PRODUCT, name="otra_tool", fields={"variant_id": Uuid("x")}))

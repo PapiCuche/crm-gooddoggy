@@ -13,7 +13,7 @@ import psycopg
 import pytest
 from django.utils import timezone
 
-from apps.ai_agents.registry import TOOLS, invoke
+from apps.ai_agents.registry import TOOLS, invoke, read_only_scope
 from apps.ai_agents.tools import price
 from apps.ai_gateway.llm import ToolCall
 from apps.catalog.models import ProductVariant
@@ -148,7 +148,7 @@ def test_with_no_list_marked_there_are_no_prices(store: Any) -> None:
     as_owner(f"{OFF} WHERE organization_id = %s", [store.world.a])
     done, body = ask(store, store.shop.big)
     assert body["ok"] is True and body["data"] == {"variant_id": str(store.shop.big.pk),
-                                                   "prices": []}  # fmt: skip
+                                                   "prices": [], "promotions": []}  # fmt: skip
     assert done.evidence is not None and done.evidence.subjects == (store.shop.red.pk,
                                                                     store.shop.big.pk)  # fmt: skip
 
@@ -203,11 +203,13 @@ def test_the_ai_promotion_applies_and_a_human_only_one_does_not(store: Any) -> N
     first, second = body["data"]["prices"][:2]
     assert first == {"price_list": "Precio Publico", "currency": "PEN", "amount": "49.90",
                      "regular_amount": "59.90", "tax_included": True, "promotion": "Promo Verano",
-                     "promotion_terms": "Solo esta semana", "valid_until": first["valid_until"],
+                     "promotion_id": str(store.promo), "valid_until": first["valid_until"],
                      "price_id": str(store.prices["REG"])}  # fmt: skip
     assert first["valid_until"] is not None
-    assert (second["amount"], second["promotion"], second["promotion_terms"]) == ("55.00",) + (
+    assert (second["amount"], second["promotion"], second["promotion_id"]) == ("55.00",) + (
         None, None)  # fmt: skip
+    assert body["data"]["promotions"] == [{"promotion_id": str(store.promo),
+                                           "terms": "Solo esta semana"}]  # fmt: skip
     assert "Secreta" not in done.text and "Solo humanos" not in done.text
 
 
@@ -240,7 +242,8 @@ def test_no_output_carries_costs_internal_lists_codes_or_the_sku(store: Any) -> 
     allow(store.world, "prices.view", "prices.manage", "prices.view_wholesale",
           "prices.view_internal")  # fmt: skip
     done, body = ask(store, store.shop.big)
-    assert set(body) == {"ok", "data", "meta"} and set(body["data"]) == {"variant_id", "prices"}
+    assert set(body) == {"ok", "data", "meta"}
+    assert set(body["data"]) == {"variant_id", "prices", "promotions"}
     assert all(set(p) == set(price.PRICE) for p in body["data"]["prices"])
     for leak in (COST, "COL-Grande", "Collar-Rojo", "Personal", "Interna", "Sin Marcar", "30.00",
                  "31.00", "35.00", '"REG"', "MAY", "cost", "margin", "sku", "internal",
@@ -261,7 +264,7 @@ def test_get_price_writes_or_locks_nothing_and_logs_no_price(
 ) -> None:
     if granted:
         allow(store.world, "prices.view")
-    with caplog.at_level("DEBUG"), acting(store.world.a, store.world.ana) as ectx:
+    with caplog.at_level("DEBUG"), read_only_scope(ctx(store.world.a, store.world.ana)) as ectx:
         with captured() as seen:
             for variant in (store.shop.big, store.foreign):
                 invoke(ectx, ToolCall("toolu_1", "get_price", {"variant_id": str(variant.pk)}))

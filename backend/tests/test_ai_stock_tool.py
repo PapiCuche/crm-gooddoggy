@@ -13,7 +13,7 @@ from django.core.exceptions import ImproperlyConfigured
 from django.test import override_settings
 from django.utils import timezone
 
-from apps.ai_agents.registry import TOOLS, invoke
+from apps.ai_agents.registry import TOOLS, invoke, read_only_scope
 from apps.ai_agents.tools.stock import AVAILABLE, FEW_UNITS, NOT_TRACKED, OUT_OF_STOCK, band
 from apps.ai_gateway.llm import ToolCall
 from apps.catalog.models import ProductVariant
@@ -216,7 +216,7 @@ def test_get_stock_is_registered_read_public_and_needs_inventory_view() -> None:
 def test_get_stock_writes_or_locks_nothing(store: Any, granted: bool) -> None:
     if granted:
         allow(store.world, "inventory.view")
-    with acting(store.world.a, store.world.ana) as ectx, captured() as seen:
+    with read_only_scope(ctx(store.world.a, store.world.ana)) as ectx, captured() as seen:
         for variant in (store.shop.big, store.service, store.foreign):
             invoke(ectx, ToolCall("toolu_1", "get_stock", {"variant_id": str(variant.pk)}))
     assert writes(seen) == [] and bool(seen) is granted  # sin permiso no se lee nada
