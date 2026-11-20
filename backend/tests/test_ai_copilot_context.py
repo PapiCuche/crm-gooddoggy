@@ -24,6 +24,7 @@ from django.utils import timezone
 
 from apps.ai_agents import context, registry
 from apps.ai_agents.context import Purpose, build, mask
+from apps.ai_agents.guard import reply_schema
 from apps.ai_gateway import gateway
 from apps.contacts.commands import create_contact
 from apps.contacts.models import Contact
@@ -278,7 +279,7 @@ def test_the_tools_and_the_output_are_fixed_in_code_per_purpose(chat: SimpleName
     offered = {tool["name"]: tool["input_schema"] for tool in suggest["tools"]}
     declared = {name: registry.declared(spec).schema for name, spec in registry.TOOLS.items()}
     assert offered == declared and len(offered) == 4
-    assert suggest["output_config"]["format"]["schema"] == context.REPLY_SCHEMA
+    assert suggest["output_config"]["format"]["schema"] == reply_schema()
     assert "tools" not in summary and "format" not in summary["output_config"]  # sin tools
     tenant = ctx(chat.a, chat.ana)
     with tenant_scope(tenant), pytest.raises(ValueError):
