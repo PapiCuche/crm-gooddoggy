@@ -44,6 +44,8 @@ EMAIL = re.compile(r"[\w.!#$%&'*+/=?^`{|}~-]+[@＠﹫][\w-]+(?:\.[\w-]+)+")
 SEP = r"[^\S\n]?[-.()\u2010-\u2015\u2212\ufe58\ufe63\uff0d\uff0e]?[^\S\n]?"
 DIGITS = re.compile(rf"\d(?:{SEP}\d){{6,}}")  # \d: también las cifras de ancho completo o árabes
 NAME_MIN = 3  # un nombre más corto («Al», «Li») taparía palabras comunes
+# Palabras de un nombre visible que también son de la prosa («María del Carmen»: «collar del perro»)
+STOP = frozenset({"del", "las", "los", "san", "santa", "don", "doña"})
 ESCAPES = {"<": "\\u003c", ">": "\\u003e", "&": "\\u0026"}
 SYSTEM = (
     "Eres el copiloto de quien atiende el Inbox de una tienda; quien atiende revisa todo antes de "
@@ -117,20 +119,28 @@ def _fold(text: str) -> tuple[str, list[int]]:
     return "".join(folded), origin
 
 
-def _names(alias: str, conversation_id: UUID) -> re.Pattern[str] | None:
-    """El nombre del contacto de la conversación (nombre visible y cada palabra suya, nombre y
-    apellido; RLS), que una respuesta rápida pone en el texto (`{{contact.name}}`), plegado con
-    `_fold`, el más largo primero. Nunca se envía; `None` si no hay ninguno de `NAME_MIN`
-    caracteres."""
-    convo = Conversation.objects.using(alias).filter(pk=conversation_id)  # sin importar contactos
-    fields = ("contact__display_name", "contact__first_name", "contact__last_name")
-    row = convo.values_list(*fields).first() or ("", "", "")
-    found = {name.strip() for name in (*row, *row[0].split()) if name}
-    names = sorted({_fold(name)[0] for name in found if len(name) >= NAME_MIN}, key=len)
+def pattern(display: str, first: str = "", last: str = "") -> re.Pattern[str] | None:
+    """Los nombres de un contacto (el visible y cada palabra suya salvo `STOP`, el nombre y el
+    apellido) plegados con `_fold`, el más largo primero, como palabra entera; solo los de
+    `NAME_MIN` caracteres **ya plegados** (una palabra de solo marcas queda vacía). `None` si no
+    queda ninguno."""
+    stop = {_fold(word)[0] for word in STOP}
+    words = {_fold(word)[0] for word in display.split()} - stop
+    folded = {_fold(name)[0].strip() for name in (display, first, last)} | words
+    names = sorted({name for name in folded if len(name) >= NAME_MIN}, key=len)
     if not names:
         return None
     either = "|".join(re.escape(name) for name in reversed(names))
     return re.compile(rf"(?<!\w)(?:{either})(?!\w)")
+
+
+def _names(alias: str, conversation_id: UUID) -> re.Pattern[str] | None:
+    """El nombre del contacto de la conversación (RLS), que una respuesta rápida pone en el texto
+    (`{{contact.name}}`), como `pattern`. Nunca se envía."""
+    convo = Conversation.objects.using(alias).filter(pk=conversation_id)  # sin importar contactos
+    fields = ("contact__display_name", "contact__first_name", "contact__last_name")
+    row = convo.values_list(*fields).first() or ("", "", "")
+    return pattern(*(value or "" for value in row))
 
 
 def _redact(text: str, names: re.Pattern[str] | None) -> str:

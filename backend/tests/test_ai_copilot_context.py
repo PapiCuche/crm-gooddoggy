@@ -3,8 +3,10 @@
 delimitador aleatorio, escapado y enmascarado; las tools, fijas por propósito. PostgreSQL con el
 rol `crm_app`; todos los datos son ficticios."""
 
+import importlib
 import json
 import logging
+import pkgutil
 import re
 import tomllib
 import unicodedata
@@ -23,6 +25,7 @@ from django.utils import timezone
 from apps.ai_agents import context, registry
 from apps.ai_agents.context import Purpose, build, mask
 from apps.ai_gateway import gateway
+from apps.contacts.commands import create_contact
 from apps.contacts.models import Contact
 from apps.conversations.models import ChannelAccount, Conversation, Message
 from apps.conversations.quick_replies import render
@@ -41,6 +44,7 @@ from tests.test_teams import team
 pytestmark = pytest.mark.usefixtures("tenant_db")
 __all__ = ["world"]  # el fixture, para pytest
 numbers = count(1)
+ACUTES = "\u0301\u0301\u0301"  # tres tildes sueltas: tres caracteres, ninguna letra
 TAG, NONCE = re.compile(r"<(mensaje-[0-9a-f]{32})>"), re.compile(r"(?<=mensaje-)[0-9a-f]{32}")
 CONTACT = {"display_name": "Zafiro Contacto", "first_name": "Zafironombre",
            "last_name": "Zafiroapellido", "primary_phone_e164": "+51911223344",
@@ -55,14 +59,14 @@ LEAKS = ("nota-interna-ambar", "Zafiro", "911223344", "zafiro-contacto", "Opal",
          "cliente.uno", "987 654 321", "ventas@tienda", "912 345 678", TEST_KEY, COST)  # fmt: skip
 
 
-def conversation(org: UUID, contact: dict[str, Any], **over: Any) -> UUID:
+def conversation(org: UUID, contact: dict[str, Any] | UUID, **over: Any) -> UUID:
     with tenant_scope(ctx(org)):
         account, _ = ChannelAccount.objects.get_or_create(
             platform="SANDBOX", external_account_id=f"s-{org}", defaults={"name": "Sandbox"}
         )
-        who = Contact.objects.create(**contact)
+        who = Contact.objects.create(**contact).pk if isinstance(contact, dict) else contact
         made = Conversation.objects.create(
-            number=f"CONV-{next(numbers):05d}", contact_id=who.pk, channel_account_id=account.pk,
+            number=f"CONV-{next(numbers):05d}", contact_id=who, channel_account_id=account.pk,
             last_message_at=timezone.now(), **over,
         )  # fmt: skip
         return made.pk  # type: ignore[no-any-return]
@@ -217,8 +221,30 @@ def test_the_contacts_own_name_is_redacted_even_from_a_quick_reply(chat: SimpleN
         "Al final, Li dijo que sí; saludos a [nombre], a [nombre] y a [nombre] pero no a kiroxyz"
     )
     # el orden: correo, nombre (aunque lleve cifras) y cifras
-    named = re.compile(rf"(?<!\w){re.escape(context._fold('Ana 9876543')[0])}(?!\w)")
+    named = context.pattern("Ana 9876543")
     assert mask("soy ANA 9876543, ana.9876543@x.pe", named) == "soy [nombre], [correo]"
+    # una palabra de solo marcas (la deja `core.text.name`, y el perfil de WhatsApp) queda vacía
+    with tenant_scope(ctx(chat.a, chat.ana)) as tenant:
+        marks = create_contact(tenant, display_name=f"Ana {ACUTES}").pk
+    say(chat, "Hola Ana!", convo=(bare := conversation(chat.a, marks)))
+    _, _, [only] = sent(chat, convo=bare)
+    assert only["texto"] == "Hola [nombre]!"
+
+
+def test_names_fold_like_unicode_and_skip_empty_and_common_words() -> None:
+    def shown(text: str, *names: str) -> str:
+        return mask(text, context.pattern(*names))
+
+    assert shown("la STRASSE", "Straße") == "la [nombre]"  # `casefold`, no `lower`
+    assert shown("el fino, el ﬁno", "Ｆｉｎｏ") == "el [nombre], el [nombre]"  # NFKD, no NFD
+    assert context.pattern(ACUTES) is None  # plegada queda vacía: nunca una alternativa vacía
+    assert shown("Hola Ana , adiós.", f"Ana {ACUTES}") == "Hola [nombre] , adiós."  # sin el blanco
+    assert shown("collar del perro, María; soy María del Carmen", "María del Carmen") == (
+        "collar del perro, [nombre]; soy [nombre]"
+    )
+    assert shown("don Ramón, doña, las Santa, los san", "Don Ramón Doña de las Santa los San") == (
+        "don [nombre], doña, las Santa, los san"
+    )
 
 
 @pytest.mark.parametrize(
@@ -296,3 +322,10 @@ def test_only_the_context_may_reach_the_message_selector_past_the_import_contrac
     # y como esa excepción vale para todo el grafo, solo el arranque importa `context`
     [guard] = [c for c in contracts if c.get("protected_modules") == ["apps.ai_agents.context"]]
     assert (guard["type"], guard["allowed_importers"]) == ("protected", ["apps.ai_agents.apps"])
+    # y ningún módulo de `ai_agents` (todos clasificados) importa el arranque
+    [boot] = [c for c in contracts if c.get("forbidden_modules") == ["apps.ai_agents.apps"]]
+    package = importlib.import_module("apps.ai_agents")
+    found = {m.name for m in pkgutil.walk_packages(package.__path__, "apps.ai_agents.")}
+    sources = boot["source_modules"]
+    covered = {n for n in found if any(n == s or n.startswith(f"{s}.") for s in sources)}
+    assert boot["type"] == "forbidden" and found - covered == {"apps.ai_agents.apps"}
