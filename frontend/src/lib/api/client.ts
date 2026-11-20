@@ -185,6 +185,7 @@ import type {
   Price,
   PriceBatchItemsListParams,
   PriceList,
+  PriceListAiExposableRequest,
   PriceListCreateRequest,
   PriceListMarginsListParams,
   PriceListPricesListParams,
@@ -14114,7 +14115,7 @@ export const getPriceListsCreateUrl = (orgSlug: string) => {
 };
 
 /**
- * Crea una lista. Es la predeterminada de su moneda si se pide (la anterior deja de serlo) o, sin `is_default`, si es la primera activa con `prices.view`; solo una así puede serlo (400 en `is_default`). 409 `PRICE_LIST_CODE_TAKEN`.
+ * Crea una lista. Es la predeterminada de su moneda si se pide (la anterior deja de serlo) o, sin `is_default`, si es la primera activa con `prices.view`; solo una así puede serlo (400 en `is_default`). 409 `PRICE_LIST_CODE_TAKEN`. `ai_exposable` da 400 en ese campo: va por `…/ai-exposable/`.
  */
 export const priceListsCreate = async (
   orgSlug: string,
@@ -14353,7 +14354,7 @@ export const getPriceListsUpdateUrl = (orgSlug: string, priceListId: string) => 
 };
 
 /**
- * Cambia lo que se envía. `code` o `currency` dan 400 en ese campo: no cambian. `is_default=true` la hace la predeterminada de su moneda (la anterior deja de serlo); debe estar activa y pedir `prices.view` (400 en `is_default`). 409 `PRICE_LIST_IS_DEFAULT`: la predeterminada no se desactiva, no deja de serlo ni cambia de `required_permission`; antes hay que elegir otra.
+ * Cambia lo que se envía. `code` o `currency` dan 400 en ese campo: no cambian. `is_default=true` la hace la predeterminada de su moneda (la anterior deja de serlo); debe estar activa y pedir `prices.view` (400 en `is_default`). 409 `PRICE_LIST_IS_DEFAULT`: la predeterminada no se desactiva, no deja de serlo ni cambia de `required_permission`; antes hay que elegir otra. `ai_exposable` da 400 en ese campo: va por `…/ai-exposable/`.
  */
 export const priceListsUpdate = async (
   orgSlug: string,
@@ -14455,6 +14456,115 @@ export const usePriceListsUpdate = <TError = ErrorType<Error>, TContext = unknow
   TContext
 > => {
   return useMutation(getPriceListsUpdateMutationOptions(options), queryClient);
+};
+
+export const getPriceListsAiExposableUrl = (orgSlug: string, priceListId: string) => {
+  return `/api/v1/o/${orgSlug}/pricing/price-lists/${priceListId}/ai-exposable/`;
+};
+
+/**
+ * Marca o desmarca la lista como citable por la IA (`ai.manage` y segundo factor reciente) y lo audita (`price_list.ai_exposable_changed`, antes y después); igual que estaba, no cambia nada. La interna da 400 en `ai_exposable`. 404: no existe, está borrada o no es de la organización. 429 `RATE_LIMITED`: el tope por persona de las escrituras de IA, con `Retry-After`.
+ */
+export const priceListsAiExposable = async (
+  orgSlug: string,
+  priceListId: string,
+  priceListAiExposableRequest: PriceListAiExposableRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<PriceList> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<PriceList>(getPriceListsAiExposableUrl(orgSlug, priceListId), {
+    ...options,
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(priceListAiExposableRequest),
+  });
+};
+
+export const getPriceListsAiExposableMutationKey = () => ["priceListsAiExposable"] as const;
+
+export const getPriceListsAiExposableMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof priceListsAiExposable>>,
+    TError,
+    PriceListsAiExposableMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof priceListsAiExposable>>,
+  TError,
+  PriceListsAiExposableMutationVariables,
+  TContext
+> => {
+  const mutationKey = getPriceListsAiExposableMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof priceListsAiExposable>>,
+    PriceListsAiExposableMutationVariables
+  > = (props) => {
+    const { orgSlug, priceListId, data } = props ?? {};
+
+    return priceListsAiExposable(orgSlug, priceListId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type PriceListsAiExposableMutationResult = NonNullable<
+  Awaited<ReturnType<typeof priceListsAiExposable>>
+>;
+export type PriceListsAiExposableMutationBody = PriceListAiExposableRequest;
+export type PriceListsAiExposableMutationError = ErrorType<Error>;
+export type PriceListsAiExposableMutationVariables = {
+  orgSlug: string;
+  priceListId: string;
+  data: PriceListAiExposableRequest;
+};
+
+export const usePriceListsAiExposable = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof priceListsAiExposable>>,
+      TError,
+      PriceListsAiExposableMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof priceListsAiExposable>>,
+  TError,
+  PriceListsAiExposableMutationVariables,
+  TContext
+> => {
+  return useMutation(getPriceListsAiExposableMutationOptions(options), queryClient);
 };
 
 export const getPriceListMarginsListUrl = (

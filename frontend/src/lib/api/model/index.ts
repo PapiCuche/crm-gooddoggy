@@ -254,6 +254,7 @@ export * from "./price";
 export * from "./priceBatchItemsListParams";
 export * from "./priceBatchItemsListStatus";
 export * from "./priceList";
+export * from "./priceListAiExposableRequest";
 export * from "./priceListCreateRequest";
 export * from "./priceListCurrencyEnum";
 export * from "./priceListKindEnum";
