@@ -35,6 +35,13 @@ POLICY = (
 )
 CODE = "'^[A-Z][A-Z_]{1,31}$'"  # resultados, códigos y motivos: un código, nunca texto
 UUID = "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+# Pocas claves: un JSON no crece sin límite (la tool declara 4 campos como mucho, `MAX_FIELDS`)
+
+
+def keys(column: str, most: int) -> str:
+    return f"jsonb_array_length(jsonb_path_query_array({column}, '$.keyvalue()')) <= {most}"
+
+
 MEMBER = "FOREIGN KEY (organization_id, requested_by_user_id) REFERENCES public.organization_memberships (organization_id, user_id)"  # noqa: E501
 CONVERSATION = "FOREIGN KEY (organization_id, conversation_id) REFERENCES public.conversations (organization_id, id)"  # noqa: E501
 RUNS = f"""
@@ -52,8 +59,9 @@ CREATE TABLE public.ai_runs (
   retried boolean NOT NULL DEFAULT false,
   handoff_reason varchar(32) NULL CHECK (handoff_reason ~ {CODE}),
   duration_ms integer NOT NULL CHECK (duration_ms >= 0),
-  CONSTRAINT ai_runs_findings_ck CHECK (jsonb_typeof(findings) = 'object' AND NOT jsonb_path_exists(
-    findings, '$.keyvalue() ? (!(@.key like_regex "^[A-Z][A-Z_]{{0,31}}$" && @.value.type() == "number"))')),
+  CONSTRAINT ai_runs_findings_ck CHECK (jsonb_typeof(findings) = 'object' AND {keys("findings", 16)}
+    AND NOT jsonb_path_exists(findings, '$.keyvalue() ? (!(@.key like_regex "^[A-Z][A-Z_]{{0,31}}$"
+      && @.value.type() == "number" && @.value.floor() == @.value && @.value >= 0))')),
   PRIMARY KEY (organization_id, created_at, id),
   CONSTRAINT ai_runs_requested_by_fk {MEMBER},
   CONSTRAINT ai_runs_conversation_fk {CONVERSATION}
@@ -74,10 +82,12 @@ CREATE TABLE public.ai_actions (
   as_of timestamptz NULL,
   subjects uuid[] NOT NULL DEFAULT '{{}}' CHECK (array_position(subjects, NULL) IS NULL),
   facts jsonb NOT NULL DEFAULT '{{}}',
-  CONSTRAINT ai_actions_arguments_ck CHECK (jsonb_typeof(arguments) = 'object' AND NOT jsonb_path_exists(
+  CONSTRAINT ai_actions_arguments_ck CHECK (jsonb_typeof(arguments) = 'object' AND {keys("arguments", 4)}
+    AND NOT jsonb_path_exists(
     arguments, '$.keyvalue() ? (!(@.key like_regex "^[a-z][a-z0-9_]{{0,40}}$" && (@.value.type() == "number"
     || @.value.type() == "string" && @.value like_regex "{UUID}")))')),
-  CONSTRAINT ai_actions_facts_ck CHECK (jsonb_typeof(facts) = 'object' AND NOT jsonb_path_exists(
+  CONSTRAINT ai_actions_facts_ck CHECK (jsonb_typeof(facts) = 'object' AND {keys("facts", 4)}
+    AND NOT jsonb_path_exists(
     facts, '$.keyvalue() ? (!(@.key like_regex "^[a-z][a-z0-9_]{{0,40}}$" && (@.value.type() == "number"
     || @.value.type() == "null")))')),
   CONSTRAINT ai_actions_evidence_ck CHECK ((code = 'OK') = (evidence_id IS NOT NULL)
@@ -102,9 +112,11 @@ CREATE TABLE public.ai_suggestions (
   handoff_reason varchar(32) NULL CHECK (handoff_reason ~ {CODE}),
   evidence_expires_at timestamptz NULL,
   CONSTRAINT ai_suggestions_findings_ck CHECK (jsonb_typeof(findings) = 'array'
+    AND jsonb_array_length(findings) <= 100
     AND NOT jsonb_path_exists(findings, '$[*] ? (!(@.type() == "object"
       && @."type".type() == "string" && @."type" like_regex "^[A-Z][A-Z_]{{0,31}}$"
       && @."start".type() == "number" && @."end".type() == "number"
+      && @."start".floor() == @."start" && @."end".floor() == @."end"
       && @."start" >= 0 && @."end" >= @."start"))')
     AND NOT jsonb_path_exists(findings, '$[*].keyvalue() ? (!({FINDING_KEYS}))')),
   CONSTRAINT ai_suggestions_run_uq UNIQUE (organization_id, run_id),

@@ -186,6 +186,9 @@ forbidden_modules = [
     "apps.audit.services", "apps.conversations.whatsapp", "core.sealed", "apps.contacts.models",
     "apps.contacts.selectors",
 ]
+# F8-08b (#1019, ADR-034 §7): la única excepción. El registro del copiloto audita su borrador con
+# solo ids (`ai.suggestion.created`, `ai.summary.created`); las tools y el resto de ai_agents, no.
+ignore_imports = ["apps.ai_agents.records -> apps.audit.services"]
 
 [[tool.importlinter.contracts]]
 name = "Fronteras de alta: solo provisioning importa los bootstrap.py de L2 (F2-06)"

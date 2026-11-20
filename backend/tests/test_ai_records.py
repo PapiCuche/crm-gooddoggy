@@ -4,6 +4,9 @@ solo pasa a NULL, con FORCE RLS; `records.save` todo o nada, con la organizació
 la sesión y la auditoría solo con ids (ADR-034 §5, §7; ADR-011). Con PostgreSQL y `crm_app`."""
 
 import json
+import pathlib
+import tomllib
+from contextlib import nullcontext
 from types import MappingProxyType, SimpleNamespace
 from typing import Any
 from uuid import UUID, uuid4
@@ -23,6 +26,7 @@ from apps.ai_agents.registry import Evidence
 from core.ids import new_id
 from core.tenancy.context import ActorType, TenantContext
 from core.tenancy.scope import tenant_scope
+from tests.factories import make_user
 from tests.test_access import as_migrator, rbac
 from tests.test_conversations_tables import conversation, first, world
 from tests.test_memberships import ctx, raw
@@ -136,7 +140,7 @@ def test_a_summary_audits_its_own_event_and_a_run_without_draft_audits_nothing(
     assert actions == [("ai.summary.created",)] and counts(migrator) == [2, 0, 1]
 
 
-@pytest.mark.parametrize("broken", ["audit", "action", "draft"])
+@pytest.mark.parametrize("broken", ["audit", "action", "draft", "nested"])
 def test_save_is_all_or_nothing(
     world: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch, broken: str
 ) -> None:
@@ -144,14 +148,16 @@ def test_save_is_all_or_nothing(
         raise RuntimeError("sin auditoría")
 
     convo, variant = first(world), uuid4()
-    if broken == "audit":
+    if broken in ("audit", "nested"):
         monkeypatch.setattr(records, "record", fails)
     bad = Action("tool use con espacios", "get_stock", "OK", {}, stock(variant))
     actions = [*calls(variant), bad] if broken == "action" else calls(variant)
     text = "x" * 10001 if broken == "draft" else DRAFT
-    with pytest.raises((RuntimeError, DatabaseError)):
-        run = Run("SUGGEST", convo.pk, "OK", 1)
-        records.save(ctx(world.a, world.ana), run, actions, Suggestion(text))
+    context, run = ctx(world.a, world.ana), Run("SUGGEST", convo.pk, "OK", 1)
+    # "nested": dentro del `tenant_scope` de quien llama, que sigue y se confirma
+    with tenant_scope(context) if broken == "nested" else nullcontext():
+        with pytest.raises((RuntimeError, DatabaseError)):
+            records.save(context, run, actions, Suggestion(text))
     assert counts(migrator) == [0, 0, 0]
     assert migrator.execute("SELECT count(*) FROM audit_logs").fetchone() == (0,)
 
@@ -164,6 +170,8 @@ def test_the_organization_and_the_requester_come_from_the_context(
     convo = first(world)
     with pytest.raises(IntegrityError, match="ai_runs_conversation_fk"):
         save(world, convo, ctx=ctx(world.b, world.luis))
+    with pytest.raises(IntegrityError, match="ai_runs_requested_by_fk"):  # no es miembro de A
+        save(world, convo, ctx=ctx(world.a, make_user()))
     for context in (ctx(world.a), TenantContext(world.a, "t", world.ana.pk, ActorType.AI_AGENT)):
         with pytest.raises(ValueError, match="persona"):
             save(world, convo, ctx=context)
@@ -217,7 +225,7 @@ def test_forced_rls_and_one_policy_on_every_table_and_partition(migrator: DB) ->
     "statement",
     [
         "UPDATE ai_runs SET outcome = 'OTHER'",
-        "UPDATE ai_actions SET code = 'OTHER'",
+        "UPDATE ai_actions SET tool_use_id = tool_use_id",
         "DELETE FROM ai_runs",
         "DELETE FROM ai_actions",
         "DELETE FROM ai_suggestions",
@@ -251,7 +259,11 @@ def test_the_draft_text_only_goes_to_null_for_every_role(
     with pytest.raises(IntegrityError) as refused, tenant_scope(ctx(world.a, world.ana)):
         raw(other, [draft.id])
     assert refused.value.__cause__.diag.constraint_name == "ai_suggestions_text_purge_only"  # type: ignore[union-attr]
-    for statement in (other, "UPDATE ai_suggestions SET kind = 'SUMMARY' WHERE id = %s"):
+    for statement in (
+        other,
+        "UPDATE ai_suggestions SET kind = 'SUMMARY' WHERE id = %s",
+        "UPDATE ai_suggestions SET kind = 'SUMMARY', text = NULL WHERE id = %s",
+    ):
         with pytest.raises(psycopg.errors.CheckViolation) as caught:
             migrator.execute(statement, [draft.id])  # el disparador también ata al dueño
         assert caught.value.diag.constraint_name == "ai_suggestions_text_purge_only"
@@ -262,35 +274,76 @@ def test_the_draft_text_only_goes_to_null_for_every_role(
     ]
 
 
-@pytest.mark.parametrize(
-    ("table", "column", "value"),
-    [
-        ("ai_runs", "findings", {"PRICE": "el precio era 10"}),
-        ("ai_runs", "findings", {"el precio era 10": 1}),
-        ("ai_runs", "outcome", "texto libre"),
-        ("ai_actions", "arguments", {"query": "texto libre"}),
-        ("ai_actions", "arguments", {"query": {"length": "texto"}}),
-        ("ai_actions", "facts", {"available": "siete"}),
-        ("ai_actions", "tool", "busca croquetas"),
-        ("ai_suggestions", "findings", [{"type": "PRICE", "start": 1, "end": 2, "was": "10"}]),
-        ("ai_suggestions", "findings", [{"type": "precio 10", "start": 1, "end": 2}]),
-        ("ai_suggestions", "findings", ["el precio era 10"]),
-    ],
+COPY = (  # una copia de la fila (la de evidencia, en `ai_actions`) con lo que se cambia
+    "INSERT INTO {t} SELECT (jsonb_populate_record(NULL::{t}, to_jsonb(x) || %s::jsonb)).*"
+    " FROM {t} x ORDER BY to_jsonb(x) ->> 'tool_use_id' DESC LIMIT 1"
 )
-def test_no_free_text_fits_in_the_findings_arguments_or_codes(
-    world: SimpleNamespace, migrator: DB, table: str, column: str, value: Any
+NO_EVIDENCE = {"evidence_id": None, "kind": None, "as_of": None}
+CHECK, FK, UNIQUE = (psycopg.errors.CheckViolation, psycopg.errors.ForeignKeyViolation,
+                     psycopg.errors.UniqueViolation)  # fmt: skip
+
+
+def copy(migrator: DB, table: str, over: dict[str, Any]) -> None:
+    fresh = {"id": str(uuid4()), "run_id": str(uuid4())} | over
+    migrator.execute(COPY.format(t=table), [json.dumps(fresh, default=str)])  # noqa: S608
+
+
+@pytest.mark.parametrize(
+    ("table", "over", "error", "constraint"),
+    [
+        ("ai_runs", {"findings": {"PRICE": "el precio era 10"}}, CHECK, "findings_ck"),
+        ("ai_runs", {"findings": {"el precio era 10": 1}}, CHECK, "findings_ck"),
+        ("ai_runs", {"findings": {"PRICE": 1.5}}, CHECK, "findings_ck"),
+        ("ai_runs", {"findings": {"K" + "A" * n: 1 for n in range(17)}}, CHECK, "findings_ck"),
+        ("ai_runs", {"outcome": "texto libre"}, CHECK, "outcome_check"),
+        ("ai_actions", {"arguments": {"query": "texto libre"}}, CHECK, "arguments_ck"),
+        ("ai_actions", {"arguments": {"query": {"length": "texto"}}}, CHECK, "arguments_ck"),
+        ("ai_actions", {"arguments": {f"k{n}": 1 for n in range(5)}}, CHECK, "arguments_ck"),
+        ("ai_actions", {"facts": {"available": "siete"}}, CHECK, "facts_ck"),
+        ("ai_actions", {"facts": {f"k{n}": 1 for n in range(5)}}, CHECK, "facts_ck"),
+        ("ai_actions", {"tool": "busca croquetas"}, CHECK, "tool_check"),
+        ("ai_actions", {"code": "NOT_FOUND"}, CHECK, "evidence_ck"),  # error con evidencia
+        ("ai_actions", NO_EVIDENCE, CHECK, "evidence_ck"),  # OK sin evidencia
+        ("ai_actions", {"kind": None}, CHECK, "evidence_ck"),
+        ("ai_actions", {"as_of": None}, CHECK, "evidence_ck"),
+        ("ai_actions", {**NO_EVIDENCE, "code": "NOT_FOUND"}, CHECK, "evidence_ck"),  # y sujetos
+        ("ai_suggestions", {"findings": [{"type": "PRICE", "start": 1, "end": 2, "was": "10"}]},
+         CHECK, "findings_ck"),
+        ("ai_suggestions", {"findings": [{"type": "precio 10", "start": 1, "end": 2}]}, CHECK,
+         "findings_ck"),
+        ("ai_suggestions", {"findings": ["el precio era 10"]}, CHECK, "findings_ck"),
+        ("ai_suggestions", {"findings": [{"type": "PRICE", "start": 1.5, "end": 2}]}, CHECK,
+         "findings_ck"),
+        ("ai_suggestions", {"findings": [{"type": "PRICE", "start": 1, "end": 2}] * 101}, CHECK,
+         "findings_ck"),
+        ("ai_suggestions", {"run_id": None}, UNIQUE, "run_uq"),  # un borrador por run
+        ("ai_suggestions", {"requested_by_user_id": None}, FK, "requested_by_fk"),
+    ],
+)  # fmt: skip
+def test_the_database_refuses_free_text_and_inconsistent_rows(
+    world: SimpleNamespace, migrator: DB, table: str, over: dict[str, Any], error: type,
+    constraint: str,
+) -> None:  # fmt: skip
+    """Ni con el dueño: una copia válida de una fila entra; con el cambio, esa restricción no."""
+    run, _ = save(world, first(world))
+    copy(migrator, table, {"retried": False})
+    if "run_id" in over:  # el mismo run que el borrador guardado
+        over = {"run_id": run.id}
+    if "requested_by_user_id" in over:  # quien no es miembro de A
+        over = {"requested_by_user_id": make_user().pk}
+    with pytest.raises(psycopg.IntegrityError) as caught:
+        copy(migrator, table, over)
+    assert type(caught.value) is error
+    assert caught.value.diag.constraint_name == f"{table}_{constraint}"
+
+
+def test_a_tool_the_model_invented_is_stored_as_unknown_without_arguments(
+    world: SimpleNamespace, migrator: DB
 ) -> None:
-    """Ni con el dueño: el CHECK de esa columna lo rechaza (una copia válida de una fila)."""
-    save(world, first(world))
-    insert = (
-        "INSERT INTO {t} SELECT (jsonb_populate_record(NULL::{t}, to_jsonb(x)"
-        " || jsonb_build_object('id', uuidv7(), 'run_id', uuidv7(), %s::text, %s::jsonb))).*"
-        " FROM {t} x ORDER BY to_jsonb(x) ->> 'tool_use_id' DESC LIMIT 1"  # con evidencia
-    )
-    migrator.execute(insert.format(t=table), ["retried", "false"])  # la copia, sin más, entra
-    with pytest.raises(psycopg.errors.CheckViolation) as caught:
-        migrator.execute(insert.format(t=table), [column, json.dumps(value)])
-    assert caught.value.diag.constraint_name in (f"{table}_{column}_ck", f"{table}_{column}_check")
+    invented = Action("toolu_09", "busca croquetas", "UNKNOWN_TOOL", {"query": SEARCH})
+    save(world, first(world), actions=[invented])
+    rows = migrator.execute("SELECT tool, code, arguments FROM ai_actions").fetchall()
+    assert rows == [("unknown", "UNKNOWN_TOOL", {})] and counts(migrator) == [1, 1, 1]
 
 
 def test_partitions_cover_this_month_and_twelve_more_and_post_migrate_keeps_them(
@@ -329,3 +382,11 @@ def test_the_models_only_read(world: SimpleNamespace) -> None:
         for write in (run.save, run.delete, AIRun.objects.all().delete):
             with pytest.raises(TypeError, match=r"records\.save"):
                 write()
+
+
+def test_only_the_records_writer_may_import_the_audit_service() -> None:
+    """La excepción al contrato de ai_agents (F8-07e) es solo esta, y no crece."""
+    config = tomllib.loads((pathlib.Path(__file__).parents[1] / "pyproject.toml").read_text())
+    contracts = config["tool"]["importlinter"]["contracts"]
+    (mine,) = [c for c in contracts if c.get("source_modules") == ["apps.ai_agents"]]
+    assert mine["ignore_imports"] == ["apps.ai_agents.records -> apps.audit.services"]

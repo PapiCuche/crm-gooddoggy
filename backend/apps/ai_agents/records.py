@@ -14,7 +14,7 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from django.db import connections
+from django.db import connections, transaction
 
 from apps.ai_agents import registry
 from apps.ai_agents.fields import CANONICAL
@@ -108,7 +108,17 @@ def save(
     """Todo o nada. Audita `ai.suggestion.created` o `ai.summary.created` si hay borrador."""
     if ctx.actor_type != ActorType.USER or ctx.user_id is None:
         raise ValueError("records.save: el copiloto lo pide una persona")
-    with tenant_scope(ctx), connections[require_scope(ctx)].cursor() as cursor:
+    # Un punto de guardado propio: dentro del `tenant_scope` de quien llama, un fallo aquí no
+    # deja nada aunque esa transacción siga y se confirme.
+    with tenant_scope(ctx), transaction.atomic(using=require_scope(ctx)):
+        _write(ctx, run, actions, suggestion)
+    return run.id
+
+
+def _write(
+    ctx: TenantContext, run: Run, actions: Sequence[Action], suggestion: Suggestion | None
+) -> None:
+    with connections[require_scope(ctx)].cursor() as cursor:
         cursor.execute(_RUN, [
             run.id, run.purpose, run.conversation_id, run.outcome, len(actions),
             json.dumps(dict(run.findings)), list(run.reservation_ids), run.retried,
@@ -125,4 +135,3 @@ def save(
             ids = {"conversation_id": str(run.conversation_id), "run_id": str(run.id)}
             action = "ai.suggestion.created" if run.purpose == "SUGGEST" else "ai.summary.created"
             record(ctx, action, Entity("ai_suggestion", suggestion.id), metadata=ids)
-    return run.id
