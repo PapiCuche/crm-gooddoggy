@@ -552,6 +552,8 @@ def test_an_alta_older_than_meta_retries_counts_for_nothing(
     assert stored(world) == ("REVOKED", STOP, SECOND + 60 * S)
 
 
+# `SECOND` es fijo: nuestro reloj también, o pasa de 48 h y deja de creerse
+@pytest.mark.usefixtures("clock")
 def test_an_alta_without_a_time_writes_nothing(world: SimpleNamespace) -> None:
     """Decisión del propietario (#937): sin fila, y sobre una baja por palabra, nada cambia."""
     assert word(world, "ALTA", None) is False
