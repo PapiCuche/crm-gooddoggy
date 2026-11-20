@@ -28,6 +28,9 @@ const invitation = (name: string, extra: Partial<Invitation> = {}): Invitation =
     expires_at: "2026-10-14T15:30:00Z",
     invited_by: "cuenta-ana",
     created_at: "2026-10-07T15:30:00Z",
+    sent_at: null,
+    send_count: 0,
+    delivery: "NOT_SENT",
     ...extra,
   }) as Invitation;
 const role = (id: string, name: string) => ({ id, name, code: `code-${id}`, description: "" });
@@ -53,8 +56,19 @@ describe("InvitationsList", () => {
   it("muestra lo que devuelve la API: correo, roles por su nombre, estado y fechas", async () => {
     const api = mockApi({
       [LIST]: page(
-        invitation("nueva", { role_ids: ["rol-ventas", "rol-caja"] }),
-        invitation("tarde", { status: "EXPIRED", expires_at: "2026-10-01T03:00:00Z" }),
+        invitation("nueva", {
+          role_ids: ["rol-ventas", "rol-caja"],
+          sent_at: "2026-10-07T15:45:00Z",
+          send_count: 2,
+          delivery: "SENT",
+        }),
+        invitation("tarde", {
+          status: "EXPIRED",
+          expires_at: "2026-10-01T03:00:00Z",
+          sent_at: "2026-09-24T03:00:00Z",
+          send_count: 1,
+          delivery: "NOT_DELIVERED",
+        }),
         invitation("fuera", { status: "REVOKED", role_ids: ["rol-borrado", "rol-ventas"] }),
         invitation("dentro", { status: "ACCEPTED", role_ids: ["rol-caja", "rol-caja"] }),
       ),
@@ -71,18 +85,37 @@ describe("InvitationsList", () => {
         "Caja",
         "Pendiente",
         "Caduca el 14 oct. 2026",
+        "Correo: enviada", // lo aceptó el servidor de correo: la ayuda lo explica
+        "Último envío: 7 oct. 2026, 10:45 a. m.",
+        "Envíos: 2 de 5",
       ]),
     );
     // La fecha, en la zona de la aplicación: las 03:00 UTC del día 1 son el 30 de septiembre.
-    expect(lines("tarde").slice(-2)).toEqual(["Caducada", "Caducidad: 30 set. 2026"]);
+    expect(lines("tarde").slice(-5)).toEqual([
+      "Caducada",
+      "Caducidad: 30 set. 2026",
+      "Correo: no entregada",
+      "Último envío: 23 set. 2026, 10:00 p. m.",
+      "Envíos: 1 de 5",
+    ]);
     expect(lines("fuera")).toEqual([
       "fuera@cliente.pe",
       "Invitada el 7 oct. 2026",
       "Un rol que ya no existe",
       "Ventas",
       "Revocada", // sin fecha de caducidad: ya no importa
+      "Correo: sin enviar", // sin envío, sin fecha de envío
+      "Envíos: 0 de 5",
     ]);
-    expect(lines("dentro").slice(2)).toEqual(["Caja", "Caja", "Aceptada"]); // repetido: dos veces
+    expect(lines("dentro").slice(2, 5)).toEqual(["Caja", "Caja", "Aceptada"]); // repetido: dos veces
+    expect(screen.getByText("Correo: enviada")).toHaveClass("text-success");
+    expect(screen.getByText("Correo: no entregada")).toHaveClass("text-danger");
+    expect(screen.getAllByText("Correo: sin enviar")[0]).toHaveClass("text-muted");
+    expect(
+      screen.getByText(
+        /^«Enviada» quiere decir que el servidor de correo aceptó el mensaje; no confirma/,
+      ),
+    ).toBeVisible();
     // Uno a uno: `.not.toHaveClass(a, b)` solo falla si lleva las dos.
     for (const tone of ["text-muted", "text-success"])
       expect(screen.getByText("Pendiente")).not.toHaveClass(tone);
@@ -162,7 +195,10 @@ describe("InvitationsList", () => {
 
   it("pide la página siguiente con el cursor, y un estado desconocido se enseña como llega", async () => {
     const odd = (name: string, status: unknown) =>
-      invitation(name, { status: status as Invitation["status"] });
+      invitation(name, {
+        status: status as Invitation["status"],
+        delivery: status as Invitation["delivery"], // una entrega que no conoce, igual
+      });
     const api = mockApi({
       [LIST]: { status: 200, body: { results: [invitation("una")], next: "c2" } },
       [`${LIST}?cursor=c2`]: page(
@@ -179,11 +215,15 @@ describe("InvitationsList", () => {
         "Invitada el 7 oct. 2026",
         "1 rol",
         "ON_HOLD",
+        "Correo: ON_HOLD",
+        "Envíos: 0 de 5",
       ]),
     );
     // Tampoco un nombre que `Object` hereda, ni lo que no es un texto: como llegan, y apagados.
-    expect(lines("propia").at(-1)).toBe("constructor");
-    expect(lines("nula").at(-1)).toBe("null");
+    expect(lines("propia").slice(3, 5)).toEqual(["constructor", "Correo: constructor"]);
+    expect(lines("nula").slice(3, 5)).toEqual(["null", "Correo: null"]);
+    for (const code of ["ON_HOLD", "constructor", "null"])
+      expect(screen.getByText(`Correo: ${code}`)).toHaveClass("text-muted");
     for (const code of ["ON_HOLD", "constructor", "null"])
       expect(screen.getByText(code)).toHaveClass("text-muted", "wrap-anywhere"); // y no desborda
     expect(urls(api)).toEqual([
@@ -199,6 +239,7 @@ describe("InvitationsList", () => {
       await screen.findByText("Esta organización todavía no ha invitado a nadie."),
     ).toBeVisible();
     expect(screen.getByRole("status")).toHaveTextContent("Sin invitaciones en la lista");
+    expect(screen.queryByText(/servidor de correo/)).toBeNull(); // sin filas, nada que explicar
     view.unmount();
     mockApi({ [LIST]: { status: 403, body: { code: "PERMISSION_DENIED" } } });
     screenOf("roles.view");

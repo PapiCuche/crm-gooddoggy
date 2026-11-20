@@ -10,6 +10,11 @@ urlpatterns = [
         name="price-list",
     ),
     path(
+        "pricing/price-lists/<uuid:price_list_id>/ai-exposable/",
+        views.PriceListAiExposableView.as_view(),
+        name="price-list-ai-exposable",
+    ),
+    path(
         "pricing/price-lists/<uuid:price_list_id>/prices/",
         prices.ListPricesView.as_view(),
         name="price-list-prices",

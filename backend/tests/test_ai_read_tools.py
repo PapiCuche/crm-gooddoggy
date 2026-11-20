@@ -32,6 +32,7 @@ world = test_authorization.world
 pytestmark = pytest.mark.usefixtures("tenant_db")
 INVALID = '{"error":{"code":"INVALID_INPUT"},"ok":false}'
 COST, LONG, SKU = "777.77", "TEXTO-LARGO-PRIVADO", "Collar-Rojo"
+CATALOG = ("search_product", "get_product_variants")
 LEAKS = ("cost", "margin", "internal", "on_hand", "reserved", "warehouse", "location", "note",
          "sku", "barcode", COST, LONG, SKU)  # fmt: skip
 
@@ -112,10 +113,10 @@ def test_registry_rejects_at_load_what_this_cut_forbids(change: dict[str, Any]) 
         check(replace(SEARCH_PRODUCT, **{"name": "otra_tool", **change}))
 
 
-def test_registry_holds_only_the_catalog_tools_read_and_public() -> None:
-    assert set(TOOLS) == {"search_product", "get_product_variants"}
+def test_registry_holds_only_the_catalog_and_stock_tools_read_and_public() -> None:
+    assert set(TOOLS) == {*CATALOG, "get_stock"}  # F8-07d: get_stock
     assert all(t.risk is Risk.READ and t.audience is Audience.PUBLIC_SAFE for t in TOOLS.values())
-    assert {t.permission for t in TOOLS.values()} == {"products.view"}
+    assert {t.permission for t in TOOLS.values()} == {"products.view", "inventory.view"}
     check(replace(SEARCH_PRODUCT, name="otra_tool"))  # la misma, con otro nombre, sí entra
     check(replace(SEARCH_PRODUCT, name="otra_tool", output={"shortDescription": (str, int)}))
     for spec in TOOLS.values():  # el esquema estricto, sin identidad ni topes que la API rechace
@@ -189,7 +190,7 @@ def test_sql_looking_or_unicode_text_is_only_text(shop: Any) -> None:
     assert body["data"]["product_id"] == str(shop.red.pk)  # se parsea: sale el canónico
 
 
-@pytest.mark.parametrize("name", sorted(TOOLS))
+@pytest.mark.parametrize("name", CATALOG)
 def test_each_tool_needs_products_view_of_the_person(shop: Any, name: str) -> None:
     data = {"query": "collar"} if name == "search_product" else {"product_id": str(shop.red.pk)}
     allow(shop.world, "inventory.view", "prices.view")

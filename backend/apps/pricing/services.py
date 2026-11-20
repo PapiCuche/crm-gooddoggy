@@ -125,8 +125,10 @@ def _instant(alias: str, at: datetime | None) -> datetime:
 
 def _lists(ctx: ExecutionContext | TenantContext, audience: Audience) -> QuerySet[PriceList]:
     if audience is Audience.PUBLIC_AI:
-        return PriceList.objects.filter(deleted_at__isnull=True, ai_exposable=True).exclude(
-            required_permission="prices.view_internal"  # 04 §K.2: la interna, nunca
+        lists = PriceList.objects.filter(deleted_at__isnull=True, ai_exposable=True)
+        # 04 §K.2: la interna, nunca; por quién la ve o por su tipo, como `set_ai_exposable`.
+        return lists.exclude(required_permission="prices.view_internal").exclude(
+            kind=PriceList.Kind.INTERNAL
         )
     if not isinstance(ctx, ExecutionContext):
         raise TypeError("una persona resuelve con su ExecutionContext")

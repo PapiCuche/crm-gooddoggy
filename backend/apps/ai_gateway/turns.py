@@ -128,6 +128,15 @@ def _blocks(role: str, content: object) -> tuple[Block, ...]:
     return blocks
 
 
+def reply(blocks: tuple[Block, ...]) -> None:
+    """Una respuesta con llamadas a tools (F8-07d), la única que se reenvía: las reglas de un turno
+    del asistente y sin ids repetidos. `Rejected`; nunca quita un bloque."""
+    _blocks("assistant", blocks)
+    ids = [block.id for block in blocks if type(block) is ToolCall]
+    if len(ids) != len(set(ids)):
+        raise Rejected("duplicate_id")
+
+
 def check(request: LLMRequest) -> tuple[Block, ...]:
     """Todos los bloques de `request` (también los de cada resultado), validados. `Rejected`."""
     limits, conversation = settings.AI_TURN_LIMITS, request.turns

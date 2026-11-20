@@ -137,8 +137,7 @@ describe("PriceLists", () => {
     expect(field("Orden")).toHaveValue("0");
     expect(field("Quién la ve")).toHaveValue("prices.view");
     expect(field("Quién la ve")).toHaveAccessibleDescription(/Sale del tipo/);
-    expect(field("IA pública")).toBeDisabled();
-    expect(field("IA pública")).toHaveAccessibleDescription(/hasta la Fase 8/);
+    expect(within(form()).queryByText(/IA/)).toBeNull(); // F8-07b: lo decide `ai.manage`
     fill({ Código: " mayorista ", Nombre: "Mayorista", Tipo: "WHOLESALE" });
     expect(field("Quién la ve")).toHaveValue("prices.view_wholesale");
     fill({ Tipo: "INTERNAL" });
