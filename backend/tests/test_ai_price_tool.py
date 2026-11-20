@@ -26,6 +26,7 @@ from tests.logs import log_text
 from tests.test_ai_read_tools import COST, allow, run, shop, world
 from tests.test_authorization import acting
 from tests.test_memberships import ctx
+from tests.test_prices import seeding
 from tests.test_pricing_engine import MARK, row
 from tests.test_promotion_tables import promo
 
@@ -176,7 +177,7 @@ def test_a_list_without_a_price_for_the_variant_is_left_out(store: Any) -> None:
 def test_a_price_without_tax_says_so(store: Any) -> None:
     allow(store.world, "prices.view")
     net = listed(store.world.a, "NET", "Sin IGV", sort_order=0)
-    with tenant_scope(ctx(store.world.a)):
+    with seeding(store.world.a):
         ProductPrice.objects.create(variant_id=store.shop.big.pk, price_list_id=net,
                                     amount=Decimal("50.85"), currency="PEN", tax_included=False,
                                     starts_at=timezone.now() - timedelta(days=1),
