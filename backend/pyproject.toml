@@ -186,6 +186,10 @@ forbidden_modules = [
     "apps.audit.services", "apps.conversations.whatsapp", "core.sealed", "apps.contacts.models",
     "apps.contacts.selectors",
 ]
+# F8-08d: solo el contexto del copiloto lee los mensajes con `conversations.selectors.messages`,
+# como pide ADR-034 §7; ese módulo importa contactos y medios para otras lecturas que el contexto no
+# usa. Una importación directa de lo prohibido desde `context` u otro módulo sigue rompiendo.
+ignore_imports = ["apps.ai_agents.context -> apps.conversations.selectors"]
 
 [[tool.importlinter.contracts]]
 name = "Fronteras de alta: solo provisioning importa los bootstrap.py de L2 (F2-06)"
