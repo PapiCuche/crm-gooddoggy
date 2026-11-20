@@ -289,7 +289,10 @@ def test_only_the_context_may_reach_the_message_selector_past_the_import_contrac
     config = tomllib.loads((BACKEND / "pyproject.toml").read_text())
     contracts = config["tool"]["importlinter"]["contracts"]
     [mine] = [c for c in contracts if c.get("source_modules") == ["apps.ai_agents"]]
-    assert mine["ignore_imports"] == ["apps.ai_agents.context -> apps.conversations.selectors"]
+    assert mine["ignore_imports"] == [
+        "apps.ai_agents.records -> apps.audit.services",
+        "apps.ai_agents.context -> apps.conversations.selectors",
+    ]
     # y como esa excepción vale para todo el grafo, solo el arranque importa `context`
     [guard] = [c for c in contracts if c.get("protected_modules") == ["apps.ai_agents.context"]]
     assert (guard["type"], guard["allowed_importers"]) == ("protected", ["apps.ai_agents.apps"])

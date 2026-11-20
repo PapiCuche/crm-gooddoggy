@@ -110,6 +110,9 @@ PERMISSIONS: tuple[PermissionDef, ...] = (  # docs/fase-0/03 §H (catálogo v1)
     PermissionDef("ai.manage", "ai", is_sensitive=True),
     # F8-06 (ADR-034 §10, D-F8-08): solo **apagar** la IA de la organización, sin segundo factor.
     PermissionDef("ai.kill_switch", "ai", is_sensitive=True),
+    # F8-08b (ADR-034 §10, D-F8-08): pedir sugerencias y resúmenes del copiloto. No sensible; al
+    # nacer, solo el Owner: ninguna plantilla lo recibe hasta que el Owner lo conceda.
+    PermissionDef("ai.use", "ai"),
 )
 BY_CODE = {permission.code: permission for permission in PERMISSIONS}
 

@@ -58,6 +58,9 @@ FUNCTIONS = (
     " text)",
     "public.ai_budget_orphan_organizations(integer)",  # F8-05b5, SECURITY DEFINER
     "public.resolve_invitation(text)",  # F2-130a, SECURITY DEFINER
+    "public.ai_runs_ensure_partitions(integer)",  # F8-08b
+    "public.ai_actions_ensure_partitions(integer)",
+    "public.ai_suggestions_guard()",  # INVOKER
 )
 
 
