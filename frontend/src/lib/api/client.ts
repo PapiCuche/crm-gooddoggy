@@ -60,6 +60,7 @@ import type {
   ConversationsListParams,
   ConversationsUnansweredCountParams,
   CopilotSuggestion,
+  CopilotSummary,
   Cost,
   CostHistoryListParams,
   CostPage,
@@ -7408,7 +7409,7 @@ export const getConversationsCopilotSuggestUrl = (orgSlug: string, conversationI
 };
 
 /**
- * Pide al copiloto una sugerencia de respuesta (`conversations.view` con su alcance y `ai.use`; 403 `PERMISSION_DENIED` sin uno de los dos). No envía nada: la sugerencia se guarda y se audita (`ai.suggestion.created`). 404: fuera de alcance, de otra organización o inexistente. 409 `AI_DISABLED`, `AI_NOT_CONFIGURED`, `AI_BUDGET_NOT_SET` o `AI_BUDGET_EXHAUSTED`. 502 `PROVIDER_UNAVAILABLE`, `PROVIDER_ERROR`, `CREDENTIALS_REJECTED`, `PROVIDER_BILLING`, `AI_MALFORMED` o `AI_TURN_INVALID`. 504 `AI_DEADLINE`. 429 `RATE_LIMITED`: el tope por persona, con `Retry-After`.
+ * Pide al copiloto una sugerencia de respuesta (`conversations.view` con su alcance y `ai.use`; 403 `PERMISSION_DENIED` sin uno de los dos). No envía nada: la sugerencia se guarda y se audita (`ai.suggestion.created`). 404: fuera de alcance, de otra organización o inexistente. 409 `AI_DISABLED`, `AI_NOT_CONFIGURED`, `AI_BUDGET_NOT_SET` o `AI_BUDGET_EXHAUSTED`. 502 `PROVIDER_UNAVAILABLE`, `PROVIDER_ERROR`, `CREDENTIALS_REJECTED`, `PROVIDER_BILLING`, `AI_MALFORMED` o `AI_TURN_INVALID`. 504 `AI_DEADLINE`. 429 `RATE_LIMITED`: el tope por persona (uno para sugerir y resumir), con `Retry-After`.
  */
 export const conversationsCopilotSuggest = async (
   orgSlug: string,
@@ -7488,6 +7489,93 @@ export const useConversationsCopilotSuggest = <TError = ErrorType<Error>, TConte
   TContext
 > => {
   return useMutation(getConversationsCopilotSuggestMutationOptions(options), queryClient);
+};
+
+export const getConversationsCopilotSummaryUrl = (orgSlug: string, conversationId: string) => {
+  return `/api/v1/o/${orgSlug}/conversations/${conversationId}/copilot/summary/`;
+};
+
+/**
+ * Pide al copiloto un resumen de la conversación para quien atiende (`conversations.view` con su alcance y `ai.use`; 403 `PERMISSION_DENIED` sin uno de los dos), sin herramientas. Se muestra «Generado por IA», con sus cifras, términos y enlaces marcados «sin verificar» (`marks`), y no se inserta en el compositor. No envía nada: se guarda y se audita (`ai.summary.created`). 404: fuera de alcance, de otra organización o inexistente. 409 `AI_DISABLED`, `AI_NOT_CONFIGURED`, `AI_BUDGET_NOT_SET` o `AI_BUDGET_EXHAUSTED`. 502 `PROVIDER_UNAVAILABLE`, `PROVIDER_ERROR`, `CREDENTIALS_REJECTED`, `PROVIDER_BILLING`, `AI_MALFORMED` o `AI_TURN_INVALID`. 504 `AI_DEADLINE`. 429 `RATE_LIMITED`: el tope por persona (uno para sugerir y resumir), con `Retry-After`.
+ */
+export const conversationsCopilotSummary = async (
+  orgSlug: string,
+  conversationId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<CopilotSummary> => {
+  return apiFetch<CopilotSummary>(getConversationsCopilotSummaryUrl(orgSlug, conversationId), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getConversationsCopilotSummaryMutationKey = () =>
+  ["conversationsCopilotSummary"] as const;
+
+export const getConversationsCopilotSummaryMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof conversationsCopilotSummary>>,
+    TError,
+    ConversationsCopilotSummaryMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof conversationsCopilotSummary>>,
+  TError,
+  ConversationsCopilotSummaryMutationVariables,
+  TContext
+> => {
+  const mutationKey = getConversationsCopilotSummaryMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof conversationsCopilotSummary>>,
+    ConversationsCopilotSummaryMutationVariables
+  > = (props) => {
+    const { orgSlug, conversationId } = props ?? {};
+
+    return conversationsCopilotSummary(orgSlug, conversationId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ConversationsCopilotSummaryMutationResult = NonNullable<
+  Awaited<ReturnType<typeof conversationsCopilotSummary>>
+>;
+
+export type ConversationsCopilotSummaryMutationError = ErrorType<Error>;
+export type ConversationsCopilotSummaryMutationVariables = {
+  orgSlug: string;
+  conversationId: string;
+};
+
+export const useConversationsCopilotSummary = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof conversationsCopilotSummary>>,
+      TError,
+      ConversationsCopilotSummaryMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof conversationsCopilotSummary>>,
+  TError,
+  ConversationsCopilotSummaryMutationVariables,
+  TContext
+> => {
+  return useMutation(getConversationsCopilotSummaryMutationOptions(options), queryClient);
 };
 
 export const getConversationMediaSendUrl = (orgSlug: string, conversationId: string) => {
