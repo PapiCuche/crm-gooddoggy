@@ -1,10 +1,12 @@
 """Insertar una sugerencia y purgar el texto de los borradores (F8-08j; ADR-034 §9.2, §13 D-F8-05).
 
 `insert` corre en la transacción de la petición (una ruta de tenant normal: no llama al modelo).
-Solo una sugerencia (`SUGGEST`) con texto de una conversación que la persona ve con su alcance;
-si no, `NotFound` (el mismo 404). Con su evidencia caducada, `EvidenceExpired`, sin auditar.
-Si no, audita `ai.suggestion.inserted` (`records.inserted`) y devuelve el texto guardado, con sus
-marcas: nada se envía ni va al outbox.
+Solo una sugerencia (`SUGGEST`) con texto, **pedida por la misma persona** (sus tools leyeron con
+sus permisos: otra persona no obtiene un precio o un stock que su propia sugerencia marcaría), de
+una conversación que ve con su alcance; si no, `NotFound` (el mismo 404). Con su evidencia
+caducada, `EvidenceExpired`, sin auditar. Si no, audita `ai.suggestion.inserted`
+(`records.inserted`) y devuelve el texto guardado, con sus marcas: nada se envía ni va al outbox.
+Cada inserción se audita: la métrica de sugerencias insertadas cuenta ids distintos.
 
 `purge` (la tarea diaria): un scope por organización, como `crm_app` bajo RLS, pone a NULL el texto
 de los borradores y resúmenes de más de `AI_SUGGESTION_TEXT_DAYS` días. El log, solo cuentas."""
@@ -44,9 +46,13 @@ def insert(ctx: TenantContext, conversation_id: UUID, suggestion_id: UUID) -> st
         raise NotFound from None
     mine = scoped(ectx, "conversations.view", Conversation.objects.filter(pk=conversation_id))
     expired = ExpressionWrapper(Q(evidence_expires_at__lt=Now()), BooleanField())
-    found = (  # solo una sugerencia con texto de esta conversación, en su alcance
+    found = (  # solo una sugerencia suya, con texto, de esta conversación, en su alcance
         AISuggestion.objects.filter(
-            pk=suggestion_id, kind="SUGGEST", text__isnull=False, conversation_id__in=mine
+            pk=suggestion_id,
+            kind="SUGGEST",
+            text__isnull=False,
+            conversation_id__in=mine,
+            requested_by_user_id=ctx.user_id,
         )
         .annotate(expired=expired)
         .values_list("text", "findings", "expired")
@@ -75,7 +81,8 @@ def purge(batch: int = BATCH) -> dict[str, int]:
                 if purged < batch:
                     break
         except Exception as error:  # noqa: BLE001 — una organización no detiene a las demás
-            logger.error("ai.suggestion_text_purge_failed", error=type(error).__name__)
+            logger.error("ai.suggestion_text_purge_failed", organization_id=str(organization_id),
+                         error=type(error).__name__)  # fmt: skip
             done["failed"] += 1
     logger.info("ai.suggestion_text_purged", **done)
     return dict(done)

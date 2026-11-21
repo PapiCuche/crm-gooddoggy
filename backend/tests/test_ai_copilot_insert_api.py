@@ -23,7 +23,7 @@ from core.tenancy.middleware import UNSCOPED
 from core.tenancy.scope import require_scope, tenant_scope
 from tests.factories import make_user
 from tests.test_ai_copilot_context import conversation
-from tests.test_ai_copilot_runtime import FIGURES, SEARCH, desk
+from tests.test_ai_copilot_runtime import FIGURES, GOOD, GRANATE, SEARCH, desk
 from tests.test_ai_copilot_suggest_api import COUNTED, SPENT, ask
 from tests.test_ai_gateway import world
 from tests.test_authorization import give
@@ -50,7 +50,7 @@ TEXTS = "SELECT text FROM ai_suggestions WHERE id = %s"
 
 
 def stored(w: SimpleNamespace, migrator: DB, *, kind: str = "SUGGEST", text: str | None = DRAFT,
-           expires: int | None = None, days: int = 0, convo: UUID | None = None,
+           expires: int | None = None, days: float = 0, convo: UUID | None = None,
            org: UUID | None = None, user: Any = None) -> UUID:  # fmt: skip
     """Una fila como la escribe `records.save`, con su edad y su caducidad (en segundos)."""
     values = [org or w.a, convo or w.convo, (user or w.ana).pk, kind, text, json.dumps(FOUND),
@@ -176,12 +176,29 @@ def test_a_summary_a_purged_draft_or_one_of_elsewhere_is_the_same_404(
         insert(desk, foreign, convo=theirs),  # de B, desde A
         insert(desk, good, who=bob, org="org-b"),  # A desde B
         insert(desk, good, who=bob),  # sin membresía en A
-        insert(desk, other, who=leo, convo=mine),  # fuera de su alcance (OWN, de ana)
+        # la suya, pero la conversación ya es de ana: fuera de su alcance (OWN)
+        insert(desk, stored(desk, migrator, convo=mine, user=leo), who=leo, convo=mine),
+        insert(desk, good, who=leo),  # la ve, pero la pidió ana
     ]
     assert [(a.status_code, a.content) for a in answers] == [NOT_FOUND] * len(answers)
     assert scalar(migrator, INSERTED) == 0
-    assert insert(desk, good, who=leo).status_code == 200  # la suya, sin asignar
+    assert insert(desk, stored(desk, migrator, user=leo), who=leo).status_code == 200  # la suya
     assert insert(desk, foreign, who=bob, convo=theirs, org="org-b").status_code == 200
+
+
+def test_only_who_asked_inserts_it_so_nobody_gets_what_their_own_tools_would_mark(
+    desk: SimpleNamespace, migrator: DB
+) -> None:
+    """Las tools leyeron con los permisos de quien pidió: eva, sin `products.view`, no obtiene el
+    nombre que su propia sugerencia marcaría (lo mismo con un precio o un stock)."""
+    desk.fake.replies = [SEARCH, GOOD]
+    anas = ask(desk).json()
+    assert anas["text"] == GRANATE
+    eva = make_user(email="eva@example.com")
+    give(desk.a, join(desk.a, eva).pk, {"ai.use": None, "conversations.view": "ORGANIZATION"})
+    answer = insert(desk, UUID(anas["id"]), eva)
+    assert (answer.status_code, answer.content) == NOT_FOUND and scalar(migrator, INSERTED) == 0
+    assert insert(desk, stored(desk, migrator, user=eva), eva).json() == {"text": DRAFT}
 
 
 @pytest.mark.parametrize("grants", [{"conversations.view": "ORGANIZATION"}, {"ai.use": None}])
@@ -201,9 +218,12 @@ def test_the_daily_purge_nulls_old_text_in_every_organization_and_logs_counts(
     bob = make_user(email="bob@example.com")
     join(desk.b, bob)
     theirs = conversation(desk.b, {"display_name": "De B"})
-    old, young = stored(desk, migrator, days=31), stored(desk, migrator, days=29)
+    hour = 1 / 24  # a una hora de cada lado del corte de 30 días
+    old, young = stored(desk, migrator, days=30 + hour), stored(desk, migrator, days=30 - hour)
     summary = stored(desk, migrator, kind="SUMMARY", days=31)
     foreign = stored(desk, migrator, days=40, convo=theirs, org=desk.b, user=bob)
+    suspended = "UPDATE organizations SET status = 'SUSPENDED' WHERE id = %s"
+    migrator.execute(suspended, [desk.b])  # la retención vale también para una suspendida
     kept = "SELECT to_jsonb(s) - 'text' FROM ai_suggestions s ORDER BY id"
     before = migrator.execute(kept).fetchall()
     with caplog.at_level(logging.DEBUG):
@@ -222,7 +242,10 @@ def test_the_daily_purge_nulls_old_text_in_every_organization_and_logs_counts(
 
 
 def test_the_purge_goes_in_batches_and_one_failing_organization_stops_no_other(
-    desk: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch
+    desk: SimpleNamespace,
+    migrator: DB,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     olds = [stored(desk, migrator, days=31) for _ in range(4)]
     tenant = ctx(desk.a)
@@ -242,7 +265,11 @@ def test_the_purge_goes_in_batches_and_one_failing_organization_stops_no_other(
         return real(tenant, days, batch)
 
     monkeypatch.setattr(records, "purge_text", flaky)
-    assert drafts.purge() == {"organizations": 2, "purged": 1, "failed": 1}
+    with caplog.at_level(logging.ERROR):
+        assert drafts.purge() == {"organizations": 2, "purged": 1, "failed": 1}
+    [failed] = [r.msg for r in caplog.records if isinstance(r.msg, dict)
+                and r.msg.get("event") == "ai.suggestion_text_purge_failed"]  # fmt: skip
+    assert (failed["organization_id"], failed["error"]) == (str(desk.b), "RuntimeError")
     assert scalar(migrator, TEXTS, [again]) is None
 
 
