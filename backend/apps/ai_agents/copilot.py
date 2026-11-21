@@ -209,10 +209,11 @@ def _kept(draft: guard.Rendered) -> records.Suggestion:
 
 
 def _reconnect() -> None:
-    """Una conexión que la base cortó a mitad (p. ej., mientras el proveedor respondía) se cierra,
-    como hace Django entre peticiones: el registro abre otra. Fuera de toda transacción."""
+    """Una conexión que la base cortó (mientras el proveedor respondía o tras la última consulta)
+    se cierra, como hace Django entre peticiones: el registro abre otra y el borrador no se pierde.
+    Nunca dentro de una transacción."""
     for db in connections.all(initialized_only=True):
-        if db.errors_occurred and not db.in_atomic_block and not db.is_usable():
+        if not db.in_atomic_block and not db.is_usable():
             db.close()
 
 

@@ -4,7 +4,6 @@ punta contra la API falsa (`tests.ai_sim`) con respuestas guionizadas (`tool_use
 PostgreSQL con el rol `crm_app`; todos los datos son ficticios."""
 
 import ast
-import contextlib
 import json
 import logging
 import pathlib
@@ -408,6 +407,56 @@ def test_a_run_that_cannot_be_saved_is_logged_without_content_and_the_error_prop
     assert len(held) == 2 and "berilo" not in logged
 
 
+def kill() -> None:
+    """La base corta la sesión de Django desde otra conexión del mismo rol: Django no lo ve hasta
+    su próxima consulta (ningún error que lo diga)."""
+    pid = connection.connection.info.backend_pid
+    with psycopg.connect(**connection.get_connection_params()) as other:
+        other.execute("SELECT pg_terminate_backend(%s)", [pid])
+        gone = "SELECT count(*) FROM pg_stat_activity WHERE pid = %s"
+        assert any(other.execute(gone, [pid]).fetchone() == (0,) for _ in range(10**4))
+    assert not connection.errors_occurred
+
+
+def test_a_connection_lost_after_the_last_query_still_saves_the_draft(
+    desk: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F8-08g2: cortada tras el guard (sin un error que lo diga), el registro abre otra conexión."""
+    render = guard.render
+
+    def cut(*args: Any) -> Any:
+        rendered = render(*args)
+        kill()
+        return rendered
+
+    monkeypatch.setattr(guard, "render", cut)
+    draft = run(desk, SEARCH, GOOD)
+    assert draft.text == GRANATE and runs(migrator) == [("OK", 1, 2, False, {})]
+    assert rows(migrator, "SELECT id FROM ai_suggestions") == [(draft.suggestion_id,)]
+
+
+@dataclass
+class Db:
+    in_atomic_block: bool
+    usable: bool
+    closed: bool = False
+
+    def is_usable(self) -> bool:
+        return self.usable
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def test_only_a_dead_connection_outside_a_transaction_is_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dbs = [Db(False, False), Db(True, False), Db(False, True)]
+    monkeypatch.setattr(copilot, "connections", SimpleNamespace(all=lambda initialized_only: dbs))
+    copilot._reconnect()
+    assert [db.closed for db in dbs] == [True, False, False]
+
+
 @pytest.mark.parametrize("probe", ["timeout", "lost"])
 def test_a_settle_that_fails_after_the_send_keeps_its_reservation_on_the_run(
     desk: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch,
@@ -420,10 +469,8 @@ def test_a_settle_that_fails_after_the_send_keeps_its_reservation_on_the_run(
     else:
         handle = desk.fake.handle
 
-        def cut(*args: Any) -> Any:  # la propia sesión se termina: su conexión queda muerta
-            with contextlib.suppress(DatabaseError), connection.cursor() as cursor:
-                cursor.execute("SELECT pg_terminate_backend(pg_backend_pid())")
-            assert connection.connection.closed or connection.connection.broken
+        def cut(*args: Any) -> Any:
+            kill()
             return handle(*args)
 
         monkeypatch.setattr(desk.fake, "handle", cut)
@@ -510,8 +557,17 @@ IMPORTS = {  # módulo → nombres: exactamente estos; uno nuevo se añade aquí
     "core.tenancy.context": "TenantContext", "core.tenancy.scope": "require_scope tenant_scope",
     "core.text": "VERIFY_MARK",
 }  # fmt: skip
+USES = {  # módulo importado → sus atributos: exactamente estos
+    "context": "build caps customer_since_reply", "detectors": "Handoff PATTERNS suggestion",
+    "gateway": "complete", "guard": "Finding Malformed Rendered render", "json": "loads",
+    "re": "compile", "records": "Action Finding Run Suggestion save",
+    "registry": "invoke_read_only", "time": "monotonic",
+}  # fmt: skip
 DYNAMIC = {"globals", "locals", "vars", "eval", "exec", "compile", "getattr", "setattr", "delattr",
            "breakpoint"}  # fmt: skip
+LOADERS = {"sys", "modules", "importlib", "import_module", "get_app_config", "get_app_configs"}
+REACH = LOADERS | {"apps", "module", "gateway", "pgconn", "connection"}  # como atributos
+MARKS = ("__", "ai_gateway", "importlib", "sys", "ai_budget", "ai_llm")
 SQL = {"execute", "executemany", "callproc", "copy", "stream", "raw", "extra"}
 CLOCK = "SELECT clock_timestamp()"  # la única consulta propia de `copilot` (`_now`)
 
@@ -521,66 +577,85 @@ def dunder(name: str) -> bool:
 
 
 def violations(source: str) -> set[str]:
-    """Qué reglas rompe `source` (F8-08g2): `import`, los imports exactos de `IMPORTS`, sin alias
-    ni relativos; `name`, un acceso dinámico (`globals`, `eval`, `getattr`…); `dunder`, un nombre o
-    atributo mágico (salvo `__name__` y `__init__`); `text`, un texto con `__`, `ai_budget` o
-    `ai_llm`; `sql`, otra consulta que la de `_now`; `gateway`, otro uso que `gateway.complete`."""
+    """Qué reglas rompe `source` (F8-08g2). Una defensa en profundidad: el control principal es la
+    revisión de `copilot.py`, porque Python siempre deja otro camino. `import`: los imports exactos
+    de `IMPORTS`, sin alias ni relativos; `module`: los atributos exactos de `USES` en los módulos
+    importados; `name`: un acceso dinámico (`globals`, `eval`, `getattr`…); `dunder`: un nombre
+    mágico salvo `__name__`; `reach`: un nombre o atributo que lleva a otros módulos (`sys`,
+    `modules`, `apps`, `connection`…) o un atributo con `_` (salvo `__init__` y `__name__`); `text`:
+    un texto o bytes con `__`, `ai_gateway`, `importlib`, `sys`, `ai_budget` o `ai_llm`; `sql`:
+    otro atributo de consulta que el `execute` de `_now`; `gateway`: otro uso que
+    `gateway.complete`."""
     tree, found, broken = ast.parse(source), set[tuple[str, str]](), set[str]()
+    uses, sql = set[tuple[str, str]](), list[str]()
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom | ast.Import):
             module = node.module or "" if isinstance(node, ast.ImportFrom) else ""
             if isinstance(node, ast.ImportFrom) and node.level or any(a.asname for a in node.names):
                 broken.add("import")
             found |= {(module, alias.name) for alias in node.names}
-        elif isinstance(node, ast.Name) and node.id in DYNAMIC:
-            broken.add("name")
-        elif isinstance(node, ast.Name) and dunder(node.id) and node.id != "__name__":
-            broken.add("dunder")
-        elif isinstance(node, ast.Attribute) and dunder(node.attr):
-            broken |= set() if node.attr in ("__init__", "__name__") else {"dunder"}
-        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
-            if any(mark in node.value for mark in ("__", "ai_budget", "ai_llm")):
-                broken.add("text")
-        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-            first = node.args[0] if node.args else None
-            sql = isinstance(first, ast.Constant) and first.value == CLOCK
-            if node.func.attr in SQL and not (node.func.attr == "execute" and sql):
-                broken.add("sql")
+        elif isinstance(node, ast.Name):
+            broken |= {"name"} if node.id in DYNAMIC else set()
+            broken |= {"reach"} if node.id in LOADERS else set()
+            broken |= {"dunder"} if dunder(node.id) and node.id != "__name__" else set()
+        elif isinstance(node, ast.Attribute):
+            if isinstance(node.value, ast.Name) and node.value.id in USES:
+                uses.add((node.value.id, node.attr))
+            if node.attr in REACH or node.attr.startswith("_") and node.attr not in (
+                    "__init__", "__name__"):  # fmt: skip
+                broken.add("reach")
+            sql += [node.attr] if node.attr in SQL else []
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str | bytes):
+            text = node.value if isinstance(node.value, str) else node.value.decode("latin-1")
+            broken |= {"text"} if any(mark in text for mark in MARKS) else set()
     if found != {(module, name) for module, names in IMPORTS.items() for name in names.split()}:
         broken.add("import")
+    if uses != {(module, name) for module, names in USES.items() for name in names.split()}:
+        broken.add("module")
+    clock = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and n.args
+             and isinstance(n.args[0], ast.Constant) and n.args[0].value == CLOCK]  # fmt: skip
+    if sql != ["execute"] or len(clock) != 1:
+        broken.add("sql")
     names = [n for n in ast.walk(tree) if isinstance(n, ast.Name) and n.id == "gateway"]
-    used = [n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute)
-            and isinstance(n.value, ast.Name) and n.value.id == "gateway"]  # fmt: skip
-    return broken if used == ["complete"] and len(names) == 1 else broken | {"gateway"}
+    return broken if len(names) == 1 else broken | {"gateway"}
 
 
 EVASIONS = {  # lo que se añade al final de `copilot.py` → las reglas que rompe
-    "from apps import ai_gateway\nai_gateway.gateway.settle(None)": {"import"},  # el mutante A5
+    "from apps import ai_gateway\nai_gateway.gateway.settle(None)": {"import", "reach"},  # A5
     "from apps.ai_gateway import gateway as gw": {"import"},
     "from apps.ai_gateway.gateway import settle": {"import"},
     "from ..ai_gateway import keys": {"import"},
     "import inspect\ninspect.getmodule(GatewayError).settle(None)": {"import"},
     "import gc\ngc.get_objects()": {"import"},
+    "records.connections": {"module"}, "time.sleep(0)": {"module"},
+    "gateway.settle(None)": {"module", "gateway"}, "json.codecs.sys": {"module", "reach"},
+    "re.enum.sys.modules['apps.ai_gateway.gateway'].settle(None)": {"module", "reach", "text"},
     "globals()['gate' + 'way'].settle(None)": {"name"},
     "eval('gate' + 'way.settle(None)')": {"name"},
     "exec('from apps.ai_' + 'gateway import keys')": {"name"},
-    "getattr(GatewayError, 'x')": {"name"}, "vars(records)": {"name"}, "locals()": {"name"},
-    "compile('1', 'f', 'eval')": {"name"}, "setattr(records, 'x', 1)": {"name"},
-    "delattr(records, 'x')": {"name"}, "breakpoint()": {"name"},
+    "getattr(GatewayError, 'x')": {"name"}, "vars(Text)": {"name"}, "locals()": {"name"},
+    "compile('1', 'f', 'eval')": {"name"}, "setattr(Text, 'x', 1)": {"name"},
+    "delattr(Text, 'x')": {"name"}, "breakpoint()": {"name"},
     "getattr(__builtins__, 'ex' + 'ec')('1')": {"name", "dunder"},
-    "__builtins__['__imp' + 'ort__']('gc')": {"dunder", "text"},
-    "__spec__.loader": {"dunder"},
-    "GatewayError.__init__.__globals__['settle'](None)": {"dunder"},
-    "object.__subclasses__()": {"dunder"}, "GatewayError.__module__": {"dunder"},
+    "__builtins__['__imp' + 'ort__']('gc')": {"dunder", "text"}, "__spec__": {"dunder"},
+    "GatewayError.__init__.__globals__['settle'](None)": {"reach"},
+    "object.__subclasses__()": {"reach"}, "GatewayError.__module__": {"reach"},
+    "settings._wrapped": {"reach"}, "connections.all()[0].connection": {"reach"},
+    "Conversation.objects.model._meta": {"reach"}, "import_module('x')": {"reach"},
+    "Conversation._meta.apps.get_app_config('ai_gateway').module.gateway.settle(None)":
+        {"reach", "text"},
+    "connections['default'].connection.pgconn.exec_(b'SELECT public.ai_budget_settle(1)')":
+        {"reach", "text"},
     "x = 'ai_budget_settle'": {"text"}, "x = 'ai_llm_calls'": {"text"}, "x = 'a__b'": {"text"},
+    "x = b'apps.ai_gateway'": {"text"}, "x = 'sys'": {"text"}, "x = 'importlib'": {"text"},
     "connections['default'].cursor().execute('SELECT public.ai_' + 'budget_settle(%s)', [1])":
         {"sql"},
     "connections['default'].cursor().execute('SELECT public.ai_budget_settle(%s)', [1])":
         {"sql", "text"},
+    "run = connections['default'].cursor().execute": {"sql"},
     "connections['default'].cursor().callproc('f')": {"sql"},
     "Conversation.objects.raw('SELECT 1')": {"sql"},
-    "gateway.settle(None)": {"gateway"}, "settle = gateway": {"gateway"},
-    "gateway.complete": {"gateway"},
+    "settle = gateway": {"gateway"}, "gateway": {"gateway"},
 }  # fmt: skip
 
 

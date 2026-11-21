@@ -246,6 +246,44 @@ def test_the_deadline_bounds_the_send_and_under_a_second_left_releases_without_s
     assert held == [(caught.value.reservation_id,)]
 
 
+SETTLES: dict[str, dict[str, Any]] = {  # cada ajuste de `complete` → lo que lo provoca
+    "released": {}, "billed": {"outcome": "timeout"}, "unbilled": {"outcome": "bad_request"},
+    "unoffered": {"content": [{"type": "tool_use", "id": "toolu_1", "name": "x", "input": {}}]},
+    "ok": {}, "unpriced": {"usage": {"input_tokens": 0, "output_tokens": 0}},
+}  # fmt: skip
+
+
+@pytest.mark.parametrize("path", SETTLES)
+def test_a_settle_that_fails_raises_internal_error_with_its_reservation(
+    world: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture, path: str,
+) -> None:  # fmt: skip
+    """F8-08g2: si el ajuste falla (la base), la reserva queda abierta para el barrido y el error
+    lleva su id; el log, solo el id y el tipo del error, nunca su mensaje."""
+    budget(migrator, world.a, "1")
+
+    def refused(*_: Any) -> None:
+        raise DatabaseError("detalle-de-la-fila")
+
+    monkeypatch.setattr(gateway, "settle", refused)
+    for name, value in SETTLES[path].items():
+        setattr(world.fake, name, value)
+    deadline = None
+    if path == "released":
+        monkeypatch.setattr(time, "monotonic", lambda: 1000.0)
+        deadline = 1000.5
+    with caplog.at_level(logging.DEBUG), pytest.raises(GatewayError) as caught:
+        gateway.complete(ctx(world.a, world.ana), ASK, deadline=deadline)
+    [(held,)] = migrator.execute("SELECT id FROM ai_budget_reservations").fetchall()
+    assert (caught.value.outcome, caught.value.reservation_id) == (Outcome.INTERNAL_ERROR, held)
+    assert len(world.fake.calls) == (0 if path == "released" else 1)
+    assert ledger(migrator)[1][0][6] is False  # abierta: el barrido la cierra como gastada
+    failed = [r.msg for r in caplog.records if isinstance(r.msg, dict)
+              and r.msg.get("event") == "ai.settle_failed"]  # fmt: skip
+    assert [(e["reservation_id"], e["error"]) for e in failed] == [(str(held), "DatabaseError")]
+    assert "detalle-de-la-fila" not in caplog.text + str([r.__dict__ for r in caplog.records])
+
+
 def test_other_months_and_odd_request_ids(world: SimpleNamespace, migrator: DB) -> None:
     budget(migrator, world.a, "1")
     usage = "INSERT INTO ai_budget_usage VALUES (%s, uuidv7(), '2001-01-01', 0.9, 0.05)"
