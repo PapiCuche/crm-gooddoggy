@@ -501,6 +501,7 @@ def test_the_channel_limit_window_is_shorter_than_what_the_login_purge_keeps() -
     kept = max(window for _, window, _, _ in base.LOGIN_THROTTLE.values())
     assert base.CHANNEL_CHECK_THROTTLE[1] < kept and base.MEDIA_UPLOAD_THROTTLE[1] < kept
     assert base.AI_ACCOUNT_THROTTLE[1] < kept  # los contadores `aik:` (F8-03d)
+    assert base.AI_COPILOT_THROTTLE[1] < kept  # y los `aic:` (F8-08h)
 
 
 @pytest.mark.parametrize("throttle", [(0, 600), (61, 600), (10, 59), (10, 841), (10, 3600)])
@@ -514,6 +515,24 @@ def test_production_refuses_an_ai_account_limit_it_cannot_enforce(
     env.check_ai_throttle(base.AI_ACCOUNT_THROTTLE)
     with pytest.raises(ImproperlyConfigured, match="AI_ACCOUNT_THROTTLE"):
         env.check_ai_throttle(throttle)
+
+
+@pytest.mark.parametrize("throttle", [(0, 600), (61, 600), (20, 59), (20, 841), (20, 3600)])
+def test_production_refuses_a_copilot_limit_it_cannot_enforce(
+    monkeypatch: pytest.MonkeyPatch, throttle: tuple[int, int]
+) -> None:
+    """Una persona no gasta sola el presupuesto de la organización (F8-08h)."""
+    from config import env
+    from config.settings import base
+
+    checked: list[tuple[int, int]] = []
+    monkeypatch.setattr(env, "check_ai_copilot_throttle", checked.append)
+    load_production(monkeypatch)
+    assert checked == [base.AI_COPILOT_THROTTLE]  # production lo comprueba al arrancar
+    monkeypatch.undo()
+    env.check_ai_copilot_throttle(base.AI_COPILOT_THROTTLE)
+    with pytest.raises(ImproperlyConfigured, match="AI_COPILOT_THROTTLE"):
+        env.check_ai_copilot_throttle(throttle)
 
 
 @pytest.mark.parametrize("throttle", [(0, 600), (61, 600), (5, 59), (5, 841), (5, 3600)])

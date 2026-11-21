@@ -19,6 +19,10 @@ Ventana fija en la tabla de contadores de acceso (`login_throttles`, de platafor
 instancias), en una sola sentencia que bloquea la fila. Pasado el tope, 429 `RATE_LIMITED` con
 `Retry-After` y sin detalle. La purga del acceso borra estas filas cuando su ventana ya pasó (la
 ventana es menor que su calma).
+
+Pedir una sugerencia al copiloto (F8-08h, ADR-034 §7) tiene su propio contador por persona
+(`aic:usr:<id>`, `AI_COPILOT_THROTTLE`): no gasta el de las escrituras de `ai.manage`. Cuenta igual,
+antes del permiso y del alcance; el presupuesto de la organización sigue siendo el tope duro.
 """
 
 import re
@@ -36,6 +40,7 @@ PATH = re.compile(
     r"^/api/v1/o/[^/]+/(ai/(provider-accounts/|budget/|switch/on/)"
     r"|pricing/price-lists/[^/]+/ai-exposable/$)"
 )
+COPILOT = re.compile(r"^/api/v1/o/[^/]+/conversations/[^/]+/copilot/suggest/$")
 READS = ("GET", "HEAD", "OPTIONS")  # las que no cuentan; las demás, sí (F8-03e)
 _COUNT = """
 INSERT INTO login_throttles AS t (key, failures, blocked_until, updated_at)
@@ -51,12 +56,13 @@ RETURNING failures,
 """
 
 
-def wait_for(user_id: object) -> int:
+def wait_for(user_id: object, prefix: str = "aik") -> int:
     """Cuenta la escritura de esa persona y devuelve los segundos que tiene que esperar si pasó el
     tope (0 si no)."""
-    limit, window = settings.AI_ACCOUNT_THROTTLE
+    rule = settings.AI_COPILOT_THROTTLE if prefix == "aic" else settings.AI_ACCOUNT_THROTTLE
+    limit, window = rule
     with connection.cursor() as cursor:
-        cursor.execute(_COUNT, {"key": f"aik:usr:{user_id}", "window": window})
+        cursor.execute(_COUNT, {"key": f"{prefix}:usr:{user_id}", "window": window})
         asked, wait = cursor.fetchone()
     return int(wait) if asked > limit else 0
 
@@ -66,13 +72,14 @@ class AiAccountThrottleMiddleware:
         self.get_response = get_response
 
     def __call__(self, request: HttpRequest) -> HttpResponse:
-        user = getattr(request, "user", None)
+        user, path = getattr(request, "user", None), request.path_info
+        prefix = "aic" if COPILOT.match(path) else "aik" if PATH.match(path) else None
         if (
             request.method not in READS
-            and PATH.match(request.path_info)
+            and prefix is not None
             and user is not None
             and user.is_authenticated
-            and (wait := wait_for(user.pk))
+            and (wait := wait_for(user.pk, prefix))
         ):
             limited = error_response("RATE_LIMITED", 429)
             limited.headers["Retry-After"] = str(wait)

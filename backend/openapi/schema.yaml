@@ -3592,6 +3592,82 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/conversations/{conversation_id}/copilot/suggest/:
+    post:
+      operationId: conversations_copilot_suggest
+      description: 'Pide al copiloto una sugerencia de respuesta (`conversations.view`
+        con su alcance y `ai.use`; 403 `PERMISSION_DENIED` sin uno de los dos). No
+        envía nada: la sugerencia se guarda y se audita (`ai.suggestion.created`).
+        404: fuera de alcance, de otra organización o inexistente. 409 `AI_DISABLED`,
+        `AI_NOT_CONFIGURED`, `AI_BUDGET_NOT_SET` o `AI_BUDGET_EXHAUSTED`. 502 `PROVIDER_UNAVAILABLE`,
+        `PROVIDER_ERROR`, `CREDENTIALS_REJECTED`, `PROVIDER_BILLING`, `AI_MALFORMED`
+        o `AI_TURN_INVALID`. 504 `AI_DEADLINE`. 429 `RATE_LIMITED`: el tope por persona,
+        con `Retry-After`.'
+      parameters:
+      - in: path
+        name: conversation_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - ai
+      security:
+      - sessionCookie: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CopilotSuggestion'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '502':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '504':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/conversations/{conversation_id}/media/:
     post:
       operationId: conversation_media_send
@@ -13477,6 +13553,71 @@ components:
         * `WAITING_INTERNAL` - Waiting Internal
         * `RESOLVED` - Resolved
         * `CLOSED` - Closed
+    CopilotFinding:
+      type: object
+      properties:
+        type:
+          type: string
+          description: El tipo del hallazgo (`FIGURE`, `LINK`…).
+        position:
+          allOf:
+          - $ref: '#/components/schemas/CopilotPosition'
+          description: Dónde está su marca; nunca el texto original.
+      required:
+      - position
+      - type
+    CopilotHandoff:
+      type: object
+      properties:
+        requested:
+          type: boolean
+          description: 'El cliente pide una persona: `text` es fijo.'
+        reason:
+          type: string
+          nullable: true
+          description: El motivo (un código) o null.
+      required:
+      - reason
+      - requested
+    CopilotPosition:
+      type: object
+      properties:
+        start:
+          type: integer
+          description: Índice de la marca en `text`.
+        end:
+          type: integer
+          description: Fin (exclusivo) de la marca.
+      required:
+      - end
+      - start
+    CopilotSuggestion:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: La sugerencia guardada.
+        text:
+          type: string
+          description: Ya renderizado, con `[verificar]` en cada hallazgo.
+        findings:
+          type: array
+          items:
+            $ref: '#/components/schemas/CopilotFinding'
+        handoff:
+          $ref: '#/components/schemas/CopilotHandoff'
+        evidence_expires_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: 'Cuándo caduca su evidencia; null: no cita ninguna.'
+      required:
+      - evidence_expires_at
+      - findings
+      - handoff
+      - id
+      - text
     Cost:
       type: object
       properties:

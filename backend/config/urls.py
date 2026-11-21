@@ -33,4 +33,5 @@ urlpatterns = [
     path("api/v1/o/<slug:org_slug>/", include("apps.tasks.api.urls")),
     path("api/v1/o/<slug:org_slug>/", include("apps.quotes.api.urls")),
     path("api/v1/o/<slug:org_slug>/", include("apps.ai_gateway.api.urls")),  # F8-03c
+    path("api/v1/o/<slug:org_slug>/", include("apps.ai_agents.api.urls")),  # F8-08h
 ]

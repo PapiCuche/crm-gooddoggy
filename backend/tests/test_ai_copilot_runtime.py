@@ -671,7 +671,7 @@ def test_the_runtime_reaches_the_gateway_only_for_complete_and_nobody_imports_it
     contracts = tomllib.loads((BACKEND / "pyproject.toml").read_text())["tool"]["importlinter"]
     [mine] = [c for c in contracts["contracts"]
               if c.get("protected_modules") == ["apps.ai_agents.copilot"]]  # fmt: skip
-    assert (mine["type"], mine["allowed_importers"]) == ("protected", [])
+    assert (mine["type"], mine["allowed_importers"]) == ("protected", ["apps.ai_agents.api.views"])
 
 
 def test_the_context_caps_each_message_and_keeps_the_newest_within_its_size(

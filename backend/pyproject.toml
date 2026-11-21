@@ -217,8 +217,16 @@ allowed_importers = ["apps.ai_agents.apps", "apps.ai_agents.copilot"]
 # `context`). El runtime (F8-08g, #1024) entra aquí al crearse.
 name = "Ningún módulo de ai_agents importa su arranque (F8-08d)"
 type = "forbidden"
-source_modules = ["apps.ai_agents.tools", "apps.ai_agents.registry", "apps.ai_agents.fields", "apps.ai_agents.models", "apps.ai_agents.migrations", "apps.ai_agents.records", "apps.ai_agents.context", "apps.ai_agents.guard", "apps.ai_agents.detectors", "apps.ai_agents.copilot"]
+source_modules = ["apps.ai_agents.tools", "apps.ai_agents.registry", "apps.ai_agents.fields", "apps.ai_agents.models", "apps.ai_agents.migrations", "apps.ai_agents.records", "apps.ai_agents.context", "apps.ai_agents.guard", "apps.ai_agents.detectors", "apps.ai_agents.copilot", "apps.ai_agents.api"]
 forbidden_modules = ["apps.ai_agents.apps"]
+
+[[tool.importlinter.contracts]]
+# F8-08h (#771): la ruta llega al registro, al contexto, a las tools y al gateway solo por el runtime
+name = "La ruta del copiloto importa el runtime, no lo que el runtime usa (F8-08h)"
+type = "forbidden"
+source_modules = ["apps.ai_agents.api"]
+forbidden_modules = ["apps.ai_agents.records", "apps.ai_agents.context", "apps.ai_agents.registry", "apps.ai_gateway"]
+allow_indirect_imports = true
 
 [[tool.importlinter.contracts]]
 # `ignore_imports` quita la arista `records -> audit.services` de todo el grafo: sin este contrato,
@@ -237,7 +245,8 @@ forbidden_modules = ["apps.ai_agents.records"]
 name = "Nadie importa el runtime del copiloto salvo su ruta (F8-08g)"
 type = "protected"
 protected_modules = ["apps.ai_agents.copilot"]
-allowed_importers = []  # F8-08h (#771) añade aquí su módulo de ruta, a propósito
+# F8-08h (#771): a propósito, solo la vista de la ruta de sugerir; nada más llega al runtime.
+allowed_importers = ["apps.ai_agents.api.views"]
 
 [[tool.importlinter.contracts]]
 name = "Fronteras de alta: solo provisioning importa los bootstrap.py de L2 (F2-06)"
