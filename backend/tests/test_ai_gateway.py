@@ -222,6 +222,68 @@ def test_retries_stop_at_the_deadline(world: SimpleNamespace, migrator: DB) -> N
     assert [t.read_timeout for t in world.fake.timeouts[-2:]] == [120.0, 1.0]
 
 
+@pytest.mark.parametrize(("left", "sent"), [(-5, None), (0.5, None), (0.999, None), (1, 1.0),
+                                            (30, 30.0), (100, 60.0)])  # fmt: skip
+def test_the_deadline_bounds_the_send_and_under_a_second_left_releases_without_sending(
+    world: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch,
+    left: float, sent: float | None,
+) -> None:  # fmt: skip
+    """F8-08g2: lo que queda se mide al enviar y nunca pasa de `seconds` (60 s); con menos de 1 s,
+    no sale y la reserva se libera (`PROVIDER_UNAVAILABLE`, costo 0), no cuenta como gastada."""
+    budget(migrator, world.a, "1")
+    monkeypatch.setattr(time, "monotonic", lambda: 1000.0)
+    assert PARAMS["seconds"] == 60
+    if sent is not None:
+        gateway.complete(ctx(world.a, world.ana), ASK, deadline=1000 + left)
+        assert [t.read_timeout for t in world.fake.timeouts] == [sent]
+        return
+    with pytest.raises(GatewayError) as caught:
+        gateway.complete(ctx(world.a, world.ana), ASK, deadline=1000 + left)
+    assert (caught.value.outcome, world.fake.calls) == (Outcome.PROVIDER_UNAVAILABLE, [])
+    [(spent, reserved)], [row] = ledger(migrator)
+    assert (row[0], row[2], row[6], spent, reserved) == ("PROVIDER_UNAVAILABLE", 0, True, 0, 0)
+    held = migrator.execute("SELECT id FROM ai_budget_reservations").fetchall()
+    assert held == [(caught.value.reservation_id,)]
+
+
+SETTLES: dict[str, dict[str, Any]] = {  # cada ajuste de `complete` → lo que lo provoca
+    "released": {}, "billed": {"outcome": "timeout"}, "unbilled": {"outcome": "bad_request"},
+    "unoffered": {"content": [{"type": "tool_use", "id": "toolu_1", "name": "x", "input": {}}]},
+    "ok": {}, "unpriced": {"usage": {"input_tokens": 0, "output_tokens": 0}},
+}  # fmt: skip
+
+
+@pytest.mark.parametrize("path", SETTLES)
+def test_a_settle_that_fails_raises_internal_error_with_its_reservation(
+    world: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture, path: str,
+) -> None:  # fmt: skip
+    """F8-08g2: si el ajuste falla (la base), la reserva queda abierta para el barrido y el error
+    lleva su id; el log, solo el id y el tipo del error, nunca su mensaje."""
+    budget(migrator, world.a, "1")
+
+    def refused(*_: Any) -> None:
+        raise DatabaseError("detalle-de-la-fila")
+
+    monkeypatch.setattr(gateway, "settle", refused)
+    for name, value in SETTLES[path].items():
+        setattr(world.fake, name, value)
+    deadline = None
+    if path == "released":
+        monkeypatch.setattr(time, "monotonic", lambda: 1000.0)
+        deadline = 1000.5
+    with caplog.at_level(logging.DEBUG), pytest.raises(GatewayError) as caught:
+        gateway.complete(ctx(world.a, world.ana), ASK, deadline=deadline)
+    [(held,)] = migrator.execute("SELECT id FROM ai_budget_reservations").fetchall()
+    assert (caught.value.outcome, caught.value.reservation_id) == (Outcome.INTERNAL_ERROR, held)
+    assert len(world.fake.calls) == (0 if path == "released" else 1)
+    assert ledger(migrator)[1][0][6] is False  # abierta: el barrido la cierra como gastada
+    failed = [r.msg for r in caplog.records if isinstance(r.msg, dict)
+              and r.msg.get("event") == "ai.settle_failed"]  # fmt: skip
+    assert [(e["reservation_id"], e["error"]) for e in failed] == [(str(held), "DatabaseError")]
+    assert "detalle-de-la-fila" not in caplog.text + str([r.__dict__ for r in caplog.records])
+
+
 def test_other_months_and_odd_request_ids(world: SimpleNamespace, migrator: DB) -> None:
     budget(migrator, world.a, "1")
     usage = "INSERT INTO ai_budget_usage VALUES (%s, uuidv7(), '2001-01-01', 0.9, 0.05)"

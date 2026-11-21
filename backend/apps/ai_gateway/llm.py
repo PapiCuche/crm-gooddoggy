@@ -23,6 +23,9 @@ class Outcome(StrEnum):  # los siete primeros quedan en `ai_llm_calls.outcome`
     AI_BUDGET_EXHAUSTED = "AI_BUDGET_EXHAUSTED"  # sin margen: no se llama
     AI_TURN_INVALID = "AI_TURN_INVALID"  # un turno mal formado o sin cota: ni se reserva (F8-05b7)
     AI_DISABLED = "AI_DISABLED"  # `AI_ENABLED` o el interruptor de la organización (F8-06)
+    # F8-08g2: el ajuste falló (la base) y la reserva queda abierta: el barrido la cierra como
+    # gastada. Solo para quien llama, con el id de la reserva; nunca en el registro.
+    INTERNAL_ERROR = "INTERNAL_ERROR"
 
 
 @dataclass(frozen=True)
