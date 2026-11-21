@@ -399,18 +399,18 @@ def test_the_context_caps_each_message_and_keeps_the_newest_within_its_size(
     desk: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(context, "CONTEXT_BYTES", 1500)
-    for n in range(4):
-        say(desk, f"mensaje-{n} " + "x" * 400)
+    for n in ("UNO", "DOS", "TRES", "CUATRO"):  # nunca dentro del delimitador `mensaje-<hex>`
+        say(desk, f"MSG-{n} " + "x" * 400)
     say(desk, "y" * 4000)
     tenant = ctx(desk.a, desk.ana)
     with tenant_scope(tenant):
         sent = context.build(tenant, desk.convo, context.Purpose.SUGGEST).turns[0].content
     assert isinstance(sent, str) and "y" * 1500 + " […]" in sent and "y" * 1501 not in sent
-    assert "mensaje-3" not in sent and "collares" not in sent  # solo cabe el más reciente
+    assert "MSG-CUATRO" not in sent and "collares" not in sent  # solo cabe el más reciente
     monkeypatch.setattr(context, "CONTEXT_BYTES", 2600)
     with tenant_scope(tenant):
         sent = context.build(tenant, desk.convo, context.Purpose.SUGGEST).turns[0].content
-    assert isinstance(sent, str) and "mensaje-3" in sent and "mensaje-2" not in sent
+    assert isinstance(sent, str) and "MSG-CUATRO" in sent and "MSG-TRES" not in sent
 
 
 @pytest.mark.parametrize("change", [{"AI_COPILOT_TOOL_CALLS": v} for v in (0, 11, "5", True, None)]
