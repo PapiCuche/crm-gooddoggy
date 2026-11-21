@@ -5,10 +5,10 @@ persona con `ai.use` y la conversación en el alcance de su `conversations.view`
 el plazo, los topes y con `ai.use` aún; cada tool call en su scope de solo lectura; el guard con el
 reloj de la base; **un** reintento con el motivo estructurado (códigos, ids, tipos y posiciones,
 nunca texto del modelo ni del cliente); `records.save` al final. Un error a mitad deja el run con
-su código y sin borrador; un fallo de la base (o su `statement_timeout`) o de una tool, como
-`INTERNAL_ERROR` con sus reservas (F8-08g2): ninguna llamada pagada sin su run. Tools fijadas por
-el código; organización y persona de `ctx`; el log lleva solo el `ai_run_id`, códigos y
-duraciones."""
+su código y sin borrador; cualquier otro fallo (la base, su `statement_timeout`, una tool o un
+error nuestro), como `INTERNAL_ERROR` con sus reservas (F8-08g2): ninguna llamada pagada sin su
+run. Tools fijadas por el código; organización y persona de `ctx`; el log lleva solo el
+`ai_run_id`, códigos y duraciones."""
 
 import json
 import re
@@ -19,7 +19,7 @@ from datetime import datetime
 from uuid import UUID
 
 from django.conf import settings
-from django.db import DatabaseError, connections
+from django.db import connections
 
 from apps.access.selectors import AccessDenied, execution_context, has_permission, scoped
 from apps.ai_agents import context, detectors, guard, records, registry
@@ -36,6 +36,7 @@ from core.text import VERIFY_MARK
 
 logger = get_logger(__name__)
 CALL_SECONDS = 10  # una llamada al modelo no empieza con menos tiempo que esto por delante
+MARGIN = 1  # el `SEND_SECONDS` del gateway: con menos por delante, libera la reserva sin enviar
 EXTRA_CALLS = 3  # tras las tool calls: la ronda con el error fijo, la final y el reintento
 TEXT_MAX, FINDINGS_MAX = 10_000, 100  # los CHECK de `ai_suggestions`
 LIMITED = '{"error":{"code":"TOOL_LIMIT"},"ok":false}'  # el sobre de error de `registry`
@@ -43,7 +44,6 @@ FINISH = "Ya no quedan llamadas a herramientas: responde ahora con la salida est
 HITS = "Tramos sin evidencia del texto renderizado (tipo y posición); quítalos o usa claims: {}"
 WHOLE = (0, len(VERIFY_MARK))
 TOOL_USE_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")  # el CHECK de `ai_actions.tool_use_id`
-FAULTS = (DatabaseError, RuntimeError)  # la base (o su `statement_timeout`) o una tool rota
 
 
 class NotFound(Exception):  # noqa: N818 — ajena, inexistente, fuera de alcance o sin `ai.use`
@@ -115,7 +115,7 @@ def _call(ctx: TenantContext, state: _State) -> LLMResponse:
         reply = gateway.complete(ctx, state.request, deadline=state.deadline)
     except GatewayError as error:  # sin tiempo ya ni para enviar, o cortado en el plazo
         state.reservations += [error.reservation_id] if error.reservation_id else []
-        late = time.monotonic() >= state.deadline
+        late = time.monotonic() >= state.deadline - MARGIN  # o liberada por falta de tiempo
         raise CopilotError("AI_DEADLINE" if late else error.outcome) from None
     except AccessDenied:  # la membresía cayó entre la comprobación y la reserva: no reservó
         raise CopilotError("ACCESS_DENIED") from None
@@ -208,19 +208,28 @@ def _kept(draft: guard.Rendered) -> records.Suggestion:
     return records.Suggestion(draft.text, found, draft.expires_at)
 
 
+def _reconnect() -> None:
+    """Una conexión que la base cortó a mitad (p. ej., mientras el proveedor respondía) se cierra,
+    como hace Django entre peticiones: el registro abre otra. Fuera de toda transacción."""
+    for db in connections.all(initialized_only=True):
+        if db.errors_occurred and not db.in_atomic_block and not db.is_usable():
+            db.close()
+
+
 def _save(
     ctx: TenantContext, state: _State, outcome: str, started: float,
     kept: records.Suggestion | None = None, handoff: str | None = None,
 ) -> UUID:  # fmt: skip
     """El run, sus tool calls y el borrador, en su propio scope (todo o nada). Si no se guarda, el
-    log lleva solo códigos e ids (las reservas, para enlazar `ai_llm_calls`) y el error sigue."""
+    log lleva solo códigos e ids (las reservas, que enlazan cada llamada) y el error sigue."""
+    _reconnect()
     ms = int((time.monotonic() - started) * 1000)
     counts = Counter(finding.type for finding in kept.findings) if kept else Counter[str]()
     run = records.Run("SUGGEST", state.conversation_id, outcome, ms, counts,
                       tuple(state.reservations), state.retried, handoff)  # fmt: skip
     try:
         records.save(ctx, run, state.actions, kept)
-    except FAULTS as error:  # nunca su mensaje: puede llevar valores de la fila
+    except Exception as error:  # nunca su mensaje: puede llevar valores de la fila
         logger.error("ai.copilot_run_unsaved", ai_run_id=str(run.id), outcome=outcome,
                      error=type(error).__name__,
                      reservation_ids=[str(held) for held in state.reservations])  # fmt: skip
@@ -248,7 +257,7 @@ def suggest(ctx: TenantContext, conversation_id: UUID) -> Draft:
         run_id = _save(ctx, state, "OK", started, kept, handoff.reason)
     except CopilotError as stop:
         raise CopilotError(stop.code, _save(ctx, state, stop.code, started)) from None
-    except FAULTS:  # tras una llamada pagada: el run sin borrador, con sus reservas
+    except Exception:  # la base, una tool o un error nuestro: el run sin borrador, con sus reservas
         raise CopilotError("INTERNAL_ERROR", _save(ctx, state, "INTERNAL_ERROR", started)) from None
     return Draft(run_id, kept.id, kept.text, kept.findings, handoff.reason,
                  kept.evidence_expires_at)  # fmt: skip

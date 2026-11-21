@@ -4,6 +4,7 @@ punta contra la API falsa (`tests.ai_sim`) con respuestas guionizadas (`tool_use
 PostgreSQL con el rol `crm_app`; todos los datos son ficticios."""
 
 import ast
+import contextlib
 import json
 import logging
 import pathlib
@@ -22,12 +23,12 @@ import pytest
 from django.apps import apps
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
-from django.db import DatabaseError, connection, connections, transaction
+from django.db import DatabaseError, InterfaceError, connection, connections, transaction
 from django.test import override_settings
 from django.utils import timezone
 
 from apps.access.selectors import AccessDenied, Denied
-from apps.ai_agents import context, copilot, detectors, records, registry
+from apps.ai_agents import context, copilot, detectors, guard, records, registry
 from apps.ai_agents.copilot import FINISH, LIMITED, CopilotError, NotFound
 from apps.ai_agents.guard import Finding, Malformed, Rendered
 from apps.ai_gateway import gateway
@@ -223,8 +224,9 @@ def test_the_loop_stops_before_paying_a_turn_that_would_not_fit(
     assert runs(migrator) == [("AI_TURN_INVALID", 1, 1, False, {})]
 
 
-@pytest.mark.parametrize(("wait", "took", "sent", "done"), [(0, 45, 50, ["OK"]), (20, 35, 30, []),
-                                                       (60, 0, None, [])])  # fmt: skip
+@pytest.mark.parametrize(("wait", "took", "sent", "done"), [
+    (0, 45, 50, ["OK"]), (20, 35, 30, []), (60, 0, None, []), (49.5, 0, None, []),
+])  # fmt: skip
 def test_no_call_starts_or_runs_past_the_total_deadline(
     desk: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch,
     wait: int, took: int, sent: int | None, done: list[str],
@@ -249,6 +251,8 @@ def test_no_call_starts_or_runs_past_the_total_deadline(
     assert [t.read_timeout for t in desk.fake.timeouts] == ([sent] if sent else [])
     assert nothing_saved(migrator) and codes(migrator) == done
     assert runs(migrator) == [("AI_DEADLINE", len(done), 1, False, {})]
+    if sent is None:  # F8-08g2: con menos de 1 s, liberada sin enviar; el run dice AI_DEADLINE
+        assert rows(migrator, "SELECT outcome FROM ai_llm_calls") == [("PROVIDER_UNAVAILABLE",)]
 
 
 def test_an_injected_request_changes_no_tool_and_an_unoffered_tool_ends_the_run(
@@ -331,8 +335,11 @@ def scoped_stall(tenant: Any, *_: Any) -> Any:
         stall(tenant)
 
 
-def broken(*_: Any) -> Any:
-    raise RuntimeError("salida-rota")  # como la de una tool que no cumple su forma
+def raising(kind: type[Exception]) -> Any:
+    def broken(*_: Any) -> Any:
+        raise kind("roto")  # una tool que no cumple su forma, una conexión rota, un error nuestro
+
+    return broken
 
 
 def calls(*steps: Any) -> Any:
@@ -351,7 +358,9 @@ UNLINKED = ("SELECT count(*) FROM ai_llm_calls c WHERE NOT EXISTS (SELECT 1 FROM
 Fault = tuple[Any, str, Callable[[], Any], tuple[int, int]]  # módulo, nombre, sustituto, el run
 FAULTS: dict[str, Fault] = {  # dónde falla → lo que queda en el run: tools y reservas
     "tool": (registry, "invoke", lambda: lambda ectx, call: stall(ectx.tenant), (0, 1)),
-    "tool-bug": (registry, "invoke", lambda: broken, (0, 1)),
+    "tool-bug": (registry, "invoke", lambda: raising(RuntimeError), (0, 1)),
+    "interface": (registry, "invoke", lambda: raising(InterfaceError), (0, 1)),  # no es Database
+    "guard-bug": (guard, "render", lambda: raising(TypeError), (1, 2)),
     "now": (copilot, "_now", lambda: scoped_stall, (1, 2)),
     "allowed": (copilot, "_allowed", lambda: calls(copilot._allowed, scoped_stall), (1, 1)),
     "save": (records, "save", lambda: calls(scoped_stall, records.save), (1, 2)),  # el del borrador
@@ -397,6 +406,37 @@ def test_a_run_that_cannot_be_saved_is_logged_without_content_and_the_error_prop
         ("OK", "DatabaseError", held), ("INTERNAL_ERROR", "DatabaseError", held)]  # fmt: skip
     logged = caplog.text + str([r.__dict__ for r in caplog.records])
     assert len(held) == 2 and "berilo" not in logged
+
+
+@pytest.mark.parametrize("probe", ["timeout", "lost"])
+def test_a_settle_that_fails_after_the_send_keeps_its_reservation_on_the_run(
+    desk: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture, probe: str,
+) -> None:  # fmt: skip
+    """F8-08g2: el ajuste falla tras enviar (un `statement_timeout`, o la base corta la conexión
+    mientras el proveedor responde): la reserva queda abierta para el barrido y en el run."""
+    if probe == "timeout":
+        monkeypatch.setattr(gateway, "settle", lambda tenant, *_: scoped_stall(tenant))
+    else:
+        handle = desk.fake.handle
+
+        def cut(*args: Any) -> Any:  # la propia sesión se termina: su conexión queda muerta
+            with contextlib.suppress(DatabaseError), connection.cursor() as cursor:
+                cursor.execute("SELECT pg_terminate_backend(pg_backend_pid())")
+            assert connection.connection.closed or connection.connection.broken
+            return handle(*args)
+
+        monkeypatch.setattr(desk.fake, "handle", cut)
+    with caplog.at_level(logging.DEBUG):
+        assert fails(desk, SEARCH, GOOD) == "INTERNAL_ERROR"
+    [(held,)] = rows(migrator, "SELECT id FROM ai_budget_reservations")
+    assert rows(migrator, "SELECT reservation_ids FROM ai_runs") == [([held],)]
+    assert runs(migrator) == [("INTERNAL_ERROR", 0, 1, False, {})]
+    assert rows(migrator, "SELECT count(*) FROM ai_llm_calls") == [(0,)]  # abierta: el barrido
+    failed = [r.msg for r in caplog.records if isinstance(r.msg, dict)
+              and r.msg.get("event") == "ai.settle_failed"]  # fmt: skip
+    error = "OperationalError"  # el tipo, nunca el mensaje
+    assert [(e["reservation_id"], e["error"]) for e in failed] == [(str(held), error)]
 
 
 def test_a_gateway_error_midway_leaves_the_run_with_its_code_and_no_draft(
@@ -458,55 +498,101 @@ def test_the_runtime_refuses_an_open_transaction_before_reading_anything(desk: A
     assert desk.fake.calls == [] and seen == []
 
 
-ALLOWED = {("apps.ai_gateway", "gateway"), ("apps.ai_gateway.gateway", "GatewayError")}
-LOADERS = {"ai_gateway", "importlib", "__import__", "sys", "builtins"}
+IMPORTS = {  # módulo → nombres: exactamente estos; uno nuevo se añade aquí a propósito
+    "": "json re time", "collections": "Counter", "dataclasses": "dataclass field replace",
+    "datetime": "datetime", "uuid": "UUID", "django.conf": "settings", "django.db": "connections",
+    "apps.access.selectors": "AccessDenied execution_context has_permission scoped",
+    "apps.ai_agents": "context detectors guard records registry",
+    "apps.ai_agents.context": "Purpose", "apps.ai_agents.registry": "Evidence",
+    "apps.ai_gateway": "gateway", "apps.ai_gateway.gateway": "GatewayError",
+    "apps.ai_gateway.llm": "Block LLMRequest LLMResponse Outcome Text ToolResult Turn",
+    "apps.conversations.models": "Conversation", "core.observability.logging": "get_logger",
+    "core.tenancy.context": "TenantContext", "core.tenancy.scope": "require_scope tenant_scope",
+    "core.text": "VERIFY_MARK",
+}  # fmt: skip
+DYNAMIC = {"globals", "locals", "vars", "eval", "exec", "compile", "getattr", "setattr", "delattr",
+           "breakpoint"}  # fmt: skip
+SQL = {"execute", "executemany", "callproc", "copy", "stream", "raw", "extra"}
+CLOCK = "SELECT clock_timestamp()"  # la única consulta propia de `copilot` (`_now`)
 
 
-def pinned(source: str) -> bool:
-    """`copilot` alcanza el gateway solo por los dos pares de `ALLOWED` (y los tipos de `llm`) y
-    solo usa `gateway.complete`: ningún alias, import relativo, `import apps…`, cargador dinámico,
-    nombre, atributo ni texto con `ai_gateway` (F8-08g2: `from apps import ai_gateway`)."""
-    tree = ast.parse(source)
+def dunder(name: str) -> bool:
+    return name.startswith("__") and name.endswith("__")
+
+
+def violations(source: str) -> set[str]:
+    """Qué reglas rompe `source` (F8-08g2): `import`, los imports exactos de `IMPORTS`, sin alias
+    ni relativos; `name`, un acceso dinámico (`globals`, `eval`, `getattr`…); `dunder`, un nombre o
+    atributo mágico (salvo `__name__` y `__init__`); `text`, un texto con `__`, `ai_budget` o
+    `ai_llm`; `sql`, otra consulta que la de `_now`; `gateway`, otro uso que `gateway.complete`."""
+    tree, found, broken = ast.parse(source), set[tuple[str, str]](), set[str]()
     for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom):
-            for alias in node.names:
-                pair, full = (node.module, alias.name), f"{node.module}.{alias.name}"
-                reach = "ai_gateway" in full and node.module != "apps.ai_gateway.llm"
-                if node.level or alias.asname or (reach and pair not in ALLOWED):
-                    return False
-        elif isinstance(node, ast.Import):
-            roots = {alias.name.split(".")[0] for alias in node.names}
-            if roots & (LOADERS | {"apps"}) or "gateway" in ast.dump(node):
-                return False
-        elif isinstance(node, ast.Name | ast.Attribute):
-            if (node.id if isinstance(node, ast.Name) else node.attr) in LOADERS:
-                return False
-        elif isinstance(node, ast.Constant) and "ai_gateway" in str(node.value):
-            return False
+        if isinstance(node, ast.ImportFrom | ast.Import):
+            module = node.module or "" if isinstance(node, ast.ImportFrom) else ""
+            if isinstance(node, ast.ImportFrom) and node.level or any(a.asname for a in node.names):
+                broken.add("import")
+            found |= {(module, alias.name) for alias in node.names}
+        elif isinstance(node, ast.Name) and node.id in DYNAMIC:
+            broken.add("name")
+        elif isinstance(node, ast.Name) and dunder(node.id) and node.id != "__name__":
+            broken.add("dunder")
+        elif isinstance(node, ast.Attribute) and dunder(node.attr):
+            broken |= set() if node.attr in ("__init__", "__name__") else {"dunder"}
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            if any(mark in node.value for mark in ("__", "ai_budget", "ai_llm")):
+                broken.add("text")
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            first = node.args[0] if node.args else None
+            sql = isinstance(first, ast.Constant) and first.value == CLOCK
+            if node.func.attr in SQL and not (node.func.attr == "execute" and sql):
+                broken.add("sql")
+    if found != {(module, name) for module, names in IMPORTS.items() for name in names.split()}:
+        broken.add("import")
     names = [n for n in ast.walk(tree) if isinstance(n, ast.Name) and n.id == "gateway"]
     used = [n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute)
             and isinstance(n.value, ast.Name) and n.value.id == "gateway"]  # fmt: skip
-    return used == ["complete"] and len(names) == 1
+    return broken if used == ["complete"] and len(names) == 1 else broken | {"gateway"}
 
 
-@pytest.mark.parametrize("evasion", [
-    "from apps import ai_gateway\nai_gateway.gateway.settle(None)",  # el mutante A5
-    "from apps import ai_gateway as g\ng.gateway.settle(None)",
-    "from apps.ai_gateway import gateway as gw\ngw.settle(None)",
-    "from apps.ai_gateway.gateway import settle", "from apps.ai_gateway import keys",
-    "from apps.ai_gateway.llm import Outcome as O", "from ..ai_gateway import gateway as g",
-    "from .. import ai_gateway", "import apps.ai_gateway.gateway",
-    "import apps\napps.ai_gateway.gateway.settle(None)",
-    "import importlib\nimportlib.import_module('apps.ai_gateway.gateway')",
-    "__import__('apps.ai_gateway.gateway')", "gateway.settle(None)",
-    "getattr(gateway, 'settle')(None)", "settle = gateway",
-])  # fmt: skip
+EVASIONS = {  # lo que se añade al final de `copilot.py` → las reglas que rompe
+    "from apps import ai_gateway\nai_gateway.gateway.settle(None)": {"import"},  # el mutante A5
+    "from apps.ai_gateway import gateway as gw": {"import"},
+    "from apps.ai_gateway.gateway import settle": {"import"},
+    "from ..ai_gateway import keys": {"import"},
+    "import inspect\ninspect.getmodule(GatewayError).settle(None)": {"import"},
+    "import gc\ngc.get_objects()": {"import"},
+    "globals()['gate' + 'way'].settle(None)": {"name"},
+    "eval('gate' + 'way.settle(None)')": {"name"},
+    "exec('from apps.ai_' + 'gateway import keys')": {"name"},
+    "getattr(GatewayError, 'x')": {"name"}, "vars(records)": {"name"}, "locals()": {"name"},
+    "compile('1', 'f', 'eval')": {"name"}, "setattr(records, 'x', 1)": {"name"},
+    "delattr(records, 'x')": {"name"}, "breakpoint()": {"name"},
+    "getattr(__builtins__, 'ex' + 'ec')('1')": {"name", "dunder"},
+    "__builtins__['__imp' + 'ort__']('gc')": {"dunder", "text"},
+    "__spec__.loader": {"dunder"},
+    "GatewayError.__init__.__globals__['settle'](None)": {"dunder"},
+    "object.__subclasses__()": {"dunder"}, "GatewayError.__module__": {"dunder"},
+    "x = 'ai_budget_settle'": {"text"}, "x = 'ai_llm_calls'": {"text"}, "x = 'a__b'": {"text"},
+    "connections['default'].cursor().execute('SELECT public.ai_' + 'budget_settle(%s)', [1])":
+        {"sql"},
+    "connections['default'].cursor().execute('SELECT public.ai_budget_settle(%s)', [1])":
+        {"sql", "text"},
+    "connections['default'].cursor().callproc('f')": {"sql"},
+    "Conversation.objects.raw('SELECT 1')": {"sql"},
+    "gateway.settle(None)": {"gateway"}, "settle = gateway": {"gateway"},
+    "gateway.complete": {"gateway"},
+}  # fmt: skip
+
+
+@pytest.mark.parametrize("evasion", EVASIONS)
 def test_the_runtime_reaches_the_gateway_only_for_complete_and_nobody_imports_it(
     evasion: str,
 ) -> None:
     """La arista `copilot -> gateway` está ignorada en todo el grafo (pyproject.toml)."""
     source = pathlib.Path(str(copilot.__file__)).read_text()
-    assert pinned(source) and not pinned(f"{source}\n{evasion}\n")
+    assert violations(source) == set()
+    assert violations(f"{source}\n{evasion}\n") == EVASIONS[evasion]
+    assert copilot.MARGIN == gateway.SEND_SECONDS
     contracts = tomllib.loads((BACKEND / "pyproject.toml").read_text())["tool"]["importlinter"]
     [mine] = [c for c in contracts["contracts"]
               if c.get("protected_modules") == ["apps.ai_agents.copilot"]]  # fmt: skip

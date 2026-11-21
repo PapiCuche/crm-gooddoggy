@@ -119,6 +119,17 @@ def settle(
     return True
 
 
+def _settled(ctx: TenantContext, held: UUID, *args: Any) -> None:
+    """`settle` dentro de `complete`: si falla, la reserva sigue abierta (el barrido la cierra como
+    gastada, F8-05b5) y el error lleva su id para el registro de quien llama (F8-08g2). El log, sin
+    el mensaje del error: puede llevar valores."""
+    try:
+        settle(ctx, held, *args)
+    except Exception as error:
+        logger.error("ai.settle_failed", reservation_id=str(held), error=type(error).__name__)
+        raise GatewayError(Outcome.INTERNAL_ERROR, held) from None
+
+
 def complete(
     ctx: TenantContext, request: LLMRequest, provider: str = "ANTHROPIC",
     deadline: float | None = None,
@@ -127,7 +138,7 @@ def complete(
     toda transacción (abre las suyas). `GatewayError` con el código si no hay respuesta. F8-08g:
     `deadline` (`time.monotonic()`) acota el plazo del proveedor, medido justo antes de enviar; si
     queda menos de `SEND_SECONDS`, la reserva se libera sin enviar. La respuesta y el error llevan
-    el id de su reserva."""
+    el id de su reserva; si su ajuste falla (la base), `INTERNAL_ERROR` con ella (F8-08g2)."""
     if connections["default"].in_atomic_block:
         raise RuntimeError("complete() abre sus transacciones: ninguna puede estar abierta")
     if not switch.globally_on():  # antes de todo: el respaldo del despliegue
@@ -165,27 +176,27 @@ def complete(
     started = time.monotonic()  # la reserva ya está confirmada: no hay transacción abierta
     left = float("inf") if deadline is None else deadline - started
     if left < SEND_SECONDS:  # el turno esperó al interruptor o a la reserva: no sale, se libera
-        settle(ctx, held, Outcome.PROVIDER_UNAVAILABLE, Decimal(0), None, started)
+        _settled(ctx, held, Outcome.PROVIDER_UNAVAILABLE, Decimal(0), None, started)
         raise GatewayError(Outcome.PROVIDER_UNAVAILABLE, held)
     seconds = min(float(params["seconds"]), left)
     try:
         reply = adapter.send(key, body, seconds)
     except ProviderError as error:
         if error.billed:  # salió y no hubo respuesta: cuenta entera
-            settle(ctx, held, Outcome.PROVIDER_UNCERTAIN, None, None, started, error.request_id)
+            _settled(ctx, held, Outcome.PROVIDER_UNCERTAIN, None, None, started, error.request_id)
         else:  # no salió, o un error sin uso: se libera
-            settle(ctx, held, error.outcome, Decimal(0), None, started, error.request_id)
+            _settled(ctx, held, error.outcome, Decimal(0), None, started, error.request_id)
         raise GatewayError(error.outcome, held) from None
     # F8-07d: una tool no ofrecida o un id ya usado en la conversación no se podrían reenviar
     offered = {tool.name for tool in request.tools}
     used = {b.id for t in request.turns if type(t.content) is tuple
             for b in t.content if type(b) is ToolCall}  # fmt: skip
     if any(call.name not in offered or call.id in used for call in reply.tool_calls):
-        settle(ctx, held, Outcome.PROVIDER_UNCERTAIN, None, None, started, reply.request_id)
+        _settled(ctx, held, Outcome.PROVIDER_UNCERTAIN, None, None, started, reply.request_id)
         raise GatewayError(Outcome.PROVIDER_UNAVAILABLE, held)
     cost = prices.cost(provider, model, reply.usage)
     if cost > 0:
-        settle(ctx, held, Outcome.OK, cost, reply, started)
+        _settled(ctx, held, Outcome.OK, cost, reply, started)
     else:  # una respuesta sin uso no se cobra a 0 (la base lo rechaza): cuenta entera
-        settle(ctx, held, Outcome.PROVIDER_UNCERTAIN, None, None, started, reply.request_id)
+        _settled(ctx, held, Outcome.PROVIDER_UNCERTAIN, None, None, started, reply.request_id)
     return replace(reply, reservation_id=held)
