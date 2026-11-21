@@ -20,9 +20,11 @@ instancias), en una sola sentencia que bloquea la fila. Pasado el tope, 429 `RAT
 `Retry-After` y sin detalle. La purga del acceso borra estas filas cuando su ventana ya pasó (la
 ventana es menor que su calma).
 
-Pedir una sugerencia al copiloto (F8-08h, ADR-034 §7) tiene su propio contador por persona
-(`aic:usr:<id>`, `AI_COPILOT_THROTTLE`): no gasta el de las escrituras de `ai.manage`. Cuenta igual,
-antes del permiso y del alcance; el presupuesto de la organización sigue siendo el tope duro.
+Pedir una sugerencia (F8-08h) o un resumen (F8-08i) al copiloto (ADR-034 §7) gasta un solo
+contador por persona (`aic:usr:<id>`, `AI_COPILOT_THROTTLE`): cada uno es una llamada pagada, así
+que el tope es el de la persona y no se duplica con una ruta más; no gasta el de las escrituras de
+`ai.manage`. Solo cuenta el `POST` (otro método no llama al modelo), antes del permiso y del
+alcance; el presupuesto de la organización sigue siendo el tope duro.
 """
 
 import re
@@ -40,7 +42,7 @@ PATH = re.compile(
     r"^/api/v1/o/[^/]+/(ai/(provider-accounts/|budget/|switch/on/)"
     r"|pricing/price-lists/[^/]+/ai-exposable/$)"
 )
-COPILOT = re.compile(r"^/api/v1/o/[^/]+/conversations/[^/]+/copilot/suggest/$")
+COPILOT = re.compile(r"^/api/v1/o/[^/]+/conversations/[^/]+/copilot/(suggest|summary)/$")
 READS = ("GET", "HEAD", "OPTIONS")  # las que no cuentan; las demás, sí (F8-03e)
 _COUNT = """
 INSERT INTO login_throttles AS t (key, failures, blocked_until, updated_at)
@@ -74,8 +76,9 @@ class AiAccountThrottleMiddleware:
     def __call__(self, request: HttpRequest) -> HttpResponse:
         user, path = getattr(request, "user", None), request.path_info
         prefix = "aic" if COPILOT.match(path) else "aik" if PATH.match(path) else None
+        counts = request.method == "POST" if prefix == "aic" else request.method not in READS
         if (
-            request.method not in READS
+            counts
             and prefix is not None
             and user is not None
             and user.is_authenticated

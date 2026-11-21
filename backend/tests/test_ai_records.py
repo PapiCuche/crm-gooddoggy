@@ -395,7 +395,8 @@ def test_the_models_only_read(world: SimpleNamespace) -> None:
 
 
 # F8-08g (#1024) añade aquí, a propósito, el módulo del runtime que llama a `records.save`; F8-08h
-# (#771), su ruta, que solo llega a `records` a través de él (su contrato en pyproject.toml)
+# (#771), su ruta, que solo llega a `records` a través de él (su contrato en pyproject.toml); F8-08i
+# (#1025) pone la ruta de resumir en esos mismos módulos: ninguno nuevo
 API = ("apps.ai_agents.api", "apps.ai_agents.api.urls", "apps.ai_agents.api.views")
 RUNTIME = frozenset({"apps.ai_agents.copilot", *API})
 

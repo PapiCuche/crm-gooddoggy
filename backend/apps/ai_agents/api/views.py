@@ -1,14 +1,18 @@
-"""Pedir una sugerencia de respuesta al copiloto (F8-08h; ADR-034 §7-§10, tenancy-context §2).
+"""Pedir al copiloto una sugerencia de respuesta (F8-08h) o un resumen de la conversación (F8-08i;
+ADR-034 §7-§10, tenancy-context §2).
 
-La única ruta de tenant sin el scope de la petición: el modelo responde en segundos y la llamada va
-**fuera** de toda transacción. `TenantResolutionMiddleware` resuelve el tenant y no abre el scope
+Las únicas rutas de tenant sin el scope de la petición: el modelo responde en segundos y la llamada
+va **fuera** de toda transacción. `TenantResolutionMiddleware` resuelve el tenant y no abre el scope
 (`UNSCOPED`); `HasPermission` mira `conversations.view` **y** `ai.use` en uno corto (403 sin uno de
 los dos) y el runtime abre los suyos. Antes de todo, el tope por persona
-(`apps.ai_gateway.throttle`, 429). Fuera del alcance, de otra organización o inexistente, el mismo
-404, sin llamar ni reservar. Nada se envía: la respuesta lleva el texto ya marcado, el tipo y la
-posición de cada marca y el aviso de traspaso; nunca el tramo original, la evidencia, los costos ni
-el cuerpo del proveedor. Los errores llevan solo su código."""
+(`apps.ai_gateway.throttle`, 429; un solo contador para las dos). Fuera del alcance, de otra
+organización o inexistente, el mismo 404, sin llamar ni reservar. Nada se envía: la sugerencia
+lleva el texto ya marcado, el tipo y la posición de cada marca y el aviso de traspaso; nunca el
+tramo original, la evidencia, los costos ni el cuerpo del proveedor. El resumen es solo para quien
+atiende: el texto del modelo con sus tramos «sin verificar» (tipo y posición) y el aviso. Los
+errores llevan solo su código."""
 
+from collections.abc import Callable
 from typing import Any
 from uuid import UUID
 
@@ -45,7 +49,9 @@ class CopilotFindingSerializer(serializers.Serializer[Any]):
 
 
 class CopilotHandoffSerializer(serializers.Serializer[Any]):
-    requested = serializers.BooleanField(help_text="El cliente pide una persona: `text` es fijo.")
+    requested = serializers.BooleanField(
+        help_text="El cliente pide una persona; en la sugerencia, `text` es el texto fijo."
+    )
     reason = serializers.CharField(allow_null=True, help_text="El motivo (un código) o null.")
 
 
@@ -59,6 +65,34 @@ class CopilotSuggestionSerializer(serializers.Serializer[Any]):
     )
 
 
+class CopilotMarkSerializer(serializers.Serializer[Any]):
+    type = serializers.CharField(help_text="Qué se marca «sin verificar» (`FIGURE`, `LINK`…).")
+    start = serializers.IntegerField(help_text="Índice del tramo en `text` (code points).")
+    end = serializers.IntegerField(help_text="Fin (exclusivo) del tramo.")
+
+
+class CopilotSummarySerializer(serializers.Serializer[Any]):
+    id = serializers.UUIDField(help_text="El resumen guardado.")
+    text = serializers.CharField(help_text="El resumen, sin sustituir nada; no se inserta.")
+    marks = CopilotMarkSerializer(many=True)
+    handoff = CopilotHandoffSerializer()
+    generated_by_ai = serializers.BooleanField(help_text="Siempre true: «Generado por IA».")
+
+
+def drafted(
+    run: Callable[[Any, UUID], copilot.Draft], request: Request, conversation_id: UUID
+) -> copilot.Draft:
+    """`run` del runtime con el tenant de la petición; sus errores, como respuestas."""
+    try:
+        return run(request.tenant, conversation_id)
+    except copilot.NotFound:
+        raise NotFound from None  # el mismo 404 que una conversación que no existe
+    except copilot.CopilotError as stop:
+        status = STATUS.get(stop.code, 500)
+        code = {403: PERMISSION_DENIED, 500: INTERNAL_ERROR}.get(status, stop.code)
+        raise ApiError(code, status) from None
+
+
 def shown(draft: copilot.Draft) -> dict[str, Any]:
     found = [{"type": f.type, "position": {"start": f.start, "end": f.end}} for f in draft.findings]
     handoff = {"requested": draft.handoff_reason is not None, "reason": draft.handoff_reason}
@@ -68,31 +102,52 @@ def shown(draft: copilot.Draft) -> dict[str, Any]:
     }).data  # fmt: skip
 
 
+ASKED = "`conversations.view` con su alcance y `ai.use`; 403 `PERMISSION_DENIED` sin uno de los dos"
+REFUSED = (
+    "404: fuera de alcance, de otra organización o inexistente. 409 `AI_DISABLED`, "
+    "`AI_NOT_CONFIGURED`, `AI_BUDGET_NOT_SET` o `AI_BUDGET_EXHAUSTED`. 502 `PROVIDER_UNAVAILABLE`, "
+    "`PROVIDER_ERROR`, `CREDENTIALS_REJECTED`, `PROVIDER_BILLING`, `AI_MALFORMED` o "
+    "`AI_TURN_INVALID`. 504 `AI_DEADLINE`. 429 `RATE_LIMITED`: el tope por persona (uno para "
+    "sugerir y resumir), con `Retry-After`."
+)
+
+
 @extend_schema_view(
     post=extend_schema(
         operation_id="conversations_copilot_suggest", tags=["ai"], request=None,
         responses={201: CopilotSuggestionSerializer,
-                   **errors(401, 403, 404, 409, 429, 502, 504)},  # fmt: skip
-        description="Pide al copiloto una sugerencia de respuesta (`conversations.view` con su "
-        "alcance y `ai.use`; 403 `PERMISSION_DENIED` sin uno de los dos). No envía nada: la "
-        "sugerencia se guarda y se audita (`ai.suggestion.created`). 404: fuera de alcance, de "
-        "otra organización o inexistente. 409 `AI_DISABLED`, `AI_NOT_CONFIGURED`, "
-        "`AI_BUDGET_NOT_SET` o `AI_BUDGET_EXHAUSTED`. 502 `PROVIDER_UNAVAILABLE`, "
-        "`PROVIDER_ERROR`, `CREDENTIALS_REJECTED`, `PROVIDER_BILLING`, `AI_MALFORMED` o "
-        "`AI_TURN_INVALID`. 504 `AI_DEADLINE`. 429 `RATE_LIMITED`: el tope por persona, con "
-        "`Retry-After`.",
+                   **errors(401, 403, 404, 409, 429, 502, 504)},
+        description=f"Pide al copiloto una sugerencia de respuesta ({ASKED}). No envía nada: la "
+        f"sugerencia se guarda y se audita (`ai.suggestion.created`). {REFUSED}",
     ),
 )  # fmt: skip
 class SuggestView(APIView):
     required_permissions = {"POST": ("conversations.view", "ai.use")}
 
     def post(self, request: Request, conversation_id: UUID, **kwargs: Any) -> Response:
-        try:
-            draft = copilot.suggest(request.tenant, conversation_id)
-        except copilot.NotFound:
-            raise NotFound from None  # el mismo 404 que una conversación que no existe
-        except copilot.CopilotError as stop:
-            status = STATUS.get(stop.code, 500)
-            code = {403: PERMISSION_DENIED, 500: INTERNAL_ERROR}.get(status, stop.code)
-            raise ApiError(code, status) from None
+        draft = drafted(copilot.suggest, request, conversation_id)
         return Response(shown(draft), status=201)
+
+
+@extend_schema_view(
+    post=extend_schema(
+        operation_id="conversations_copilot_summary", tags=["ai"], request=None,
+        responses={201: CopilotSummarySerializer,
+                   **errors(401, 403, 404, 409, 429, 502, 504)},
+        description=f"Pide al copiloto un resumen de la conversación para quien atiende ({ASKED}),"
+        " sin herramientas. Se muestra «Generado por IA», con sus cifras, términos y enlaces "
+        "marcados «sin verificar» (`marks`), y no se inserta en el compositor. No envía nada: se "
+        f"guarda y se audita (`ai.summary.created`). {REFUSED}",
+    ),
+)  # fmt: skip
+class SummaryView(APIView):
+    required_permissions = {"POST": ("conversations.view", "ai.use")}
+
+    def post(self, request: Request, conversation_id: UUID, **kwargs: Any) -> Response:
+        draft = drafted(copilot.summarize, request, conversation_id)
+        marks = [{"type": f.type, "start": f.start, "end": f.end} for f in draft.findings]
+        handoff = {"requested": draft.handoff_reason is not None, "reason": draft.handoff_reason}
+        body = CopilotSummarySerializer({"id": draft.suggestion_id, "text": draft.text,
+                                         "marks": marks, "handoff": handoff,
+                                         "generated_by_ai": True}).data  # fmt: skip
+        return Response(body, status=201)
