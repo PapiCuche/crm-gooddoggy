@@ -44,6 +44,7 @@ logger = get_logger(__name__)
 ADAPTERS: dict[str, LLMProviderAdapter] = {"ANTHROPIC": AnthropicAdapter()}
 RESERVE = "SELECT public.ai_budget_reserve(%s, %s, %s, %s, %s)"
 SETTLE = "SELECT public.ai_budget_settle(%s, %s, %s, %s, %s, %s, %s, %s, %s)"
+SEND_SECONDS = 1  # F8-08g2: la espera de lectura mínima del cliente HTTP; con menos, no se envía
 REFUSED = {  # la restricción con la que `ai_budget_reserve` se niega -> el código
     "ai_budget_not_set": Outcome.AI_BUDGET_NOT_SET,
     "ai_budget_exhausted": Outcome.AI_BUDGET_EXHAUSTED,
@@ -125,7 +126,8 @@ def complete(
     """Una llamada al modelo con el presupuesto de la organización de `ctx`. Se llama **fuera** de
     toda transacción (abre las suyas). `GatewayError` con el código si no hay respuesta. F8-08g:
     `deadline` (`time.monotonic()`) acota el plazo del proveedor, medido justo antes de enviar; si
-    ya pasó, la reserva se libera sin enviar. La respuesta y el error llevan el id de su reserva."""
+    queda menos de `SEND_SECONDS`, la reserva se libera sin enviar. La respuesta y el error llevan
+    el id de su reserva."""
     if connections["default"].in_atomic_block:
         raise RuntimeError("complete() abre sus transacciones: ninguna puede estar abierta")
     if not switch.globally_on():  # antes de todo: el respaldo del despliegue
@@ -161,12 +163,11 @@ def complete(
     if held is None:  # fuera del scope: el aviso del corte ya está confirmado
         raise GatewayError(Outcome.AI_BUDGET_EXHAUSTED)
     started = time.monotonic()  # la reserva ya está confirmada: no hay transacción abierta
-    seconds = float(params["seconds"])
-    if deadline is not None:
-        seconds = min(seconds, deadline - started)
-    if seconds <= 0:  # el turno esperó al interruptor o a la reserva más de lo que quedaba
+    left = float("inf") if deadline is None else deadline - started
+    if left < SEND_SECONDS:  # el turno esperó al interruptor o a la reserva: no sale, se libera
         settle(ctx, held, Outcome.PROVIDER_UNAVAILABLE, Decimal(0), None, started)
         raise GatewayError(Outcome.PROVIDER_UNAVAILABLE, held)
+    seconds = min(float(params["seconds"]), left)
     try:
         reply = adapter.send(key, body, seconds)
     except ProviderError as error:

@@ -10,6 +10,7 @@ import pathlib
 import re
 import time
 import tomllib
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import timedelta
 from types import SimpleNamespace
@@ -21,17 +22,17 @@ import pytest
 from django.apps import apps
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
-from django.db import connection, transaction
+from django.db import DatabaseError, connection, connections, transaction
 from django.test import override_settings
 from django.utils import timezone
 
 from apps.access.selectors import AccessDenied, Denied
-from apps.ai_agents import context, copilot, detectors
+from apps.ai_agents import context, copilot, detectors, records, registry
 from apps.ai_agents.copilot import FINISH, LIMITED, CopilotError, NotFound
 from apps.ai_agents.guard import Finding, Malformed, Rendered
 from apps.ai_gateway import gateway
 from apps.organizations.models import OrganizationMembership as Membership
-from core.tenancy.scope import tenant_scope
+from core.tenancy.scope import require_scope, tenant_scope
 from tests import ai_sim
 from tests.ai_queries import captured, writes
 from tests.ai_sim import BODY_MARK, FakeAnthropic
@@ -318,6 +319,86 @@ def test_who_cannot_see_the_conversation_gets_the_same_not_found_without_any_cal
     assert rows(migrator, "SELECT count(*) FROM ai_budget_reservations") == [(0,)]
 
 
+def stall(tenant: Any) -> None:
+    """Un `statement_timeout` real de PostgreSQL en el scope abierto de `tenant`."""
+    with connections[require_scope(tenant)].cursor() as cursor:
+        cursor.execute("SET LOCAL statement_timeout = 1")
+        cursor.execute("SELECT pg_sleep(1)")
+
+
+def scoped_stall(tenant: Any, *_: Any) -> Any:
+    with tenant_scope(tenant):
+        stall(tenant)
+
+
+def broken(*_: Any) -> Any:
+    raise RuntimeError("salida-rota")  # como la de una tool que no cumple su forma
+
+
+def calls(*steps: Any) -> Any:
+    """La llamada n usa `steps[n]` (la última se repite)."""
+    seen: list[None] = []
+
+    def call(*args: Any) -> Any:
+        seen.append(None)
+        return steps[min(len(seen), len(steps)) - 1](*args)
+
+    return call
+
+
+UNLINKED = ("SELECT count(*) FROM ai_llm_calls c WHERE NOT EXISTS (SELECT 1 FROM ai_runs r"
+            " WHERE c.reservation_id = ANY (r.reservation_ids))")  # fmt: skip
+Fault = tuple[Any, str, Callable[[], Any], tuple[int, int]]  # módulo, nombre, sustituto, el run
+FAULTS: dict[str, Fault] = {  # dónde falla → lo que queda en el run: tools y reservas
+    "tool": (registry, "invoke", lambda: lambda ectx, call: stall(ectx.tenant), (0, 1)),
+    "tool-bug": (registry, "invoke", lambda: broken, (0, 1)),
+    "now": (copilot, "_now", lambda: scoped_stall, (1, 2)),
+    "allowed": (copilot, "_allowed", lambda: calls(copilot._allowed, scoped_stall), (1, 1)),
+    "save": (records, "save", lambda: calls(scoped_stall, records.save), (1, 2)),  # el del borrador
+}
+
+
+@pytest.mark.parametrize("where", FAULTS)
+def test_a_database_or_tool_fault_after_a_paid_call_still_saves_the_run_with_its_reservations(
+    desk: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch, where: str
+) -> None:
+    """F8-08g2: un `statement_timeout` (o una tool rota) no deja una llamada pagada sin su run."""
+    module, name, fault, (tools, paid) = FAULTS[where]
+    monkeypatch.setattr(module, name, fault())
+    with pytest.raises(CopilotError) as caught:
+        run(desk, SEARCH, GOOD)
+    assert caught.value.code == "INTERNAL_ERROR" and caught.value.__suppress_context__  # sin el SQL
+    assert runs(migrator) == [("INTERNAL_ERROR", tools, paid, False, {})]
+    assert nothing_saved(migrator)
+    assert rows(migrator, "SELECT id FROM ai_runs") == [(caught.value.run_id,)]
+    assert rows(migrator, "SELECT count(*) FROM ai_llm_calls") == [(paid,)]
+    assert rows(migrator, UNLINKED) == [(0,)]  # cada llamada pagada, enlazada con su run
+    assert rows(migrator, "SELECT count(*) FROM audit_logs WHERE action LIKE 'ai.%'") == [(0,)]
+
+
+def test_a_run_that_cannot_be_saved_is_logged_without_content_and_the_error_propagates(
+    desk: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:  # fmt: skip
+    """Ni el borrador ni `INTERNAL_ERROR` se guardan: el error de la base sale tal cual, nunca se
+    traga, y el log lleva solo códigos e ids, con las reservas que lo enlazan."""
+
+    def refused(*_: Any) -> None:
+        raise DatabaseError(f"detalle {ASK}")  # el mensaje de una fila: nunca va al log
+
+    monkeypatch.setattr(records, "save", refused)
+    with caplog.at_level(logging.DEBUG), pytest.raises(DatabaseError):
+        run(desk, SEARCH, GOOD)
+    assert rows(migrator, "SELECT count(*) FROM ai_runs") == [(0,)]
+    held = sorted(str(r[0]) for r in rows(migrator, "SELECT reservation_id FROM ai_llm_calls"))
+    lost = [r.msg for r in caplog.records if isinstance(r.msg, dict)
+            and r.msg.get("event") == "ai.copilot_run_unsaved"]  # fmt: skip
+    assert [(e["outcome"], e["error"], sorted(e["reservation_ids"])) for e in lost] == [
+        ("OK", "DatabaseError", held), ("INTERNAL_ERROR", "DatabaseError", held)]  # fmt: skip
+    logged = caplog.text + str([r.__dict__ for r in caplog.records])
+    assert len(held) == 2 and "berilo" not in logged
+
+
 def test_a_gateway_error_midway_leaves_the_run_with_its_code_and_no_draft(
     desk: SimpleNamespace, migrator: DB
 ) -> None:
@@ -377,18 +458,55 @@ def test_the_runtime_refuses_an_open_transaction_before_reading_anything(desk: A
     assert desk.fake.calls == [] and seen == []
 
 
-def test_the_runtime_reaches_the_gateway_only_for_complete_and_nobody_imports_it() -> None:
-    """La arista `copilot -> gateway` está ignorada en todo el grafo (pyproject.toml)."""
-    tree = ast.parse(pathlib.Path(str(copilot.__file__)).read_text())
-    found = {(node.module, alias.name) for node in ast.walk(tree)
-             if isinstance(node, ast.ImportFrom) for alias in node.names}  # fmt: skip
-    reached = {i for i in found if "ai_gateway" in str(i[0]) and i[0] != "apps.ai_gateway.llm"}
-    assert reached == {("apps.ai_gateway", "gateway"), ("apps.ai_gateway.gateway", "GatewayError")}
-    assert not [n for n in ast.walk(tree) if isinstance(n, ast.Import) and "gateway" in ast.dump(n)]
+ALLOWED = {("apps.ai_gateway", "gateway"), ("apps.ai_gateway.gateway", "GatewayError")}
+LOADERS = {"ai_gateway", "importlib", "__import__", "sys", "builtins"}
+
+
+def pinned(source: str) -> bool:
+    """`copilot` alcanza el gateway solo por los dos pares de `ALLOWED` (y los tipos de `llm`) y
+    solo usa `gateway.complete`: ningún alias, import relativo, `import apps…`, cargador dinámico,
+    nombre, atributo ni texto con `ai_gateway` (F8-08g2: `from apps import ai_gateway`)."""
+    tree = ast.parse(source)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                pair, full = (node.module, alias.name), f"{node.module}.{alias.name}"
+                reach = "ai_gateway" in full and node.module != "apps.ai_gateway.llm"
+                if node.level or alias.asname or (reach and pair not in ALLOWED):
+                    return False
+        elif isinstance(node, ast.Import):
+            roots = {alias.name.split(".")[0] for alias in node.names}
+            if roots & (LOADERS | {"apps"}) or "gateway" in ast.dump(node):
+                return False
+        elif isinstance(node, ast.Name | ast.Attribute):
+            if (node.id if isinstance(node, ast.Name) else node.attr) in LOADERS:
+                return False
+        elif isinstance(node, ast.Constant) and "ai_gateway" in str(node.value):
+            return False
     names = [n for n in ast.walk(tree) if isinstance(n, ast.Name) and n.id == "gateway"]
     used = [n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute)
             and isinstance(n.value, ast.Name) and n.value.id == "gateway"]  # fmt: skip
-    assert used == ["complete"] and len(names) == 1
+    return used == ["complete"] and len(names) == 1
+
+
+@pytest.mark.parametrize("evasion", [
+    "from apps import ai_gateway\nai_gateway.gateway.settle(None)",  # el mutante A5
+    "from apps import ai_gateway as g\ng.gateway.settle(None)",
+    "from apps.ai_gateway import gateway as gw\ngw.settle(None)",
+    "from apps.ai_gateway.gateway import settle", "from apps.ai_gateway import keys",
+    "from apps.ai_gateway.llm import Outcome as O", "from ..ai_gateway import gateway as g",
+    "from .. import ai_gateway", "import apps.ai_gateway.gateway",
+    "import apps\napps.ai_gateway.gateway.settle(None)",
+    "import importlib\nimportlib.import_module('apps.ai_gateway.gateway')",
+    "__import__('apps.ai_gateway.gateway')", "gateway.settle(None)",
+    "getattr(gateway, 'settle')(None)", "settle = gateway",
+])  # fmt: skip
+def test_the_runtime_reaches_the_gateway_only_for_complete_and_nobody_imports_it(
+    evasion: str,
+) -> None:
+    """La arista `copilot -> gateway` está ignorada en todo el grafo (pyproject.toml)."""
+    source = pathlib.Path(str(copilot.__file__)).read_text()
+    assert pinned(source) and not pinned(f"{source}\n{evasion}\n")
     contracts = tomllib.loads((BACKEND / "pyproject.toml").read_text())["tool"]["importlinter"]
     [mine] = [c for c in contracts["contracts"]
               if c.get("protected_modules") == ["apps.ai_agents.copilot"]]  # fmt: skip

@@ -222,6 +222,30 @@ def test_retries_stop_at_the_deadline(world: SimpleNamespace, migrator: DB) -> N
     assert [t.read_timeout for t in world.fake.timeouts[-2:]] == [120.0, 1.0]
 
 
+@pytest.mark.parametrize(("left", "sent"), [(-5, None), (0.5, None), (0.999, None), (1, 1.0),
+                                            (30, 30.0), (100, 60.0)])  # fmt: skip
+def test_the_deadline_bounds_the_send_and_under_a_second_left_releases_without_sending(
+    world: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch,
+    left: float, sent: float | None,
+) -> None:  # fmt: skip
+    """F8-08g2: lo que queda se mide al enviar y nunca pasa de `seconds` (60 s); con menos de 1 s,
+    no sale y la reserva se libera (`PROVIDER_UNAVAILABLE`, costo 0), no cuenta como gastada."""
+    budget(migrator, world.a, "1")
+    monkeypatch.setattr(time, "monotonic", lambda: 1000.0)
+    assert PARAMS["seconds"] == 60
+    if sent is not None:
+        gateway.complete(ctx(world.a, world.ana), ASK, deadline=1000 + left)
+        assert [t.read_timeout for t in world.fake.timeouts] == [sent]
+        return
+    with pytest.raises(GatewayError) as caught:
+        gateway.complete(ctx(world.a, world.ana), ASK, deadline=1000 + left)
+    assert (caught.value.outcome, world.fake.calls) == (Outcome.PROVIDER_UNAVAILABLE, [])
+    [(spent, reserved)], [row] = ledger(migrator)
+    assert (row[0], row[2], row[6], spent, reserved) == ("PROVIDER_UNAVAILABLE", 0, True, 0, 0)
+    held = migrator.execute("SELECT id FROM ai_budget_reservations").fetchall()
+    assert held == [(caught.value.reservation_id,)]
+
+
 def test_other_months_and_odd_request_ids(world: SimpleNamespace, migrator: DB) -> None:
     budget(migrator, world.a, "1")
     usage = "INSERT INTO ai_budget_usage VALUES (%s, uuidv7(), '2001-01-01', 0.9, 0.05)"

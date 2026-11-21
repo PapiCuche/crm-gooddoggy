@@ -5,8 +5,10 @@ persona con `ai.use` y la conversación en el alcance de su `conversations.view`
 el plazo, los topes y con `ai.use` aún; cada tool call en su scope de solo lectura; el guard con el
 reloj de la base; **un** reintento con el motivo estructurado (códigos, ids, tipos y posiciones,
 nunca texto del modelo ni del cliente); `records.save` al final. Un error a mitad deja el run con
-su código y sin borrador. Tools fijadas por el código; organización y persona de `ctx`; el log
-lleva solo el `ai_run_id`, códigos y duraciones."""
+su código y sin borrador; un fallo de la base (o su `statement_timeout`) o de una tool, como
+`INTERNAL_ERROR` con sus reservas (F8-08g2): ninguna llamada pagada sin su run. Tools fijadas por
+el código; organización y persona de `ctx`; el log lleva solo el `ai_run_id`, códigos y
+duraciones."""
 
 import json
 import re
@@ -17,7 +19,7 @@ from datetime import datetime
 from uuid import UUID
 
 from django.conf import settings
-from django.db import connections
+from django.db import DatabaseError, connections
 
 from apps.access.selectors import AccessDenied, execution_context, has_permission, scoped
 from apps.ai_agents import context, detectors, guard, records, registry
@@ -41,6 +43,7 @@ FINISH = "Ya no quedan llamadas a herramientas: responde ahora con la salida est
 HITS = "Tramos sin evidencia del texto renderizado (tipo y posición); quítalos o usa claims: {}"
 WHOLE = (0, len(VERIFY_MARK))
 TOOL_USE_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")  # el CHECK de `ai_actions.tool_use_id`
+FAULTS = (DatabaseError, RuntimeError)  # la base (o su `statement_timeout`) o una tool rota
 
 
 class NotFound(Exception):  # noqa: N818 — ajena, inexistente, fuera de alcance o sin `ai.use`
@@ -209,12 +212,19 @@ def _save(
     ctx: TenantContext, state: _State, outcome: str, started: float,
     kept: records.Suggestion | None = None, handoff: str | None = None,
 ) -> UUID:  # fmt: skip
-    """El run, sus tool calls y el borrador, en su propio scope (todo o nada)."""
+    """El run, sus tool calls y el borrador, en su propio scope (todo o nada). Si no se guarda, el
+    log lleva solo códigos e ids (las reservas, para enlazar `ai_llm_calls`) y el error sigue."""
     ms = int((time.monotonic() - started) * 1000)
     counts = Counter(finding.type for finding in kept.findings) if kept else Counter[str]()
     run = records.Run("SUGGEST", state.conversation_id, outcome, ms, counts,
                       tuple(state.reservations), state.retried, handoff)  # fmt: skip
-    records.save(ctx, run, state.actions, kept)
+    try:
+        records.save(ctx, run, state.actions, kept)
+    except FAULTS as error:  # nunca su mensaje: puede llevar valores de la fila
+        logger.error("ai.copilot_run_unsaved", ai_run_id=str(run.id), outcome=outcome,
+                     error=type(error).__name__,
+                     reservation_ids=[str(held) for held in state.reservations])  # fmt: skip
+        raise
     logger.info("ai.copilot_run", ai_run_id=str(run.id), outcome=outcome, ms=ms,
                 tool_calls=len(state.actions), retried=state.retried)  # fmt: skip
     return run.id
@@ -223,7 +233,8 @@ def _save(
 def suggest(ctx: TenantContext, conversation_id: UUID) -> Draft:
     """Sugiere la respuesta de quien atiende `conversation_id`. Se llama **fuera** de toda
     transacción. `NotFound` sin escribir ni llamar; `CopilotError` con el código del gateway,
-    `AI_DEADLINE` o `AI_TURN_INVALID`, con el run ya registrado."""
+    `AI_DEADLINE`, `AI_TURN_INVALID` o `INTERNAL_ERROR`, con el run ya registrado; si ni ese
+    registro se puede guardar, el error de la base."""
     if connections["default"].in_atomic_block:
         raise RuntimeError("suggest() abre scopes cortos: ninguna transacción puede estar abierta")
     started = time.monotonic()
@@ -233,9 +244,11 @@ def suggest(ctx: TenantContext, conversation_id: UUID) -> Draft:
                    tool_calls + EXTRA_CALLS)  # fmt: skip
     try:
         draft, handoff = _answer(ctx, state, customer)
+        kept = _kept(draft)
+        run_id = _save(ctx, state, "OK", started, kept, handoff.reason)
     except CopilotError as stop:
         raise CopilotError(stop.code, _save(ctx, state, stop.code, started)) from None
-    kept = _kept(draft)
-    run_id = _save(ctx, state, "OK", started, kept, handoff.reason)
+    except FAULTS:  # tras una llamada pagada: el run sin borrador, con sus reservas
+        raise CopilotError("INTERNAL_ERROR", _save(ctx, state, "INTERNAL_ERROR", started)) from None
     return Draft(run_id, kept.id, kept.text, kept.findings, handoff.reason,
                  kept.evidence_expires_at)  # fmt: skip
