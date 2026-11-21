@@ -58,7 +58,7 @@ Cómo reparte ADR-034 entre ellos:
 
 ### F8-02b · Borrador del aviso de tratamiento de datos (D-F8-04)
 
-- **Hecho en F8-02b (#1049)**, por la decisión del propietario del 2026-11-21 en #771: [borrador técnico del aviso](../legal/aviso-ia-tratamiento-datos-borrador.md) en español, con marcadores para los datos de la empresa (ninguno real), la tabla que liga cada afirmación con el código de `main`, la lista de verificación del propietario y de su asesoría, y los límites del enmascarado. No es asesoría legal ni se publica desde el repositorio. Pendiente antes de publicar: la purga de 30 días de los borradores (#1026), encender `AI_RECORDS_RETENTION` (#1033) y decidir si se ofrece la oposición por conversación, que hoy no existe en el código. Sin código.
+- **Hecho en F8-02b (#1049)**, por la decisión del propietario del 2026-11-21 en #771: [borrador técnico del aviso](../legal/aviso-ia-tratamiento-datos-borrador.md) en español, con marcadores para los datos de la empresa (ninguno real), la tabla que liga cada afirmación con el código de `main`, la lista de verificación del propietario y de su asesoría, y los límites del enmascarado. No es asesoría legal ni se publica desde el repositorio. Pendiente antes de publicar: la purga de 30 días de los borradores (#1026, PR #1045), un plazo para el registro sin texto de los borradores y para `ai_budget_reservations` (hoy sin retención), encender `AI_RECORDS_RETENTION` (#1033) y decidir si se ofrece la oposición por conversación, que hoy no existe en el código. Sin código.
 
 ### F8-03a · Tabla sellada, permiso y re-sellado
 
