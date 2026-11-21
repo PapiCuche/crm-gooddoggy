@@ -80,6 +80,7 @@ export * from "./conversationsUnansweredCountBox";
 export * from "./conversationsUnansweredCountParams";
 export * from "./copilotFinding";
 export * from "./copilotHandoff";
+export * from "./copilotInsert";
 export * from "./copilotPosition";
 export * from "./copilotSuggestion";
 export * from "./cost";

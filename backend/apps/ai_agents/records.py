@@ -5,7 +5,11 @@
 sesión que fija el contexto (`app_current_tenant()`, `app_current_user()`), nunca de un argumento.
 Nada va al outbox. Ni el prompt ni la respuesta del modelo: de los argumentos de una tool se
 guarda un UUID tal cual y, de otro texto (la búsqueda), solo su longitud; el texto del borrador
-solo vive en `ai_suggestions`, 30 días (D-F8-05, la purga de F8-08j)."""
+solo vive en `ai_suggestions`, 30 días (D-F8-05, la purga de F8-08j).
+
+F8-08j: `inserted` audita la inserción en la transacción de quien llama (la de la petición) y
+`purge_text` pone a NULL el texto de los borradores viejos de una organización (lo único que
+`ai_suggestions_guard` deja cambiar)."""
 
 import json
 from collections.abc import Mapping, Sequence
@@ -38,6 +42,15 @@ _SUGGESTION = (
     "INSERT INTO ai_suggestions (id, organization_id, run_id, conversation_id,"
     " requested_by_user_id, kind, text, findings, handoff_reason, evidence_expires_at)"
     " VALUES (%s, app_current_tenant(), %s, %s, app_current_user(), %s, %s, %s::jsonb, %s, %s)"
+)
+
+# Un lote de la organización del scope (RLS); `SKIP LOCKED`: nunca espera a otra pasada. El lote va
+# en un CTE `MATERIALIZED`: en `id IN (… LIMIT n)` el planificador puede volver a recorrer la
+# subconsulta por cada fila (un nested loop bajo RLS) y cambiar más de `n`.
+PURGE = (
+    "WITH due AS MATERIALIZED (SELECT id FROM ai_suggestions WHERE text IS NOT NULL"
+    " AND created_at < now() - make_interval(days => %s) ORDER BY created_at LIMIT %s"
+    " FOR UPDATE SKIP LOCKED) UPDATE ai_suggestions s SET text = NULL FROM due WHERE s.id = due.id"
 )
 
 
@@ -135,3 +148,20 @@ def _write(
             ids = {"conversation_id": str(run.conversation_id), "run_id": str(run.id)}
             action = "ai.suggestion.created" if run.purpose == "SUGGEST" else "ai.summary.created"
             record(ctx, action, Entity("ai_suggestion", suggestion.id), metadata=ids)
+
+
+def inserted(
+    ctx: TenantContext, suggestion_id: UUID, conversation_id: UUID, findings: Mapping[str, int]
+) -> None:
+    """Audita `ai.suggestion.inserted` en la transacción **de quien llama**: si no se confirma, el
+    texto no sale. Ids y cuántos hallazgos por tipo; nunca el texto."""
+    ids = {"conversation_id": str(conversation_id), "findings": dict(findings)}
+    record(ctx, "ai.suggestion.inserted", Entity("ai_suggestion", suggestion_id), metadata=ids)
+
+
+def purge_text(ctx: TenantContext, days: int, batch: int) -> int:
+    """Pone a NULL el texto de hasta `batch` borradores de más de `days` días de la organización
+    de `ctx`, en su propio scope; los hallazgos y los ids quedan. Devuelve cuántos."""
+    with tenant_scope(ctx), connections[require_scope(ctx)].cursor() as cursor:
+        cursor.execute(PURGE, [days, batch])
+        return int(cursor.rowcount)
