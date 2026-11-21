@@ -15,6 +15,7 @@ razonamiento reenviado y las imágenes (`turns.surplus`). Kill switch (F8-06, `A
 global antes de validar; el de la organización, primero en el scope. El ajuste no lo mira."""
 
 import time
+from dataclasses import replace
 from decimal import Decimal
 from typing import Any, NoReturn
 from uuid import UUID
@@ -50,9 +51,10 @@ REFUSED = {  # la restricción con la que `ai_budget_reserve` se niega -> el có
 
 
 class GatewayError(Exception):  # noqa: N818 — solo lleva el código
-    def __init__(self, outcome: Outcome) -> None:
+    def __init__(self, outcome: Outcome, reservation_id: UUID | None = None) -> None:
         super().__init__(outcome.value)
         self.outcome = outcome
+        self.reservation_id = reservation_id  # F8-08g: la de la llamada, si llegó a reservar
 
 
 def _refuse(rule: str) -> NoReturn:
@@ -116,9 +118,14 @@ def settle(
     return True
 
 
-def complete(ctx: TenantContext, request: LLMRequest, provider: str = "ANTHROPIC") -> LLMResponse:
+def complete(
+    ctx: TenantContext, request: LLMRequest, provider: str = "ANTHROPIC",
+    deadline: float | None = None,
+) -> LLMResponse:  # fmt: skip
     """Una llamada al modelo con el presupuesto de la organización de `ctx`. Se llama **fuera** de
-    toda transacción (abre las suyas). `GatewayError` con el código si no hay respuesta."""
+    toda transacción (abre las suyas). `GatewayError` con el código si no hay respuesta. F8-08g:
+    `deadline` (`time.monotonic()`) acota el plazo del proveedor, medido justo antes de enviar; si
+    ya pasó, la reserva se libera sin enviar. La respuesta y el error llevan el id de su reserva."""
     if connections["default"].in_atomic_block:
         raise RuntimeError("complete() abre sus transacciones: ninguna puede estar abierta")
     if not switch.globally_on():  # antes de todo: el respaldo del despliegue
@@ -154,24 +161,30 @@ def complete(ctx: TenantContext, request: LLMRequest, provider: str = "ANTHROPIC
     if held is None:  # fuera del scope: el aviso del corte ya está confirmado
         raise GatewayError(Outcome.AI_BUDGET_EXHAUSTED)
     started = time.monotonic()  # la reserva ya está confirmada: no hay transacción abierta
+    seconds = float(params["seconds"])
+    if deadline is not None:
+        seconds = min(seconds, deadline - started)
+    if seconds <= 0:  # el turno esperó al interruptor o a la reserva más de lo que quedaba
+        settle(ctx, held, Outcome.PROVIDER_UNAVAILABLE, Decimal(0), None, started)
+        raise GatewayError(Outcome.PROVIDER_UNAVAILABLE, held)
     try:
-        reply = adapter.send(key, body, float(params["seconds"]))
+        reply = adapter.send(key, body, seconds)
     except ProviderError as error:
         if error.billed:  # salió y no hubo respuesta: cuenta entera
             settle(ctx, held, Outcome.PROVIDER_UNCERTAIN, None, None, started, error.request_id)
         else:  # no salió, o un error sin uso: se libera
             settle(ctx, held, error.outcome, Decimal(0), None, started, error.request_id)
-        raise GatewayError(error.outcome) from None
+        raise GatewayError(error.outcome, held) from None
     # F8-07d: una tool no ofrecida o un id ya usado en la conversación no se podrían reenviar
     offered = {tool.name for tool in request.tools}
     used = {b.id for t in request.turns if type(t.content) is tuple
             for b in t.content if type(b) is ToolCall}  # fmt: skip
     if any(call.name not in offered or call.id in used for call in reply.tool_calls):
         settle(ctx, held, Outcome.PROVIDER_UNCERTAIN, None, None, started, reply.request_id)
-        raise GatewayError(Outcome.PROVIDER_UNAVAILABLE)
+        raise GatewayError(Outcome.PROVIDER_UNAVAILABLE, held)
     cost = prices.cost(provider, model, reply.usage)
     if cost > 0:
         settle(ctx, held, Outcome.OK, cost, reply, started)
     else:  # una respuesta sin uso no se cobra a 0 (la base lo rechaza): cuenta entera
         settle(ctx, held, Outcome.PROVIDER_UNCERTAIN, None, None, started, reply.request_id)
-    return reply
+    return replace(reply, reservation_id=held)

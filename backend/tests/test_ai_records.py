@@ -395,7 +395,7 @@ def test_the_models_only_read(world: SimpleNamespace) -> None:
 
 
 # F8-08g (#1024) añade aquí, a propósito, el módulo del runtime que llama a `records.save`
-RUNTIME: frozenset[str] = frozenset()
+RUNTIME = frozenset({"apps.ai_agents.copilot"})
 
 
 def test_only_the_records_writer_reaches_the_audit_service() -> None:
@@ -409,6 +409,7 @@ def test_only_the_records_writer_reaches_the_audit_service() -> None:
     assert mine["ignore_imports"] == [
         "apps.ai_agents.records -> apps.audit.services",
         "apps.ai_agents.context -> apps.conversations.selectors",
+        "apps.ai_agents.copilot -> apps.ai_gateway.gateway",  # F8-08g: el modelo, por el gateway
     ]
     (writer,) = [c for c in contracts if c.get("forbidden_modules") == ["apps.ai_agents.records"]]
     assert writer["type"] == "forbidden" and not writer.get("ignore_imports")

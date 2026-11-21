@@ -455,6 +455,11 @@ AI_STOCK_FEW_UNITS = 3
 # F8-08d (ADR-034 §7): cuántos mensajes recientes visibles para el cliente lee el copiloto; un
 # valor que no sea un entero de 1 a 50 no arranca.
 AI_COPILOT_CONTEXT_MESSAGES = 20
+# F8-08g (ADR-034 §6, §7): tool calls por invocación del copiloto (entero de 1 a 10) y su plazo
+# total en segundos (entero de 20 a 55: por debajo del tiempo límite del proxy de producción,
+# decisión del orquestador en #771). Un valor fuera de rango no arranca.
+AI_COPILOT_TOOL_CALLS = 5
+AI_COPILOT_DEADLINE = 50
 # F8-08e (ADR-034 §9): segundos que vale la evidencia de precio y stock para el Output Guard; un
 # valor fijo en configuración, entero de 1 a 600 (10 minutos como mucho), o el guard falla cerrado.
 AI_EVIDENCE_TTL = 600

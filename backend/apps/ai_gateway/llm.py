@@ -104,6 +104,7 @@ class LLMResponse:
     usage: Usage
     request_id: str
     blocks: tuple[Block, ...] = ()  # los del modelo, en orden, para reenviarlos sin cambios
+    reservation_id: UUID | None = None  # F8-08g: la de `ai_llm_calls`, que pone el gateway
 
 
 class ProviderError(Exception):  # noqa: N818 — solo el código y si pudo facturar

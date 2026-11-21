@@ -35,6 +35,7 @@ MAX_TTL = 600  # ADR-034 §9: precio y stock, 10 minutos como mucho
 MAX_CLAIMS, MAX_TEMPLATE = 40, 4000  # y como mucho MAX_CLAIMS placeholders: hallazgos acotados
 MAX_FIELD = 64  # cada campo de una claim (un `tool_use_id` tiene como mucho 64)
 CLAIM_ID = re.compile(r"c[0-9]{1,3}")
+UNSTORABLE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff]")  # NUL, C0 y sustitutos
 PLACEHOLDER = re.compile(r"\{\{([^{}]*)\}\}")  # todo `{{…}}` es un placeholder: o claim o marca
 N = r"(?:0|[1-9][0-9]{0,2})"  # un índice de lista
 MONEY = re.compile(r"[0-9]+(?:\.[0-9]+)?")
@@ -189,7 +190,8 @@ def parse(raw: object) -> tuple[str, tuple[Claim, ...], bool]:
         raise Malformed
     if max(len(claims), len(PLACEHOLDER.findall(template))) > MAX_CLAIMS:
         raise Malformed
-    if len(template) > MAX_TEMPLATE:
+    # F8-08g: vacía, con controles o con sustitutos sueltos, la base no la guardaría
+    if len(template) > MAX_TEMPLATE or not template.strip() or UNSTORABLE.search(template):
         raise Malformed
     for claim in claims:
         if type(claim) is not dict or set(claim) != set(FIELDS):
