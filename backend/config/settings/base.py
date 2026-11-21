@@ -113,6 +113,10 @@ CHANNEL_CHECK_THROTTLE = (5, 10 * 60)
 # y probar) de una persona por ventana (segundos); la prueba de conexión llama al proveedor. GET y
 # HEAD no cuentan. Confirmado por el propietario el 2026-11-17 (F8-03e, #767).
 AI_ACCOUNT_THROTTLE = (10, 10 * 60)
+# Pedir una sugerencia al copiloto (F8-08h, ADR-034 §7): peticiones de una persona por ventana
+# (segundos), con su propio contador; el presupuesto de la organización sigue siendo el tope duro.
+# PENDIENTE DEL PROPIETARIO (#771): el valor propuesto por el programa; se cambia por PR.
+AI_COPILOT_THROTTLE = (20, 10 * 60)
 # Subidas de medios (F7-09b2): peticiones de una persona por ventana (< su calma). Pendiente del PO.
 MEDIA_UPLOAD_THROTTLE = (30, 10 * 60)
 # Rutas que miden el suelo de costo de una cotización (F5-09e2): peticiones por persona y

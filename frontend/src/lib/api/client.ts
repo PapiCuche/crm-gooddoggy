@@ -59,6 +59,7 @@ import type {
   ConversationQuickRepliesListParams,
   ConversationsListParams,
   ConversationsUnansweredCountParams,
+  CopilotSuggestion,
   Cost,
   CostHistoryListParams,
   CostPage,
@@ -7401,6 +7402,93 @@ export function useConversationAttachmentUrl<
 
   return withQueryKey(query, queryOptions.queryKey);
 }
+
+export const getConversationsCopilotSuggestUrl = (orgSlug: string, conversationId: string) => {
+  return `/api/v1/o/${orgSlug}/conversations/${conversationId}/copilot/suggest/`;
+};
+
+/**
+ * Pide al copiloto una sugerencia de respuesta (`conversations.view` con su alcance y `ai.use`; 403 `PERMISSION_DENIED` sin uno de los dos). No envía nada: la sugerencia se guarda y se audita (`ai.suggestion.created`). 404: fuera de alcance, de otra organización o inexistente. 409 `AI_DISABLED`, `AI_NOT_CONFIGURED`, `AI_BUDGET_NOT_SET` o `AI_BUDGET_EXHAUSTED`. 502 `PROVIDER_UNAVAILABLE`, `PROVIDER_ERROR`, `CREDENTIALS_REJECTED`, `PROVIDER_BILLING`, `AI_MALFORMED` o `AI_TURN_INVALID`. 504 `AI_DEADLINE`. 429 `RATE_LIMITED`: el tope por persona, con `Retry-After`.
+ */
+export const conversationsCopilotSuggest = async (
+  orgSlug: string,
+  conversationId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<CopilotSuggestion> => {
+  return apiFetch<CopilotSuggestion>(getConversationsCopilotSuggestUrl(orgSlug, conversationId), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getConversationsCopilotSuggestMutationKey = () =>
+  ["conversationsCopilotSuggest"] as const;
+
+export const getConversationsCopilotSuggestMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof conversationsCopilotSuggest>>,
+    TError,
+    ConversationsCopilotSuggestMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof conversationsCopilotSuggest>>,
+  TError,
+  ConversationsCopilotSuggestMutationVariables,
+  TContext
+> => {
+  const mutationKey = getConversationsCopilotSuggestMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof conversationsCopilotSuggest>>,
+    ConversationsCopilotSuggestMutationVariables
+  > = (props) => {
+    const { orgSlug, conversationId } = props ?? {};
+
+    return conversationsCopilotSuggest(orgSlug, conversationId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ConversationsCopilotSuggestMutationResult = NonNullable<
+  Awaited<ReturnType<typeof conversationsCopilotSuggest>>
+>;
+
+export type ConversationsCopilotSuggestMutationError = ErrorType<Error>;
+export type ConversationsCopilotSuggestMutationVariables = {
+  orgSlug: string;
+  conversationId: string;
+};
+
+export const useConversationsCopilotSuggest = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof conversationsCopilotSuggest>>,
+      TError,
+      ConversationsCopilotSuggestMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof conversationsCopilotSuggest>>,
+  TError,
+  ConversationsCopilotSuggestMutationVariables,
+  TContext
+> => {
+  return useMutation(getConversationsCopilotSuggestMutationOptions(options), queryClient);
+};
 
 export const getConversationMediaSendUrl = (orgSlug: string, conversationId: string) => {
   return `/api/v1/o/${orgSlug}/conversations/${conversationId}/media/`;

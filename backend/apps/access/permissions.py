@@ -35,6 +35,7 @@ from apps.access.selectors import (
 from core.api.errors import ApiError
 from core.api.step_up import require_recent_mfa, seconds_left
 from core.tenancy import context
+from core.tenancy.scope import tenant_scope
 
 
 class AnyOf(tuple[str, ...]):
@@ -89,6 +90,12 @@ def request_context(request: Any) -> ExecutionContext | None:
 
 class HasPermission(BasePermission):
     def has_permission(self, request: Any, view: Any) -> bool:
+        # La única ruta sin el scope de la petición (F8-08h, tenancy-context §2): el permiso se
+        # mira en uno corto, el suyo; lo leído ahí no vale en ningún otro (`bound`).
+        unscoped = getattr(request, "unscoped_tenant", None)
+        if unscoped is not None and context.current() is None:
+            with tenant_scope(unscoped):
+                return self.has_permission(request, view)
         ectx, codes = request_context(request), required_codes(request, view)
         if ectx is None or not codes:
             return False
