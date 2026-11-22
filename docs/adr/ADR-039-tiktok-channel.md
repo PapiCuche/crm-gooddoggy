@@ -4,11 +4,11 @@
 - **Date:** 2026-11-16
 - **Deciders:** propuesto por F7b-08 para la decisión del propietario. Mientras esté `Proposed` no obliga al código, no empieza ningún work item de código del canal y no se envía nada a TikTok. Las preguntas para el propietario están en §13.
 - **Work items:** F7b-08 [#863](https://github.com/PapiCuche/crm-gooddoggy/issues/863) (investigación, borrador de la solicitud y este ADR). La serie de código de §12 se crea solo si el propietario acepta.
-- **Related:** ADR-001, ADR-002 §3.3, ADR-003, ADR-008, ADR-010, ADR-011, ADR-013, ADR-015, ADR-022, ADR-023, ADR-029 (patrón del canal), ADR-033, ADR-034 (Proposed; IA), ADR-035 (Proposed; Instagram y Messenger, el patrón más parecido), [tiktok-business-messaging.md](../research/tiktok-business-messaging.md), [tiktok-access-request-draft.md](../research/tiktok-access-request-draft.md), [phase-7.md](../phases/phase-7.md)
+- **Related:** ADR-001, ADR-002 §3.3, ADR-003, ADR-008, ADR-010, ADR-011, ADR-013, ADR-015, ADR-022, ADR-023, ADR-029 (patrón del canal), ADR-033, ADR-034 (Accepted el 2026-11-16; IA), ADR-035 (Accepted el 2026-11-16; Instagram y Messenger, el patrón más parecido), ADR-040 (clave de la ingesta por cuenta), [tiktok-business-messaging.md](../research/tiktok-business-messaging.md), [tiktok-access-request-draft.md](../research/tiktok-access-request-draft.md), [phase-7.md](../phases/phase-7.md)
 
 ## Context
 
-El propietario necesita atender en el Inbox los mensajes directos de la cuenta de TikTok de la tienda y pidió adelantar la gestión del acceso oficial (Inbox omnicanal P0, 2026-11-16). F7b-07 concluyó «esperar» porque no se sabía si TikTok aprueba un CRM propio de una sola cuenta. F7b-08 releyó las páginas oficiales completas el 2026-11-16 ([tiktok-business-messaging.md](../research/tiktok-business-messaging.md), fuentes [T…] y [P…] de su §13). Lo que importa para decidir:
+El propietario necesita atender en el Inbox los mensajes directos de la cuenta de TikTok de la tienda y pidió adelantar la gestión del acceso oficial (Inbox omnicanal P0, 2026-11-16). F7b-07 concluyó «esperar» porque no se sabía si TikTok aprueba un CRM propio de una sola cuenta. F7b-08 releyó las páginas oficiales completas el 2026-11-16 ([tiktok-business-messaging.md](../research/tiktok-business-messaging.md), fuentes [T…] y [P…] de su §13), y la revisión previa al merge las volvió a leer el 2026-11-22 sin cambios en las reglas oficiales. Lo que importa para decidir:
 
 - **Hay una API oficial, en beta abierta en LATAM**: la Business Messaging API de TikTok API for Business [T3] [T13].
 - **La cuenta** tiene que tener Advanced Access (vinculada a TikTok for Business o a un Business Center) o ser una Verified Business Account [T2] [T10].
@@ -16,11 +16,11 @@ El propietario necesita atender en el Inbox los mensajes directos de la cuenta d
 - **El desarrollador** tiene que ser una empresa (no se admiten personas), con un correo y un sitio en un dominio propio; puede registrarse como «Direct Advertiser» y declarar la app como de **uso interno** [T19] [T20].
 - **La DSPR** no tiene excepciones, suele tardar 2-4 semanas tras un inicio de hasta 10 días hábiles, es manual y pide políticas firmadas, MFA de administradores, cifrado en reposo y en tránsito, gestión de vulnerabilidades, respuesta a incidentes, aviso de privacidad y **borrado de los datos cuando se retira la autorización** [T2] [T14]. Que TikTok apruebe a un anunciante con una sola cuenta: **SIN VERIFICAR**.
 - **Límites oficiales:** tras el primer mensaje del usuario, hasta 10 mensajes en 48 h; cada respuesta suya abre 48 h ilimitadas; pasadas 48 h sin respuesta, solo tres mensajes más [T18]. El cliente siempre empieza.
-- **Proveedores:** de los nueve de la lista oficial de TikTok [T8], solo Infobip, respond.io y Qiscus documentan mensajes directos de TikTok; Infobip es el único con webhook de entrada, API de salida y DPA estándar publicados [P3] [P6] [P7].
+- **Proveedores:** de los nueve de la lista oficial de socios de mensajería de TikTok [T8] (una lista de gestión de mensajes, anuncios y medición que no nombra la Business Messaging API), solo Infobip, respond.io y Qiscus documentan mensajes directos de TikTok; Infobip es el único con webhook de entrada, API de salida y DPA estándar publicados [P3] [P6] [P7].
 
 ### Lo que ya existe y este ADR reutiliza
 
-`ChannelAdapter`, `SandboxAdapter` y `adapter_for`; `channel_accounts` y `credentials` con `core.sealed` (ADR-022); la ingesta `webhook_ingress` por funciones `SECURITY DEFINER` con su purga a 90 días; `MessagingPolicyService` con `ChannelCapabilities`; el análisis de medios con ClamAV (F7-15); la pantalla de canales con `channels.manage` y MFA reciente; el simulador de Meta como modelo. ADR-035 (Proposed) diseña `contact_identities`, que todavía no existe en el código.
+`ChannelAdapter`, `SandboxAdapter` y `adapter_for`; `channel_accounts` y `credentials` con `core.sealed` (ADR-022); la ingesta `webhook_ingress` por funciones `SECURITY DEFINER` con su purga a 90 días; `MessagingPolicyService` con `ChannelCapabilities`; el análisis de medios con ClamAV (F7-15); la pantalla de canales con `channels.manage` y MFA reciente; el simulador de Meta como modelo. Desde F7b-04a (ADR-035, ya `Accepted`) existen en el código `contact_identities` y la función de enrutado `resolve_social_account` (migración `0040`), y la clave de la ingesta es por cuenta (ADR-040).
 
 ## Decision
 
@@ -45,7 +45,7 @@ El propietario necesita atender en el Inbox los mensajes directos de la cuenta d
 Si el propietario elige el plan B (D-TT-01), o si la vía directa se rechaza o no hay respuesta de TikTok en 8 semanas desde el envío:
 
 - **Proveedor recomendado: Infobip**, el único de la lista con webhook de entrada, API de salida y DPA estándar publicados [P3] [P6] [P7]. respond.io es la segunda opción (webhooks solo en su plan Advanced; DPA a pedido) [P8] [P9].
-- Mismo modelo de §4-§9 con otro transporte: el adaptador llama a la API del proveedor por `core.http` (su host en la allowlist), el webhook llega a `/webhooks/infobip/` con la autenticación que el proveedor documente (**SIN VERIFICAR**: no se leyó su esquema de firma), y la clave del proveedor se guarda sellada como un token de canal.
+- Mismo modelo de §4-§9 con otro transporte: el adaptador llama a la API del proveedor por `core.http` (su host en la allowlist), el webhook llega a `/webhooks/infobip/` con la autenticación HMAC que Infobip permite configurar con una clave secreta en el perfil de notificación («si está disponible» [P19]; el formato exacto de la firma: **SIN VERIFICAR**), y la clave del proveedor se guarda sellada como un token de canal.
 - **El proveedor es un encargado más** con acceso a todos los mensajes: requiere su DPA firmado, su región de datos declarada en el aviso de privacidad y la decisión del propietario sobre qué datos de clientes salen a un tercero.
 - La plataforma sigue siendo `TIKTOK`; el proveedor es un atributo de la cuenta (`transport`), para no duplicar la política ni la identidad.
 
@@ -123,15 +123,15 @@ T1 a T4 pueden avanzar mientras TikTok revisa la DSPR. Con el plan B, T2-T4 apun
 
 ### 13. Decisiones del propietario
 
-| ID      | Decisión                                                                                          | Recomendación                                                                             |
-| ------- | ------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| D-TT-01 | Vía: directa, directa con plan B, o solo un proveedor                                             | **Directa con plan B (Infobip)**                                                          |
-| D-TT-02 | Autorizar el envío del perfil de desarrollador, de la app y del formulario de admisión de la DSPR | Sí, cuando estén cerradas las brechas «antes» del borrador (B1, B2, B11)                  |
-| D-TT-03 | ¿Los mensajes de TikTok pueden ir al copiloto de IA?                                              | No en el primer corte; revisarlo cuando la DSPR esté aprobada                             |
-| D-TT-04 | Aviso de privacidad y persona responsable de la privacidad                                        | Un aviso común para todos los canales, revisado por quien asesore a la tienda en lo legal |
-| D-TT-05 | Plazo de la purga tras desconectar                                                                | 30 días                                                                                   |
-| D-TT-06 | Presupuesto para NIDS o HIPS y para el escaneo de vulnerabilidades                                | Lo mínimo que ofrezca el proveedor del servidor y una línea base gratuita de OWASP ZAP    |
-| D-TT-07 | Orden respecto a Instagram y Messenger (ADR-035, D-F7-09)                                         | Pedir el acceso ya; construir T1-T4 después de F7b-04, que crea `contact_identities`      |
+| ID      | Decisión                                                                                          | Recomendación                                                                              |
+| ------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| D-TT-01 | Vía: directa, directa con plan B, o solo un proveedor                                             | **Directa con plan B (Infobip)**                                                           |
+| D-TT-02 | Autorizar el envío del perfil de desarrollador, de la app y del formulario de admisión de la DSPR | Sí, cuando estén cerradas las brechas «antes» del borrador (B1, B2, B11)                   |
+| D-TT-03 | ¿Los mensajes de TikTok pueden ir al copiloto de IA?                                              | No en el primer corte; revisarlo cuando la DSPR esté aprobada                              |
+| D-TT-04 | Aviso de privacidad y persona responsable de la privacidad                                        | Un aviso común para todos los canales, revisado por quien asesore a la tienda en lo legal  |
+| D-TT-05 | Plazo de la purga tras desconectar                                                                | 30 días                                                                                    |
+| D-TT-06 | Presupuesto para NIDS o HIPS y para el escaneo de vulnerabilidades                                | Lo mínimo que ofrezca el proveedor del servidor y una línea base gratuita de OWASP ZAP     |
+| D-TT-07 | Orden respecto a Instagram y Messenger (ADR-035, D-F7-09)                                         | Pedir el acceso ya; T1-T4 pueden empezar al aceptarse: F7b-04 ya creó `contact_identities` |
 
 ## Alternatives considered
 

@@ -4,7 +4,7 @@
 
 - **Work item:** F7b-08 ([#863](https://github.com/PapiCuche/crm-gooddoggy/issues/863)).
 - **Investigación de base:** [tiktok-business-messaging.md](tiktok-business-messaging.md) (fuentes [T…], [P…] y [L1] de su §13, leídas el 2026-11-16).
-- **Fecha del borrador:** 2026-11-16. Antes de enviarlo, releer [T2], [T14] y [T19]-[T21]: el portal puede haber cambiado.
+- **Fecha del borrador:** 2026-11-16; revisado el 2026-11-22 sin cambios en [T2], [T5], [T14], [T18] ni [T19]-[T21]. Antes de enviarlo, releer [T2], [T14] y [T19]-[T21]: el portal puede haber cambiado.
 
 ## 1. Orden de los trámites
 
@@ -37,7 +37,7 @@ No se pide la revisión de EE. UU. ni el USDS Addendum: la tienda no gestiona cu
 | Nombre                   | `<nombre del CRM de la empresa>`                                                                                                                                                                                                                                                                                                                                                                                                          |
 | Descripción (en inglés)  | «Internal use only. Our in-house CRM connects our single TikTok business account to receive direct messages from customers who write to us and to reply to them from our staff inbox, within TikTok's messaging limits. Access is internal: no external accounts or organizations are connected. Messages are stored in our own database in our production server, encrypted in transit, and are deleted when we disconnect the account.» |
 | URL de redirección       | `https://crm.<dominio>/…` (la ruta exacta la fija el work item de conexión de ADR-039).                                                                                                                                                                                                                                                                                                                                                   |
-| Alcances                 | Los mínimos para la mensajería: «TikTok Accounts» (si la mensajería lo exige: **SIN VERIFICAR**) y los que indique [T2] para una app nueva. Ningún alcance de anuncios que no se use (principio de mínimo dato de [T14]).                                                                                                                                                                                                                 |
+| Alcances                 | Los que [T2] pide para una app nueva que va a solicitar la mensajería: «Ad Account Management», «CTX Events Management» y «Measurement» (**CONFIRMADO**, releído el 2026-11-22), más «TikTok Accounts», que Chatwoot activa tras la aprobación de la app [P2] (que la mensajería lo exija: **TERCEROS**). Ningún otro alcance (principio de mínimo dato de [T14]).                                                                        |
 | Regiones de la solicitud | Solo «Rest of World». **Sin EE. UU.**                                                                                                                                                                                                                                                                                                                                                                                                     |
 
 ## 4. Borrador del formulario de admisión de la DSPR
