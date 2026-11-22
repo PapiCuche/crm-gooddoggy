@@ -107,10 +107,12 @@ export function AiHandoffReplyPanel() {
       if (cancelled || toLogin(error)) return;
       const codes = problems(error);
       if (codes) return fail(codes);
+      // De `aiError`, solo el tope y el código: su `NOT_FOUND` habla de la clave del proveedor.
+      const fromAi = error.code === "RATE_LIMITED" || error.code === STEP_UP_REQUIRED;
       const text =
         error.code === "PERMISSION_DENIED"
           ? own("denied")
-          : (aiError(error, own)?.text ?? errors(`api.${apiErrorKey(error)}`));
+          : ((fromAi ? aiError(error, own)?.text : null) ?? errors(`api.${apiErrorKey(error)}`));
       setSaid({ text, alert: true });
     } finally {
       sending.current = false;
@@ -157,7 +159,14 @@ export function AiHandoffReplyPanel() {
           id={`${id}-text`}
           rows={5}
           value={value}
-          onChange={(event) => setDraft(event.target.value)}
+          // Mientras se guarda (también con el código abierto) no se escribe: al terminar, el
+          // campo pasa a ser lo guardado y lo tecleado entretanto se perdería.
+          readOnly={busy}
+          onChange={(event) => {
+            setDraft(event.target.value);
+            setFound([]); // lo dicho era del texto anterior
+            setSaid(null);
+          }}
           aria-invalid={found.length ? true : undefined}
           aria-describedby={describedBy.filter(Boolean).join(" ")}
           className={AREA}

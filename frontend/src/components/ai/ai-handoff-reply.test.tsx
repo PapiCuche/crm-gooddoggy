@@ -10,7 +10,7 @@ import { AiNav } from "./ai-nav";
 
 vi.mock("next/navigation", () => ({ usePathname: () => "/o/acme/ia/traspaso" }));
 
-const URL = "/api/v1/o/acme/ai/handoff-reply/";
+const ROUTE = "/api/v1/o/acme/ai/handoff-reply/";
 const STEP_UP = "POST /api/v1/auth/mfa/step-up/";
 const INITIAL = "Entiendo. Voy a solicitar que una persona de nuestro equipo continúe contigo.";
 const MINE = "Gracias por escribirnos. Una persona del equipo seguirá esta conversación contigo.";
@@ -40,7 +40,7 @@ const show = (codes = ["ai.manage"]) =>
   );
 const sent = (api: ReturnType<typeof mockApi>, method = "GET") =>
   api.mock.calls
-    .filter(([to, init]) => String(to) === URL && (init?.method ?? "GET") === method)
+    .filter(([to, init]) => String(to) === ROUTE && (init?.method ?? "GET") === method)
     .map(([, init]) => (init?.body ? JSON.parse(String(init.body)) : null));
 const field = () => screen.findByRole("textbox", { name: "Texto que propone el copiloto" });
 const write = async (text: string) => {
@@ -82,7 +82,7 @@ afterEach(() => {
 
 describe("Texto de traspaso (F8-09c)", () => {
   it("muestra el texto inicial, su contador y la nota de no prometer atención inmediata", async () => {
-    const api = mockApi({ [`GET ${URL}`]: ok(reply()) });
+    const api = mockApi({ [`GET ${ROUTE}`]: ok(reply()) });
     show();
     expect(screen.getByText("Cargando el texto de traspaso…")).toBeVisible();
     const area = (await field()) as HTMLTextAreaElement;
@@ -103,7 +103,7 @@ describe("Texto de traspaso (F8-09c)", () => {
 
   it("guardar envía el texto sin los blancos de los bordes por PUT y pasa a «Texto propio»", async () => {
     const saved = reply({ text: MINE, initial: false, changed_at: "2026-11-22T15:00:00Z" });
-    const api = mockApi({ [`GET ${URL}`]: ok(reply()), [`PUT ${URL}`]: ok(saved) });
+    const api = mockApi({ [`GET ${ROUTE}`]: ok(reply()), [`PUT ${ROUTE}`]: ok(saved) });
     show();
     await write(`  ${MINE}\n`);
     expect(await screen.findByText(/El texto quedó guardado/)).toBeVisible();
@@ -116,7 +116,7 @@ describe("Texto de traspaso (F8-09c)", () => {
 
   it("guardar el mismo texto propio no escribe; descartar vuelve al guardado", async () => {
     const mine = reply({ text: MINE, initial: false, changed_at: "2026-11-22T15:00:00Z" });
-    const api = mockApi({ [`GET ${URL}`]: ok(mine) });
+    const api = mockApi({ [`GET ${ROUTE}`]: ok(mine) });
     show();
     await write(MINE);
     expect(await screen.findByText("No hay cambios que guardar.")).toBeVisible();
@@ -128,7 +128,7 @@ describe("Texto de traspaso (F8-09c)", () => {
   });
 
   it("un texto guardado que ya no vale se dice: el copiloto usa el inicial", async () => {
-    mockApi({ [`GET ${URL}`]: ok(reply({ changed_at: "2026-11-20T10:00:00Z" })) });
+    mockApi({ [`GET ${ROUTE}`]: ok(reply({ changed_at: "2026-11-20T10:00:00Z" })) });
     show();
     expect(await screen.findByText(/El texto guardado ya no cumple las reglas/)).toBeVisible();
     expect(screen.getByText("Texto inicial")).toBeVisible();
@@ -149,7 +149,7 @@ describe("Texto de traspaso (F8-09c)", () => {
     ["blank", "Escribe el texto de traspaso."],
     ["CODIGO_NUEVO", "El texto lleva algo que el copiloto no puede proponer."],
   ])("un 400 con `%s` se dice en español, en el campo y con el foco en él", async (code, text) => {
-    mockApi({ [`GET ${URL}`]: ok(reply()), [`PUT ${URL}`]: invalid(code) });
+    mockApi({ [`GET ${ROUTE}`]: ok(reply()), [`PUT ${ROUTE}`]: invalid(code) });
     show();
     await write("Te atendemos enseguida.");
     const alert = await screen.findByRole("alert");
@@ -163,7 +163,7 @@ describe("Texto de traspaso (F8-09c)", () => {
 
   it("varios problemas a la vez, uno por línea y sin repetir", async () => {
     const bad = invalid("SOON", "LINK", "OTRO", "NUEVO");
-    mockApi({ [`GET ${URL}`]: ok(reply()), [`PUT ${URL}`]: bad });
+    mockApi({ [`GET ${ROUTE}`]: ok(reply()), [`PUT ${ROUTE}`]: bad });
     show();
     await write("Ya te atendemos, mira tienda.pe");
     const items = within(await screen.findByRole("alert")).getAllByRole("listitem");
@@ -175,7 +175,7 @@ describe("Texto de traspaso (F8-09c)", () => {
   });
 
   it("vacío o de más de 500 caracteres no se envía", async () => {
-    const api = mockApi({ [`GET ${URL}`]: ok(reply()) });
+    const api = mockApi({ [`GET ${ROUTE}`]: ok(reply()) });
     show();
     await write("   ");
     expect(await screen.findByRole("alert")).toHaveTextContent("Escribe el texto de traspaso.");
@@ -191,7 +191,7 @@ describe("Texto de traspaso (F8-09c)", () => {
   it("STEP_UP_REQUIRED al leer abre el código; al verificarlo se vuelve a leer", async () => {
     let reads = 0;
     const api = mockApi({
-      [`GET ${URL}`]: () => (++reads === 1 ? STEP : ok(reply())),
+      [`GET ${ROUTE}`]: () => (++reads === 1 ? STEP : ok(reply())),
       [STEP_UP]: ok({ step_up_expires_in: 900 }),
     });
     show();
@@ -209,8 +209,8 @@ describe("Texto de traspaso (F8-09c)", () => {
     let puts = 0;
     const saved = reply({ text: MINE, initial: false, changed_at: "2026-11-22T15:00:00Z" });
     const api = mockApi({
-      [`GET ${URL}`]: ok(reply()),
-      [`PUT ${URL}`]: () => (++puts === 1 ? STEP : ok(saved)),
+      [`GET ${ROUTE}`]: ok(reply()),
+      [`PUT ${ROUTE}`]: () => (++puts === 1 ? STEP : ok(saved)),
       [STEP_UP]: ok({ step_up_expires_in: 900 }),
     });
     show();
@@ -225,8 +225,9 @@ describe("Texto de traspaso (F8-09c)", () => {
     [fail(429, "RATE_LIMITED"), "Espera un momento antes de volver a probar."],
     [fail(403, "PERMISSION_DENIED"), "No tienes permiso para gestionar la IA."],
     [fail(500, "CODIGO_NUEVO"), "Algo salió mal de nuestro lado"],
+    [fail(404, "NOT_FOUND"), "No encontramos lo que buscas."], // no el de la clave del proveedor
   ])("un fallo al guardar se dice por su código (%#)", async (answer, text) => {
-    mockApi({ [`GET ${URL}`]: ok(reply()), [`PUT ${URL}`]: answer });
+    mockApi({ [`GET ${ROUTE}`]: ok(reply()), [`PUT ${ROUTE}`]: answer });
     show();
     await write(MINE);
     expect(await screen.findByRole("alert")).toHaveTextContent(text);
@@ -235,10 +236,77 @@ describe("Texto de traspaso (F8-09c)", () => {
     expect(document.body).not.toHaveTextContent("SERVIDOR");
   });
 
+  it("guardar el texto inicial sin tocarlo sí escribe: reemplaza uno guardado que ya no vale", async () => {
+    const saved = reply({ initial: false, changed_at: "2026-11-22T15:00:00Z" });
+    const api = mockApi({
+      [`GET ${ROUTE}`]: ok(reply({ changed_at: "2026-11-20T10:00:00Z" })),
+      [`PUT ${ROUTE}`]: ok(saved),
+    });
+    show();
+    await field();
+    fireEvent.click(screen.getByRole("button", { name: "Guardar texto" }));
+    expect(await screen.findByText(/El texto quedó guardado/)).toBeVisible();
+    expect(sent(api, "PUT")).toEqual([{ text: INITIAL }]);
+  });
+
+  it("dos envíos seguidos son una sola escritura", async () => {
+    const saved = reply({ text: MINE, initial: false, changed_at: "2026-11-22T15:00:00Z" });
+    const api = mockApi({ [`GET ${ROUTE}`]: ok(reply()), [`PUT ${ROUTE}`]: ok(saved) });
+    show();
+    fireEvent.change(await field(), { target: { value: MINE } });
+    const form = screen.getByRole("form", { name: "Texto que propone el copiloto" });
+    fireEvent.submit(form);
+    fireEvent.submit(form);
+    expect(await screen.findByText(/El texto quedó guardado/)).toBeVisible();
+    expect(sent(api, "PUT")).toHaveLength(1);
+  });
+
+  it("con el código abierto no se escribe; cancelarlo no es un fallo y conserva lo editado", async () => {
+    const api = mockApi({ [`GET ${ROUTE}`]: ok(reply()), [`PUT ${ROUTE}`]: STEP });
+    show();
+    await write(MINE);
+    const dialog = await screen.findByRole("dialog");
+    expect(await field()).toHaveAttribute("readonly"); // lo tecleado ahora se perdería al guardar
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancelar" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    const area = (await field()) as HTMLTextAreaElement;
+    expect(area).not.toHaveAttribute("readonly");
+    expect(area.value).toBe(MINE);
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(sent(api, "PUT")).toHaveLength(1);
+  });
+
+  it("volver a escribir borra los problemas y el «guardado» de antes", async () => {
+    let puts = 0;
+    const saved = reply({ text: MINE, initial: false, changed_at: "2026-11-22T15:00:00Z" });
+    mockApi({
+      [`GET ${ROUTE}`]: ok(reply()),
+      [`PUT ${ROUTE}`]: () => (++puts === 1 ? invalid("SOON") : ok(saved)),
+    });
+    show();
+    await write("Te atendemos enseguida.");
+    expect(await screen.findByRole("alert")).toHaveTextContent("No prometas atención inmediata");
+    fireEvent.change(await field(), { target: { value: "Te atendemos" } });
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(await field()).not.toHaveAttribute("aria-invalid");
+    await write(MINE);
+    expect(await screen.findByText(/El texto quedó guardado/)).toBeVisible();
+    fireEvent.change(await field(), { target: { value: `${MINE} Gracias.` } });
+    expect(screen.queryByText(/El texto quedó guardado/)).toBeNull();
+  });
+
+  it("un 403 al leer da el aviso de permiso, sin el campo", async () => {
+    mockApi({ [`GET ${ROUTE}`]: fail(403, "PERMISSION_DENIED") });
+    show();
+    expect(await screen.findByText(/Solo quien tiene el permiso/)).toBeVisible();
+    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Reintentar" })).toBeNull();
+  });
+
   it.each([[["ai.use", "ai.kill_switch"]], [[]]])(
     "sin `ai.manage` (%j) no hay pestañas ni lectura: solo el aviso",
     async (codes) => {
-      const api = mockApi({ [`GET ${URL}`]: ok(reply()) });
+      const api = mockApi({ [`GET ${ROUTE}`]: ok(reply()) });
       show(codes);
       expect(screen.getByRole("alert")).toHaveTextContent("Solo quien tiene el permiso");
       expect(screen.queryByRole("navigation")).toBeNull();
