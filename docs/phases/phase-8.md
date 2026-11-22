@@ -351,6 +351,8 @@ Cómo reparte ADR-034 entre ellos:
 
 ## Qué necesita el propietario (sin ningún valor real)
 
+La lista de producción con las siete condiciones del propietario (#771, 2026-11-21) y la guía paso a paso para activar el copiloto están en [docs/runbooks/ai-copilot-activation.md](../runbooks/ai-copilot-activation.md) ([#1050](https://github.com/PapiCuche/crm-gooddoggy/issues/1050)).
+
 | #   | Qué                                                                                     | Dónde se guarda                                                                                   | Cuándo se necesita                  |
 | --- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- | ----------------------------------- |
 | 1   | **Hecho el 2026-11-16 (#765):** ADR-034 aceptado con todas sus recomendaciones | En el ADR o en un comentario de #765                                                              | Antes de F8-03                      |
