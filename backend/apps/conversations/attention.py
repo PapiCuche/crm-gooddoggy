@@ -1,14 +1,15 @@
 """La solicitud de atención humana (F8-08n; ADR-034 §8, ADR-011): la pide quien atiende (`AGENT`)
 o el copiloto al detectar un traspaso, a nombre de su persona; se cierra a mano, al responder una
 persona, al tomarla o pasarla, o al resolverla o cerrarla. Idempotente; organización del contexto.
-Audita ids y códigos y deja `conversation.updated` para el Inbox; nada sale al cliente."""
+Audita ids y códigos y deja `conversation.updated` para el Inbox; nada sale al cliente.
+También la exclusión de la IA de una conversación (F8-13, `set_ai_excluded`)."""
 
 from datetime import datetime
 from typing import Any
 from uuid import UUID
 
 from django.db import transaction
-from django.db.models import QuerySet
+from django.db.models import F, QuerySet
 from django.utils import timezone
 
 from apps.access.selectors import AccessDenied, Denied, can, execution_context, has_permission
@@ -21,6 +22,7 @@ from core.tenancy.context import TenantContext
 from core.tenancy.scope import require_scope
 
 VIEW = "conversations.view"
+MANAGE_AI = "ai.manage"  # F8-13: volver a incluirla en la IA
 FIELDS = ("human_requested_at", "human_request_reason", "human_requested_by_user_id")
 
 
@@ -123,3 +125,39 @@ def close_request(ctx: TenantContext, *, conversation_id: UUID) -> tuple[Convers
         opened = convo.human_requested_at is not None
         clear(ctx, alias, convo, "MANUAL")
         return convo, opened
+
+
+class VersionConflict(Exception):  # noqa: N818 — la versión enviada ya no es la de la fila
+    pass
+
+
+def set_ai_excluded(
+    ctx: TenantContext, *, conversation_id: UUID, excluded: bool, version: int
+) -> tuple[Conversation, bool]:
+    """Excluye la conversación de la IA (F8-13) o la vuelve a incluir; `True` si cambió. Excluir
+    pide `conversations.view` y su alcance (protege: quien atiende cumple lo que pide el cliente);
+    incluirla, además `ai.manage` (el segundo factor lo pide la ruta). Permiso, bloqueo, alcance
+    sobre la fila bloqueada (si no, el mismo `DoesNotExist`), versión (`VersionConflict`) y estado:
+    la misma marca no cambia nada. Audita solo ids y deja `conversation.updated` para el Inbox."""
+    if type(excluded) is not bool or type(version) is not int or not 1 <= version <= 2**31 - 1:
+        raise ValueError("exclusión: un booleano y una versión desde 1")
+    alias = require_scope(ctx)
+    with transaction.atomic(using=alias):
+        if not excluded and not has_permission(execution_context(ctx), MANAGE_AI):
+            raise AccessDenied(Denied.PERMISSION)
+        convo = _visible(ctx, alias, conversation_id)
+        if convo.version != version:
+            raise VersionConflict
+        if (convo.ai_excluded_at is not None) is excluded:
+            return convo, False
+        Conversation.objects.using(alias).filter(pk=convo.pk).update(
+            ai_excluded_at=timezone.now() if excluded else None,
+            ai_excluded_by_user_id=ctx.user_id if excluded else None,
+            version=F("version") + 1, updated_at=timezone.now(),
+        )  # fmt: skip
+        action = "conversation.ai_excluded" if excluded else "conversation.ai_included"
+        changes = {"ai_excluded": [not excluded, excluded]}
+        record(ctx, action, Entity("conversation", convo.pk, convo.number), changes)
+        emit(ctx, "conversation.updated", aggregate_type="conversation", aggregate_id=convo.pk)
+        convo.refresh_from_db(using=alias)
+        return convo, True

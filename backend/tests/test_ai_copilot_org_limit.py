@@ -117,13 +117,14 @@ def test_a_request_given_back_never_comes_off_a_newer_window(
     aged = "UPDATE login_throttles SET updated_at = updated_at - interval '601 seconds'"
 
     def late(ctx: Any, conversation_id: UUID) -> Any:
-        """Mientras esta sigue en el runtime, su ventana vence y otra petición abre una nueva."""
+        """Mientras esta sigue en el runtime, su ventana vence y otra petición abre una nueva; el
+        runtime la rechaza después (F8-13: la ruta ya la admitió antes de contar)."""
         migrator.execute(f"{aged} WHERE key LIKE 'aio:%'")
         assert throttle.organization_wait(ctx.organization_id)[0] == 0
-        return real(ctx, conversation_id)
+        return real(ctx, uuid4())
 
     monkeypatch.setattr(copilot, "suggest", late)
-    assert suggest(desk, convo=uuid4()).status_code == 404
+    assert suggest(desk).status_code == 404
     assert counted(migrator) == {f"aio:org:{desk.a}": 1}  # la nueva ventana conserva su pedido
 
 

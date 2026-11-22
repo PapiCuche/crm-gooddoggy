@@ -2656,8 +2656,10 @@
         "AI_EVIDENCE_EXPIRED": "Los datos de esta sugerencia caducaron. Pide una nueva.",
         "denied": "No puedes usar el copiloto en esta conversación. Puede que ya no esté en tu alcance.",
         "gone": "Esa sugerencia ya no está disponible. Pide una nueva.",
-        "failed": "El copiloto no pudo responder. Inténtalo de nuevo en unos minutos."
-      }
+        "failed": "El copiloto no pudo responder. Inténtalo de nuevo en unos minutos.",
+        "AI_EXCLUDED": "Esta conversación está excluida de la IA: el copiloto no la lee."
+      },
+      "excluded": "Esta conversación está excluida de la IA: el copiloto no lee sus mensajes ni los envía a un proveedor de IA. No hay sugerencias ni resúmenes."
     }
   },
   "channels": {

@@ -42,5 +42,10 @@ export interface Conversation {
   standby_since: string | null;
   /** Alguien pidió que una persona la atienda; `null` si no. Se cierra cuando una persona responde al cliente o la toma, o a mano. */
   human_request: HumanRequest | null;
+  /**
+   * F8-13: desde cuándo está excluida de la IA; `null`: no lo está.
+   * @nullable
+   */
+  ai_excluded_at: string | null;
   version: number;
 }

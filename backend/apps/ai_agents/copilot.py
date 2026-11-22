@@ -8,7 +8,10 @@ nunca texto del modelo ni del cliente); `records.save` al final. Un error a mita
 su código y sin borrador; cualquier otro fallo (la base, su `statement_timeout`, una tool o un
 error nuestro), como `INTERNAL_ERROR` con sus reservas (F8-08g2): ninguna llamada pagada sin su
 run. Tools fijadas por el código; organización y persona de `ctx`; el log lleva solo el
-`ai_run_id`, códigos y duraciones. «Resumir» (`summarize`, F8-08i) es lo mismo sin tools."""
+`ai_run_id`, códigos y duraciones. «Resumir» (`summarize`, F8-08i) es lo mismo sin tools.
+Una conversación excluida de la IA (F8-13) se rechaza con `AI_EXCLUDED` antes de leer su contexto
+y otra vez antes de cada llamada pagada; si la marca no se puede leer, no se llama (falla cerrado).
+Una llamada ya enviada termina, como con el interruptor."""
 
 import json
 import re
@@ -49,6 +52,7 @@ SUMMARY_CALLS = 2  # el resumen, sin tools: una llamada y su reintento
 SHORTER = (f"El resumen llegó vacío, con caracteres de control o con más de {TEXT_MAX} caracteres: "
            "responde solo con un resumen más corto, en texto plano.")  # fmt: skip
 TOOL_USE_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")  # el CHECK de `ai_actions.tool_use_id`
+EXCLUDED = "AI_EXCLUDED"  # F8-13: la conversación está excluida de la IA
 
 
 class NotFound(Exception):  # noqa: N818 — ajena, inexistente, fuera de alcance o sin `ai.use`
@@ -84,29 +88,52 @@ class _State:  # lo que se registra, también si la invocación se corta
     retried: bool = False
 
 
+def _admitted(ctx: TenantContext, conversation_id: UUID) -> None:
+    """En el scope activo: la persona activa con `ai.use`, la conversación en el alcance de su
+    `conversations.view` (si no, el mismo `NotFound`) y no excluida de la IA (F8-13; si no,
+    `CopilotError(AI_EXCLUDED)`). Un error al leer la marca sale tal cual: nada se llama."""
+    try:
+        ectx = execution_context(ctx)  # solo una persona con membresía activa
+    except AccessDenied:
+        raise NotFound from None
+    mine = scoped(ectx, "conversations.view", Conversation.objects.filter(pk=conversation_id))
+    if not has_permission(ectx, "ai.use"):
+        raise NotFound
+    marks = list(mine.values_list("ai_excluded_at", flat=True))
+    if not marks:
+        raise NotFound
+    if marks != [None]:
+        raise CopilotError(EXCLUDED)
+
+
+def admit(ctx: TenantContext, conversation_id: UUID) -> None:
+    """`_admitted` en su propio scope corto: la ruta lo mira antes de contar los topes (F8-13)."""
+    with tenant_scope(ctx):
+        _admitted(ctx, conversation_id)
+
+
 def _prepare(
     ctx: TenantContext, conversation_id: UUID, purpose: Purpose
 ) -> tuple[LLMRequest, tuple[str, ...]]:
-    """El scope corto de preparación: la persona, sus permisos, el alcance y el contexto."""
+    """El scope corto de preparación: la persona, sus permisos, el alcance, la exclusión y, solo
+    después, el contexto."""
     with tenant_scope(ctx):
-        try:
-            ectx = execution_context(ctx)  # solo una persona con membresía activa
-        except AccessDenied:
-            raise NotFound from None
-        mine = scoped(ectx, "conversations.view", Conversation.objects.filter(pk=conversation_id))
-        if not has_permission(ectx, "ai.use") or not mine.exists():
-            raise NotFound
+        _admitted(ctx, conversation_id)
         request = context.build(ctx, conversation_id, purpose)
         return request, context.customer_since_reply(ctx, conversation_id)
 
 
-def _allowed(ctx: TenantContext) -> bool:
-    """¿Sigue la persona con su membresía activa y `ai.use`? Antes de cada llamada pagada."""
+def _refused(ctx: TenantContext, conversation_id: UUID) -> str | None:
+    """Antes de cada llamada pagada: `ACCESS_DENIED` si la persona perdió su membresía o `ai.use`;
+    `AI_EXCLUDED` si la conversación está excluida o ya no se puede leer (falla cerrado)."""
     with tenant_scope(ctx):
         try:
-            return has_permission(execution_context(ctx), "ai.use")
+            if not has_permission(execution_context(ctx), "ai.use"):
+                return "ACCESS_DENIED"
         except AccessDenied:
-            return False
+            return "ACCESS_DENIED"
+        included = Conversation.objects.filter(pk=conversation_id, ai_excluded_at__isnull=True)
+        return None if included.exists() else EXCLUDED
 
 
 def _call(ctx: TenantContext, state: _State) -> LLMResponse:
@@ -115,8 +142,8 @@ def _call(ctx: TenantContext, state: _State) -> LLMResponse:
         raise CopilotError("AI_DEADLINE")
     if not state.calls_left or len(state.request.turns) + 2 > settings.AI_TURN_LIMITS["turns"]:
         raise CopilotError(Outcome.AI_TURN_INVALID)  # su respuesta ya no se podría contestar
-    if not _allowed(ctx):
-        raise CopilotError("ACCESS_DENIED")
+    if refused := _refused(ctx, state.conversation_id):
+        raise CopilotError(refused)
     state.calls_left -= 1
     try:
         reply = gateway.complete(ctx, state.request, deadline=state.deadline)

@@ -75,6 +75,9 @@ class ConversationSerializer(serializers.Serializer[Any]):
         "`null` si no. Mientras tanto nada responde solo (ADR-035 §4).",
     )
     human_request = human_request()  # F8-08n
+    ai_excluded_at = serializers.DateTimeField(
+        allow_null=True, help_text="F8-13: desde cuándo está excluida de la IA; `null`: no lo está."
+    )
     version = serializers.IntegerField()
 
 

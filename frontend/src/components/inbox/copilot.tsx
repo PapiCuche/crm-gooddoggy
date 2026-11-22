@@ -104,6 +104,7 @@ function problem(error: Error, t: Translate) {
     "AI_NOT_CONFIGURED",
     "AI_DEADLINE",
     "AI_EVIDENCE_EXPIRED",
+    "AI_EXCLUDED",
   ] as const;
   const found = known.find((name) => name === code);
   if (found) return t(`error.${found}`);

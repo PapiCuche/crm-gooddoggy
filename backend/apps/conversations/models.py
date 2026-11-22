@@ -493,6 +493,9 @@ class Conversation(TenantModel):
         max_length=20, choices=HumanRequest.choices, null=True, blank=True
     )
     human_requested_by_user_id = models.UUIDField(null=True, blank=True)
+    # F8-13: excluida de la IA (cuándo y quién): el copiloto no la lee ni la manda a un proveedor.
+    ai_excluded_at = models.DateTimeField(null=True, blank=True)
+    ai_excluded_by_user_id = models.UUIDField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     version = models.PositiveIntegerField(default=1)
@@ -589,6 +592,11 @@ class Conversation(TenantModel):
                     human_request_reason__in=HumanRequest.values,
                 ),
                 name="conversations_human_request_ck",
+            ),
+            models.CheckConstraint(  # F8-13: la exclusión va entera (cuándo y quién) o no
+                condition=models.Q(ai_excluded_at__isnull=True, ai_excluded_by_user_id__isnull=True)
+                | models.Q(ai_excluded_at__isnull=False, ai_excluded_by_user_id__isnull=False),
+                name="conversations_ai_excluded_ck",
             ),
         ]
 
