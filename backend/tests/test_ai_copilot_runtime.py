@@ -363,7 +363,8 @@ FAULTS: dict[str, Fault] = {  # dónde falla → lo que queda en el run: tools y
     "interface": (registry, "invoke", lambda: raising(InterfaceError), (0, 1)),  # no es Database
     "guard-bug": (guard, "render", lambda: raising(TypeError), (1, 2)),
     "now": (copilot, "_now", lambda: scoped_stall, (1, 2)),
-    "allowed": (copilot, "_refused", lambda: calls(copilot._refused, scoped_stall), (1, 1)),
+    # F8-13d: cada llamada comprueba al reservar y antes de enviar; falla la reserva de la 2.ª
+    "allowed": (copilot, "_refused", lambda: calls(*[copilot._refused] * 2, scoped_stall), (1, 1)),
     "save": (records, "save", lambda: calls(scoped_stall, records.save), (1, 2)),  # el del borrador
 }
 
