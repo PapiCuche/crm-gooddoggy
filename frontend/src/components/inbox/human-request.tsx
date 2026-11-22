@@ -64,7 +64,12 @@ export function useHumanRequest(conversation: Conversation) {
   const slug = organization.slug;
   const client = useQueryClient();
   const busy = useRef(false); // un clic doble antes de pintar `isPending` no pide dos veces
-  const [said, setSaid] = useState<{ error: boolean; text: string } | null>(null);
+  // Lo que pasó, con el estado al que se refiere: si la solicitud cambia por otra vía (el copiloto,
+  // otra persona), el aviso ya no vale y no se muestra.
+  const [said, setSaid] = useState<{ error: boolean; text: string; at: string | null } | null>(
+    null,
+  );
+  const at = conversation.human_request?.requested_at ?? null;
   const detailKey = getConversationsRetrieveQueryKey(slug, conversation.id);
   const change = useMutation<HumanRequestState, ApiError, boolean>({
     mutationFn: (asking) =>
@@ -75,11 +80,13 @@ export function useHumanRequest(conversation: Conversation) {
     onSuccess: ({ human_request }, asking) => {
       // El estado nuevo se ve al instante; la relectura lo confirma.
       client.setQueryData<ConversationDetail>(detailKey, (old) => old && { ...old, human_request });
-      setSaid({ error: false, text: t(asking ? "requested" : "closed") });
+      const text = t(asking ? "requested" : "closed");
+      setSaid({ error: false, text, at: human_request?.requested_at ?? null });
     },
     onError: (error) =>
       setSaid({
         error: true,
+        at,
         text:
           error.status === 403 || error.status === 404
             ? t("denied")
@@ -114,7 +121,7 @@ export function useHumanRequest(conversation: Conversation) {
   const state = (
     <div className="order-5 flex basis-full flex-col gap-1 empty:hidden">
       <HumanRequestLine conversation={conversation} />
-      {said ? (
+      {said && said.at === at ? (
         <p
           role={said.error ? "alert" : "status"}
           className={said.error ? "text-danger text-sm" : "text-sm"}

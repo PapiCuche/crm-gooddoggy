@@ -69,7 +69,7 @@ function server(initial: Record<string, unknown> = {}, refuse?: Reply) {
     api.mock.calls.filter(
       ([url, init]) => init?.method === "POST" && /\/1\/(messages|media|notes)\//.test(String(url)),
     );
-  return { api, calls, sent };
+  return { api, calls, sent, state };
 }
 const show = (permissions: Grant[] = VIEW) =>
   renderApp(
@@ -113,7 +113,16 @@ describe("atención humana (F8-09b)", () => {
     await waitFor(() => expect(screen.getByText("Pide atención humana")).toBeVisible());
     fireEvent.click(screen.getByRole("button", { name: "Cerrar la solicitud de atención humana" }));
     await screen.findByText("Solicitud de atención humana cerrada.");
-    expect(within(header()).queryByText("Atención humana solicitada:")).toBeNull();
+    // Otra vía la vuelve a abrir (el copiloto): el aviso de cierre ya no vale.
+    s.state.human_request = asked("UPSET");
+    fireEvent.click(screen.getByRole("button", { name: "Actualizar mensajes" }));
+    await within(header()).findByText("Atención humana solicitada:");
+    expect(screen.queryByText("Solicitud de atención humana cerrada.")).toBeNull();
+    s.state.human_request = null;
+    fireEvent.click(screen.getByRole("button", { name: "Actualizar mensajes" }));
+    await waitFor(() =>
+      expect(within(header()).queryByText("Atención humana solicitada:")).toBeNull(),
+    );
     await waitFor(() => expect(screen.queryByText("Pide atención humana")).toBeNull());
     expect(screen.getByRole("button", { name: "Solicitar atención humana" })).toBeVisible();
     expect(s.calls("POST")).toHaveLength(1);
