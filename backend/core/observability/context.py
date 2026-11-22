@@ -1,13 +1,21 @@
 """Contexto de observabilidad: `request_id` (una petición HTTP) y `correlation_id` (cadena de
 trabajo entre procesos). Fuente de verdad propia: structlog lo consume, no lo posee.
+
+`logged_tenant` (F8-08i): en una petición de tenant sin el scope de la petición (las del copiloto,
+tenancy-context §2), los logs y los eventos de Sentry de **entre** sus scopes cortos llevan igual
+la organización y la persona. Solo para observar: no abre ningún scope ni autoriza nada; dentro
+de un `tenant_scope` manda el suyo.
 """
 
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
 
+from core.tenancy.context import TenantContext
+
 _request_id: ContextVar[str | None] = ContextVar("request_id", default=None)
 _correlation_id: ContextVar[str | None] = ContextVar("correlation_id", default=None)
+_tenant: ContextVar[TenantContext | None] = ContextVar("logged_tenant", default=None)
 Tokens = tuple[Token[str | None], Token[str | None]]
 
 
@@ -36,3 +44,16 @@ def bound(*, request_id: str | None, correlation_id: str | None) -> Iterator[Non
         yield
     finally:
         reset(tokens)
+
+
+def current_logged_tenant() -> TenantContext | None:
+    return _tenant.get()
+
+
+@contextmanager
+def logged_tenant(ctx: TenantContext) -> Iterator[None]:
+    token = _tenant.set(ctx)
+    try:
+        yield
+    finally:
+        _tenant.reset(token)

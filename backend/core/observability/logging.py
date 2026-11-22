@@ -10,13 +10,17 @@ from typing import Any
 import structlog
 from structlog.typing import EventDict, Processor
 
-from core.observability.context import current_correlation_id, current_request_id
+from core.observability.context import (
+    current_correlation_id,
+    current_logged_tenant,
+    current_request_id,
+)
 from core.redaction import redact, redact_text
 from core.tenancy.context import current
 
 
 def add_context(logger: Any, method: str, event_dict: EventDict) -> EventDict:
-    ctx = current()
+    ctx = current() or current_logged_tenant()  # entre los scopes del copiloto (F8-08i)
     correlation_id = current_correlation_id() or (ctx.correlation_id if ctx else None)
     event_dict.setdefault("request_id", current_request_id())
     event_dict.setdefault("correlation_id", correlation_id)

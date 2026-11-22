@@ -7,7 +7,7 @@
  */
 
 export interface CopilotHandoff {
-  /** El cliente pide una persona: `text` es fijo. */
+  /** El cliente pide una persona; en la sugerencia, `text` es el texto fijo. */
   requested: boolean;
   /**
    * El motivo (un código) o null.

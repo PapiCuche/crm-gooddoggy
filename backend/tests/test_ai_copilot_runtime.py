@@ -558,8 +558,10 @@ IMPORTS = {  # módulo → nombres: exactamente estos; uno nuevo se añade aquí
     "core.text": "VERIFY_MARK",
 }  # fmt: skip
 USES = {  # módulo importado → sus atributos: exactamente estos
-    "context": "build caps customer_since_reply", "detectors": "Handoff PATTERNS suggestion",
-    "gateway": "complete", "guard": "Finding Malformed Rendered render", "json": "loads",
+    "context": "build caps customer_since_reply",
+    "detectors": "Handoff PATTERNS handoff mark suggestion",  # F8-08i: el resumen marca y avisa
+    "gateway": "complete", "guard": "Finding Malformed Rendered UNSTORABLE render",
+    "json": "loads",
     "re": "compile", "records": "Action Finding Run Suggestion save",
     "registry": "invoke_read_only", "time": "monotonic",
 }  # fmt: skip
