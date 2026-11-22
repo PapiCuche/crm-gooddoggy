@@ -53,7 +53,8 @@ GRANTS = {"ai.use": None, "conversations.view": "OWN", "products.view": None,
 CONTACT = {"display_name": "Berilo Cliente", "primary_email": "berilo@example.com"}
 NOTE, ASK = "nota-interna-berilo", "Hola, ¿tienen collares? escribo desde berilo@example.com"
 NAME = ("c1", "PRODUCT_NAME", "toolu_1", "products.0.name")
-SHARED = r"SELECT ai_excluded_at IS NULL FROM conversations WHERE id = \S+ FOR SHARE$"  # F8-13c
+# F8-13c: el candado de la llamada y la marca con FOR SHARE (no escriben nada)
+SHARED = r"SELECT pg_advisory_(un)?lock_shared\(|\s*WITH k AS \(SELECT hashtextextended\("
 
 
 def use(id_: str, name: str = "search_product", **data: Any) -> dict[str, Any]:
@@ -568,7 +569,7 @@ USES = {  # módulo importado → sus atributos: exactamente estos
     "json": "loads",
     "re": "compile", "records": "Action Finding Run Suggestion save",
     "registry": "invoke_read_only", "replies": "current", "time": "monotonic",
-    "attention": "ai_included request_human",  # F8-13c: la marca con FOR SHARE
+    "attention": "ai_call ai_included request_human",  # F8-13c: el candado de cada llamada
 }  # fmt: skip
 DYNAMIC = {"globals", "locals", "vars", "eval", "exec", "compile", "getattr", "setattr", "delattr",
            "breakpoint"}  # fmt: skip

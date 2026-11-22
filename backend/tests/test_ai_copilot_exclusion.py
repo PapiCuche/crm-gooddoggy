@@ -1,7 +1,8 @@
 """F8-13 (#1071): una conversación excluida de la IA nunca llega al proveedor, ni por la API ni
 llamando al runtime directamente: ni su contexto se lee, ni se reserva presupuesto, ni cuenta en los
 topes salvo el de la persona (F8-13c); la marca puesta a mitad corta la llamada siguiente, la que
-espera su reserva y el reintento que espera su `retry-after` (F8-13c). Con la API falsa
+está en curso (excluir espera a que termine y ninguna empieza después) y el reintento que espera su
+`retry-after` (F8-13c). Con la API falsa
 (`tests.ai_sim`) que cuenta llamadas, middleware, sesión y PostgreSQL con `crm_app`; la
 concurrencia, con hilos y conexiones reales. Datos ficticios."""
 
@@ -22,6 +23,7 @@ from apps.audit.services import record as audit_record
 from apps.conversations import attention, selectors
 from apps.conversations.models import Conversation
 from core.tenancy.scope import tenant_scope
+from tests.factories import make_user
 from tests.test_ai_copilot_runtime import GOOD, PLAIN, SEARCH, desk
 from tests.test_ai_copilot_suggest_api import COUNTED, DB, SPENT
 from tests.test_ai_copilot_suggest_api import ask as suggest
@@ -29,8 +31,11 @@ from tests.test_ai_copilot_summary_api import ask as summary
 from tests.test_ai_copilot_summary_api import said
 from tests.test_ai_gateway import world
 from tests.test_ai_kill_switch import ahead, later
-from tests.test_memberships import ctx
-from tests.test_self_context import real_stack
+from tests.test_authorization import give
+from tests.test_conversations_api import BASE
+from tests.test_memberships import ctx, join
+from tests.test_self_context import real_stack, signed
+from tests.test_team_writes import send
 
 __all__ = ["desk", "real_stack", "world"]  # los fixtures, para pytest
 pytestmark = pytest.mark.usefixtures("tenant_db", "real_stack")
@@ -185,16 +190,37 @@ def test_excluded_after_the_context_and_before_the_first_call_reserves_and_calls
     assert counted == {f"aic:usr:{desk.ana.pk}": 1, f"aio:org:{desk.a}": 1}
 
 
-BROKEN = "SELECT ai_excluded_at IS NULL FROM conversations WHERE nope = %s FOR SHARE"
+BROKEN = attention.INCLUDED.replace("c.id = %s", "c.nope = %s")  # un error real de PostgreSQL
 
 
-def test_a_conversation_that_cannot_be_read_counts_as_excluded(desk: SimpleNamespace) -> None:
-    """Sin fila visible (inexistente o de otra organización, por RLS): falla cerrado."""
-    with tenant_scope(ctx(desk.a, desk.ana)) as tenant:
-        assert attention.ai_included(tenant, desk.convo) is True
-        assert attention.ai_included(tenant, uuid4()) is False
-    with tenant_scope(ctx(desk.b, desk.ana)) as other:
+def test_a_conversation_that_cannot_be_read_or_without_the_call_lock_counts_as_excluded(
+    desk: SimpleNamespace,
+) -> None:
+    """Sin fila visible (inexistente o de otra organización, por RLS) o sin el candado de la
+    llamada en esta sesión (nunca tomado o perdido con la conexión): falla cerrado."""
+    mine, other = ctx(desk.a, desk.ana), ctx(desk.b, desk.ana)
+    with attention.ai_call(mine, desk.convo), tenant_scope(mine):
+        assert attention.ai_included(mine, desk.convo) is True
+        assert attention.ai_included(mine, uuid4()) is False
+    with tenant_scope(mine):
+        assert attention.ai_included(mine, desk.convo) is False  # ya soltado
+    with attention.ai_call(mine, uuid4()), tenant_scope(mine):  # el de otra conversación
+        assert attention.ai_included(mine, desk.convo) is False
+    with attention.ai_call(other, desk.convo), tenant_scope(other):
         assert attention.ai_included(other, desk.convo) is False
+    held, done = threading.Event(), threading.Event()
+
+    def hold() -> None:  # otra sesión tiene el candado: no vale para esta
+        with attention.ai_call(mine, desk.convo):
+            held.set()
+            done.wait(10)
+
+    holder = later(hold)
+    assert held.wait(10)
+    with tenant_scope(mine):
+        assert attention.ai_included(mine, desk.convo) is False
+    done.set()
+    holder.join(10)
 
 
 def test_the_organization_switch_is_checked_before_the_exclusion_lock(
@@ -277,41 +303,148 @@ def excluded_at(migrator: DB, desk: SimpleNamespace) -> Any:
     return migrator.execute(sql, [desk.convo]).fetchone()[0]  # type: ignore[index]
 
 
-def test_an_exclusion_waits_for_the_reservation_that_read_the_conversation_included(
+def put(desk: SimpleNamespace) -> Any:
+    """El `PUT …/ai-exclusion/` real (middleware, sesión, transacción de la petición)."""
+    version = migrator_version(desk)
+    return send(signed(desk.ana), "put", f"{BASE}{desk.convo}/ai-exclusion/",
+                {"excluded": True, "version": version})  # fmt: skip
+
+
+def migrator_version(desk: SimpleNamespace) -> int:
+    with tenant_scope(ctx(desk.a)):
+        return int(Conversation.objects.get(pk=desk.convo).version)
+
+
+def in_flight(desk: SimpleNamespace, monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
+    """El proveedor falso se queda en su primera llamada hasta `gate`; `seen`: cuándo empieza y
+    cuándo vuelve cada una (reloj monótono real)."""
+    w = SimpleNamespace(inside=threading.Event(), gate=threading.Event(), seen=list[Any]())
+    real = desk.fake.handle
+
+    def handle(*args: Any) -> Any:
+        w.seen.append(("start", time.monotonic()))
+        w.inside.set()
+        w.gate.wait(15)
+        try:
+            return real(*args)
+        finally:
+            w.seen.append(("back", time.monotonic()))
+
+    monkeypatch.setattr(desk.fake, "handle", handle)
+    return w
+
+
+def asked(desk: SimpleNamespace, outcome: list[str]) -> None:
+    try:
+        copilot.suggest(ctx(desk.a, desk.ana), desk.convo)
+        outcome.append("OK")
+    except copilot.CopilotError as stop:
+        outcome.append(stop.code)
+
+
+def test_an_exclusion_waits_for_the_call_in_flight_and_no_call_starts_after_its_200(
     desk: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Hilos y conexiones reales: la reserva tiene la fila con FOR SHARE; el comando (FOR NO KEY
-    UPDATE) espera a que se confirme. La llamada ya reservada sale; la siguiente, no."""
-    inside, gate, done = threading.Event(), threading.Event(), list[Any]()
-
-    def pause() -> None:
-        inside.set()
-        gate.wait(10)
-
-    monkeypatch.setattr(gateway, "_reserve", ahead(pause, gateway._reserve))
-    desk.fake.replies = [PLAIN]
-    asking = later(lambda: done.append(copilot.suggest(ctx(desk.a, desk.ana), desk.convo)))
-    assert inside.wait(10)
-    stopping = later(lambda: exclude(desk))
-    stopping.join(0.5)
-    assert stopping.is_alive() and excluded_at(migrator, desk) is None  # espera a la reserva
-    gate.set()
-    for thread in (asking, stopping):
-        thread.join(15)
+    """Hilos y conexiones reales: la primera llamada está en el proveedor cuando llega el `PUT`;
+    el `PUT` responde solo después de que vuelve, y la segunda llamada del run (tras la tool) ya
+    no empieza: ninguna llamada empieza después del 200."""
+    w, outcome, answered = in_flight(desk, monkeypatch), list[str](), list[Any]()
+    desk.fake.replies = [SEARCH, GOOD]
+    asking = later(lambda: asked(desk, outcome))
+    assert w.inside.wait(10)
+    putting = later(lambda: answered.append((put(desk), time.monotonic())))
+    putting.join(1)
+    assert putting.is_alive() and excluded_at(migrator, desk) is None  # espera a la llamada
+    w.gate.set()
+    for thread in (asking, putting):
+        thread.join(20)
         assert not thread.is_alive()
-    assert len(done) == 1 and len(desk.fake.calls) == 1  # reservada antes: sale
-    assert excluded_at(migrator, desk) is not None
+    [(answer, at)] = answered
+    assert answer.status_code == 200 and outcome == ["AI_EXCLUDED"]
+    assert [kind for kind, _ in w.seen] == ["start", "back"]  # una sola llamada
+    assert all(t < at for _, t in w.seen)  # empezó y volvió antes del 200
+    assert migrator.execute(RUNS).fetchall() == [("AI_EXCLUDED", 1)]
+
+
+def test_two_calls_on_the_same_conversation_do_not_wait_for_each_other(
+    desk: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """El candado de la llamada es compartido: solo excluir espera."""
+    w, outcome = in_flight(desk, monkeypatch), list[str]()
     desk.fake.replies = [PLAIN]
-    with pytest.raises(copilot.CopilotError) as caught:  # y la siguiente, ya no
+    callers = [later(lambda: asked(desk, outcome)) for _ in range(2)]
+    both = any(len(w.seen) == 2 or threading.Event().wait(0.05) for _ in range(200))
+    w.gate.set()
+    for thread in callers:
+        thread.join(20)
+    assert both and outcome == ["OK", "OK"]  # las dos en el proveedor a la vez
+
+
+def test_an_exclusion_that_cannot_wait_long_enough_changes_nothing(
+    desk: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch, settings: Any
+) -> None:
+    settings.AI_EXCLUSION_WAIT_SECONDS = 1
+    w, outcome = in_flight(desk, monkeypatch), list[str]()
+    desk.fake.replies = [PLAIN]
+    version = migrator_version(desk)
+    asking = later(lambda: asked(desk, outcome))
+    assert w.inside.wait(10)
+    answer = put(desk)  # la llamada sigue en el proveedor más de 1 s
+    assert (answer.status_code, answer.json()["code"]) == (409, "AI_CALL_IN_PROGRESS")
+    assert excluded_at(migrator, desk) is None and migrator_version(desk) == version
+    audited = "SELECT count(*) FROM audit_logs WHERE action = 'conversation.ai_excluded'"
+    assert migrator.execute(audited).fetchone() == (0,)
+    w.gate.set()
+    asking.join(20)
+    assert outcome == ["OK"]
+    assert put(desk).status_code == 200  # ya sin llamadas en curso
+
+
+def test_who_cannot_see_the_conversation_never_waits_for_its_calls(
+    desk: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """El alcance se mira antes del candado: fuera de él, el mismo 404 enseguida, sin esperar a
+    la llamada en curso (ni delatarla) ni retener las nuevas."""
+    assign = "UPDATE conversations SET assigned_user_id = %s, assigned_at = now() WHERE id = %s"
+    migrator.execute(assign, [desk.ana.pk, desk.convo])
+    eva = make_user(email="eva@example.com")
+    give(desk.a, join(desk.a, eva).pk, {"conversations.view": "OWN"})
+    w, outcome = in_flight(desk, monkeypatch), list[str]()
+    desk.fake.replies = [PLAIN]
+    asking = later(lambda: asked(desk, outcome))
+    assert w.inside.wait(10)
+    started = time.monotonic()
+    answer = send(signed(eva), "put", f"{BASE}{desk.convo}/ai-exclusion/",
+                  {"excluded": True, "version": migrator_version(desk)})  # fmt: skip
+    assert answer.status_code == 404 and time.monotonic() - started < 5
+    w.gate.set()
+    asking.join(20)
+    assert outcome == ["OK"] and excluded_at(migrator, desk) is None
+
+
+def test_a_call_that_fails_midway_releases_its_lock(
+    desk: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch, settings: Any
+) -> None:
+    settings.AI_EXCLUSION_WAIT_SECONDS = 1
+
+    def broken(*_: Any) -> Any:
+        raise RuntimeError("roto")
+
+    monkeypatch.setattr(gateway, "_reserve", broken)
+    with pytest.raises(copilot.CopilotError) as caught:
         copilot.suggest(ctx(desk.a, desk.ana), desk.convo)
-    assert caught.value.code == "AI_EXCLUDED" and len(desk.fake.calls) == 1
+    assert caught.value.code == "INTERNAL_ERROR"
+    held = "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory'"
+    assert migrator.execute(held).fetchone() == (0,)
+    started = time.monotonic()
+    assert put(desk).status_code == 200 and time.monotonic() - started < 1
 
 
 def test_a_reservation_waits_for_an_exclusion_in_flight_and_then_sends_nothing(
     desk: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """El comando ya bloqueó la fila (antes de confirmar): la comprobación de la reserva espera,
-    ve la marca confirmada y no reserva ni llama."""
+    """El comando ya tiene el candado exclusivo y la fila (antes de confirmar): la llamada espera
+    su candado antes de reservar, ve la marca confirmada y no reserva ni llama."""
     inside, gate, outcome = threading.Event(), threading.Event(), list[str]()
 
     def pause() -> None:
@@ -331,7 +464,7 @@ def test_a_reservation_waits_for_an_exclusion_in_flight_and_then_sends_nothing(
 
     asking = later(ask)
     asking.join(0.5)
-    assert asking.is_alive()  # leyó el contexto y espera en la comprobación de la reserva
+    assert asking.is_alive()  # leyó el contexto y espera el candado de la llamada
     gate.set()
     for thread in (stopping, asking):
         thread.join(15)

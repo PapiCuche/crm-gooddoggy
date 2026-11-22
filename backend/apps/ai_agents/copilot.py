@@ -11,11 +11,11 @@ run. Tools fijadas por el código; organización y persona de `ctx`; el log llev
 `ai_run_id`, códigos y duraciones. «Resumir» (`summarize`, F8-08i) es lo mismo sin tools.
 Una conversación excluida de la IA (F8-13) se rechaza con `AI_EXCLUDED` antes de leer su contexto
 y otra vez antes de cada llamada pagada; si la marca no se puede leer, no se llama (falla cerrado).
-F8-13c: esa comprobación corre dentro de la transacción de la reserva del gateway (`admit`), con
-`FOR SHARE` sobre la conversación: excluirla (`FOR NO KEY UPDATE`) espera a que la reserva se
-confirme. Una exclusión confirmada antes impide la reserva y el envío; una confirmada después puede
-ver salir la llamada ya reservada, como con el interruptor. Antes de cada reintento del proveedor se
-vuelve a mirar: si está excluida o la comprobación falla, no se reenvía."""
+F8-13c: cada llamada tiene el candado compartido de la conversación (`attention.ai_call`) de antes
+de su reserva al fin del envío y sus reintentos; excluirla lo pide exclusivo: espera a las llamadas
+en curso y las nuevas esperan detrás. La comprobación (que exige ese candado) corre en la
+transacción de la reserva (`admit`) y antes de cada reintento: tras una exclusión confirmada no
+empieza ninguna llamada nueva."""
 
 import json
 import re
@@ -137,7 +137,7 @@ def _refused(ctx: TenantContext, conversation_id: UUID) -> str | None:
             return "ACCESS_DENIED"
     except AccessDenied:
         return "ACCESS_DENIED"
-    return None if attention.ai_included(ctx, conversation_id) else EXCLUDED  # FOR SHARE
+    return None if attention.ai_included(ctx, conversation_id) else EXCLUDED
 
 
 def _admits(ctx: TenantContext, state: _State) -> bool:
@@ -154,9 +154,10 @@ def _call(ctx: TenantContext, state: _State) -> LLMResponse:
     if not state.calls_left or len(state.request.turns) + 2 > settings.AI_TURN_LIMITS["turns"]:
         raise CopilotError(Outcome.AI_TURN_INVALID)  # su respuesta ya no se podría contestar
     state.calls_left -= 1
-    try:
-        reply = gateway.complete(ctx, state.request, deadline=state.deadline,
-                                 admit=lambda: _admits(ctx, state))  # fmt: skip
+    try:  # F8-13c: con el candado de la llamada, de antes de la reserva al fin del envío
+        with attention.ai_call(ctx, state.conversation_id):
+            reply = gateway.complete(ctx, state.request, deadline=state.deadline,
+                                     admit=lambda: _admits(ctx, state))  # fmt: skip
     except GatewayError as error:  # sin tiempo ya ni para enviar, o cortado en el plazo
         state.reservations += [error.reservation_id] if error.reservation_id else []
         if error.outcome == Outcome.AI_WITHHELD:  # F8-13c: excluida, sin `ai.use` o sin leerse

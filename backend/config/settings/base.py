@@ -459,6 +459,9 @@ AI_MODELS: dict[str, dict[str, dict[str, Any]]] = {"ANTHROPIC": {"claude-sonnet-
 AI_PROVIDER_PARAMS: dict[str, dict[str, Any]] = {"ANTHROPIC": {
     "model": "claude-sonnet-5-5", "max_tokens": 2048, "effort": "medium", "seconds": 60,
 }}  # fmt: skip
+# F8-13c: cuánto espera excluir una conversación a que terminen sus llamadas en curso (el plazo de
+# una llamada y un margen); si no, 409 `AI_CALL_IN_PROGRESS` y no cambia nada.
+AI_EXCLUSION_WAIT_SECONDS = max(p["seconds"] for p in AI_PROVIDER_PARAMS.values()) + 5
 AI_TOOL_TOKENS = 1000  # margen de la reserva por los tokens que añade la API al usar tools
 # F8-05b7: los tokens visuales de una imagen como mucho (el tramo de alta resolución) y los límites
 # de un turno con tools; lo que los pasa ni se reserva (`AI_TURN_INVALID`).
