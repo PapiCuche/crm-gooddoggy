@@ -220,7 +220,7 @@ function ComposeBox({
   const [file, setFile] = useState<File | null>(null);
   const [refusal, setRefusal] = useState<string | null>(null); // el archivo elegido no se adjuntó
   const picker = useRef<HTMLInputElement>(null);
-  const settling = useRef(false);
+  const settleUntil = useRef(0); // hasta cuándo un Enter no envía lo recién insertado
   const [placed, setPlaced] = useState(0); // cada inserción del copiloto: enfocar al final
   const format = useFormatter();
   const labels = useTranslations("inbox.media");
@@ -248,10 +248,10 @@ function ComposeBox({
     },
   });
 
-  // El texto del copiloto se suma a lo ya escrito (no lo borra) y queda editable; no se envía.
+  // El texto del copiloto se suma a lo ya escrito (no lo borra) y queda editable; no se envía. Si
+  // llega mientras sale un envío, ese envío solo quita del cuadro lo que él mandó (`onSuccess`).
   useImperativeHandle(inserter, () => (value) => {
-    settling.current = true;
-    setTimeout(() => (settling.current = false), SETTLE);
+    settleUntil.current = Date.now() + SETTLE; // otra inserción alarga la espera, no la acorta
     setText((current) => (current.trim() ? `${current}\n\n${value}` : value));
     setProblem(null);
     setRefusal(null);
@@ -301,7 +301,12 @@ function ComposeBox({
     },
     onSuccess: (done, request) => {
       attempt.current = null; // un id por acción: el siguiente texto lleva otro
-      setText((current) => (current === request.body ? "" : current)); // no lo insertado después
+      // Quita solo lo enviado: lo insertado mientras salía se queda y no se vuelve a enviar.
+      setText((current) =>
+        current.startsWith(request.body)
+          ? current.slice(request.body.length).replace(/^\n\n/, "")
+          : current,
+      );
       setFile((current) => (current === request.file ? null : current)); // solo el que salió
       const mine = `pending-${request.client_message_id}`;
       client.setQueryData<Pages>(key, (data) => {
@@ -373,15 +378,12 @@ function ComposeBox({
   };
   const keys = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (quick.onKey(event)) return; // con el selector abierto, Enter elige y no envía
-    if (settling.current && event.key === "Enter" && !event.shiftKey) {
-      event.preventDefault(); // recién insertado: se revisa antes de enviar
-      return;
-    }
     // Enter envía; Mayús+Enter agrega una línea. Durante una composición (IME) Enter es del IME;
     // Safari lo entrega ya sin `isComposing`, pero con `keyCode` 229.
     const composing = event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229;
     if (event.key !== "Enter" || event.shiftKey || composing) return;
     event.preventDefault();
+    if (Date.now() < settleUntil.current) return; // recién insertado: se revisa antes de enviar
     submit();
   };
   const idle = note ? t("save") : t("send");

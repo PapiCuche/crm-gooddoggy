@@ -99,6 +99,7 @@ export function useCopilot({
   const slug = organization.slug;
   const heading = useId();
   const asking = useRef(false); // un clic doble antes de pintar `isPending` no pide dos veces
+  const inserting = useRef(false); // ni inserta (y audita) dos veces
   const suggestButton = useRef<HTMLButtonElement>(null);
   const [draft, setDraft] = useState<CopilotSuggestion | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -129,10 +130,15 @@ export function useCopilot({
       onInsert(done.text); // el texto guardado, el mismo que se auditó
     },
     onError: (failure) => {
-      // Ya no se puede insertar (purgada, de otra persona o con la evidencia caducada): se quita.
-      if (failure.status === 404 || failure.code === "AI_EVIDENCE_EXPIRED") setDraft(null);
+      // Ya no se puede insertar (purgada, de otra persona o con la evidencia caducada): se quita y
+      // el foco, que estaba en «Insertar», pasa a «Sugerir respuesta», como al descartar.
+      if (failure.status === 404 || failure.code === "AI_EVIDENCE_EXPIRED") {
+        setDraft(null);
+        suggestButton.current?.focus();
+      }
       setError(failure.status === 404 ? t("error.gone") : problem(failure, t));
     },
+    onSettled: () => (inserting.current = false),
   });
   const busy = suggest.isPending || insert.isPending;
   const label = suggest.isPending ? t("thinking") : draft ? t("again") : t("suggest");
@@ -190,7 +196,11 @@ export function useCopilot({
                   variant="primary"
                   className="h-9 aria-disabled:cursor-progress aria-disabled:opacity-60"
                   aria-disabled={busy}
-                  onClick={() => busy || insert.mutate(draft)}
+                  onClick={() => {
+                    if (inserting.current || busy) return;
+                    inserting.current = true;
+                    insert.mutate(draft);
+                  }}
                 >
                   {insert.isPending ? t("inserting") : t("insert")}
                 </Button>

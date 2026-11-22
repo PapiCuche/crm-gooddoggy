@@ -38,26 +38,40 @@ const suggestion = {
   ...{ findings: [{ type: "FIGURE", position: { start: at, end: at + 11 } }] },
   ...{ handoff: { requested: false, reason: null } },
 };
-const SAVED = "Hola 🐶 Rosa: [verificar] soles.";
+// Lo que devuelve la ruta de insertar (el texto guardado y auditado), distinto del que se mostró:
+// el cuadro recibe este.
+const SAVED = "Texto guardado 🐶: [verificar] soles.";
+const SETTLE = 500; // el de `composer.tsx`
+const wait = (ms: number) => act(() => new Promise((resolve) => setTimeout(resolve, ms)));
 
 type Reply = { status: number; body?: unknown; headers?: Record<string, string> };
 function server(
-  options: { status?: string; suggest?: () => Reply; insert?: () => Reply; hold?: boolean } = {},
+  options: {
+    status?: string;
+    suggest?: () => Reply;
+    insert?: () => Reply;
+    send?: () => Reply;
+    hold?: "suggest" | "messages";
+  } = {},
 ) {
   const conversation = { ...rosa, status: options.status ?? "OPEN" };
   let release = () => {};
   const held = options.hold ? new Promise<void>((resolve) => (release = resolve)) : null;
+  let holding = options.hold; // solo el primer POST a esa ruta espera
   const api = mockApi({
     [`GET ${BASE}/`]: { status: 200, body: { results: [conversation], next: null } },
     [`GET ${BASE}/1/`]: { status: 200, body: conversation },
     [`GET ${BASE}/1/messages/`]: { status: 200, body: { results: [], next: null } },
     [SUGGEST]: options.suggest ?? { status: 201, body: suggestion },
     [INSERT]: options.insert ?? { status: 200, body: { text: SAVED } },
-    [`POST ${BASE}/1/messages/`]: { status: 202, body: {} },
+    [`POST ${BASE}/1/messages/`]: options.send ?? { status: 202, body: {} },
   });
   const inner = api.getMockImplementation()!;
   api.mockImplementation(async (input, init) => {
-    if (String(input).endsWith("/suggest/")) await held;
+    if (holding && init?.method === "POST" && String(input).endsWith(`/${holding}/`)) {
+      holding = undefined;
+      await held;
+    }
     return inner(input, init);
   });
   const posts = (end: string) =>
@@ -67,7 +81,8 @@ function server(
     api.mock.calls.filter(
       ([url, init]) => init?.method === "POST" && /\/1\/(messages|media|notes)\//.test(String(url)),
     );
-  return { api, go: () => release(), posts, sent };
+  const bodies = () => sent().map(([, init]) => JSON.parse(String(init!.body)).body as string);
+  return { api, go: () => release(), posts, sent, bodies };
 }
 const show = (permissions: Grant[] = AGENT) =>
   renderApp(
@@ -155,28 +170,73 @@ describe("panel del copiloto (F8-09a)", () => {
     expect(screen.getByRole("button", { name: "Sugerir otra" })).toBeVisible();
   });
 
-  it("«Insertar» audita, pone el texto editable en el cuadro, lo enfoca y no envía", async () => {
+  it("«Insertar» audita, pone el texto guardado en el cuadro, lo enfoca y no envía", async () => {
     const s = server();
     show();
     await openChat();
     await draft();
     fireEvent.click(screen.getByRole("button", { name: "Insertar" }));
-    await waitFor(() => expect(box()).resolves.toHaveValue(SAVED));
+    await waitFor(() => expect(box()).resolves.toHaveValue(SAVED)); // el del servidor, no el local
     expect(await box()).toHaveFocus();
     expect(s.posts("/insert/")).toHaveLength(1);
     expect(screen.queryByText("Sugerencia del copiloto")).toBeNull();
     expect(announced()).toHaveTextContent("Revísala y envíala tú");
     // Un Enter justo después (el de «Insertar», repetido) no envía lo que aún no se revisó.
     fireEvent.keyDown(await box(), { key: "Enter" });
-    await settle();
+    // Pasada la espera, nada salió solo: solo la acción del agente envía.
+    await wait(SETTLE + 200);
     expect(s.sent()).toHaveLength(0);
-    // Quien atiende lo edita y lo envía con el «Enviar» del cuadro: ese es el único envío.
+    // Quien atiende lo edita y lo envía con Enter, que vuelve a enviar: ese es el único envío.
     fireEvent.change(await box(), { target: { value: "Hola 🐶 Rosa: 30 soles." } });
+    fireEvent.keyDown(await box(), { key: "Enter" });
+    await waitFor(() => expect(s.bodies()).toEqual(["Hola 🐶 Rosa: 30 soles."]));
+  });
+
+  it("dos clics seguidos en «Insertar» insertan y auditan una sola vez", async () => {
+    const s = server();
+    show();
+    await openChat();
+    await draft();
+    const insert = screen.getByRole("button", { name: "Insertar" });
+    fireEvent.click(insert);
+    fireEvent.click(insert);
+    await waitFor(() => expect(box()).resolves.toHaveValue(SAVED));
+    await settle();
+    expect(s.posts("/insert/")).toHaveLength(1);
+    expect(await box()).toHaveValue(SAVED);
+  });
+
+  it("insertar mientras sale un envío no vuelve a enviar lo ya enviado", async () => {
+    const s = server({ hold: "messages" });
+    show();
+    await openChat();
+    fireEvent.change(await box(), { target: { value: "Hola" } });
+    fireEvent.keyDown(await box(), { key: "Enter" }); // sale «Hola» y queda en espera
+    await waitFor(() => expect(s.bodies()).toEqual(["Hola"]));
+    await draft();
+    fireEvent.click(screen.getByRole("button", { name: "Insertar" }));
+    await waitFor(() => expect(box()).resolves.toHaveValue(`Hola\n\n${SAVED}`));
+    s.go(); // el envío termina: se quita solo «Hola»
+    await waitFor(() => expect(box()).resolves.toHaveValue(SAVED));
+    await wait(SETTLE + 100);
     fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
-    await waitFor(() => expect(s.sent()).toHaveLength(1));
-    expect(JSON.parse(String(s.sent()[0]![1]!.body))).toMatchObject({
-      body: "Hola 🐶 Rosa: 30 soles.",
-    });
+    await waitFor(() => expect(s.bodies()).toEqual(["Hola", SAVED]));
+  });
+
+  it("un envío con la marca [verificar] se explica con su propio texto", async () => {
+    const s = server({ send: () => ({ status: 400, body: { code: "UNVERIFIED_CONTENT" } }) });
+    show();
+    await openChat();
+    await draft();
+    fireEvent.click(screen.getByRole("button", { name: "Insertar" }));
+    await waitFor(() => expect(box()).resolves.toHaveValue(SAVED));
+    await wait(SETTLE + 100);
+    fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "El texto lleva la marca [verificar] del copiloto",
+    );
+    expect(await box()).toHaveValue(SAVED);
+    expect(s.sent()).toHaveLength(1); // el intento del agente, rechazado
   });
 
   it("«Insertar» suma el texto a lo ya escrito y vuelve a «Responder» desde la nota", async () => {
@@ -209,12 +269,15 @@ describe("panel del copiloto (F8-09a)", () => {
   });
 
   it("mientras carga no pide dos veces y lo anuncia", async () => {
-    const s = server({ hold: true });
+    const s = server({ hold: "suggest" });
     show();
     await openChat();
     const button = await suggestButton();
-    fireEvent.click(button);
-    fireEvent.click(button);
+    // Dos clics antes de que React pinte el estado de carga (un doble clic real).
+    act(() => {
+      button.click();
+      button.click();
+    });
     const busy = await screen.findByRole("button", { name: "Preparando una sugerencia…" });
     expect(busy).toHaveAttribute("aria-disabled", "true");
     fireEvent.click(busy);
@@ -269,6 +332,7 @@ describe("panel del copiloto (F8-09a)", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(message);
     expect(screen.queryByText("Sugerencia del copiloto")).toBeNull();
     expect(await box()).toHaveValue("");
+    expect(await suggestButton()).toHaveFocus(); // «Insertar» ya no está: el foco no se pierde
     expect(s.sent()).toHaveLength(0);
   });
 });
