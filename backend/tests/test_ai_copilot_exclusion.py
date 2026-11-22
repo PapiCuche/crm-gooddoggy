@@ -239,12 +239,10 @@ def test_a_database_error_in_the_check_before_reserving_calls_and_reserves_nothi
     assert migrator.execute(SPENT).fetchone() == (0, 1, 0)  # ninguna reserva
 
 
-def broken_check(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(attention, "INCLUDED", BROKEN)
-
-
-def drop_ai_use(migrator: DB) -> None:
-    migrator.execute("DELETE FROM role_permissions WHERE permission_code = 'ai.use'")
+def test_a_retry_whose_check_passes_is_still_sent(desk: SimpleNamespace, migrator: DB) -> None:
+    desk.fake.script, desk.fake.replies = ["rate_limit"], [PLAIN]
+    copilot.suggest(ctx(desk.a, desk.ana), desk.convo)
+    assert len(desk.fake.calls) == 2 and migrator.execute(RUNS).fetchall() == [("OK", 1)]
 
 
 @pytest.mark.parametrize(("during", "outcome"), [
@@ -253,12 +251,16 @@ def drop_ai_use(migrator: DB) -> None:
 def test_nothing_is_resent_after_a_retry_wait_once_it_is_withheld(
     desk: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch, during: str, outcome: str
 ) -> None:
-    """Un 429 con `retry-after`; durante la espera, la exclusión, perder `ai.use` o un error real
-    de la base en la comprobación: el proveedor no recibe nada más y la reserva se libera."""
+    """Un 429; en su espera, la marca, sin `ai.use` o la comprobación rota: no se reenvía nada."""
+
+    drop = "DELETE FROM role_permissions WHERE permission_code = 'ai.use'"
 
     def wait(_: float) -> None:
-        {"excluded": lambda: mark(desk), "ai.use": lambda: drop_ai_use(migrator),
-         "broken": lambda: broken_check(monkeypatch)}[during]()  # fmt: skip
+        {
+            "excluded": lambda: mark(desk),
+            "ai.use": lambda: migrator.execute(drop),
+            "broken": lambda: monkeypatch.setattr(attention, "INCLUDED", BROKEN),
+        }[during]()
 
     monkeypatch.setattr(time, "sleep", wait)
     desk.fake.script, desk.fake.replies = ["rate_limit"], [PLAIN]
