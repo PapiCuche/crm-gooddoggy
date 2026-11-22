@@ -4,7 +4,7 @@
 - **Date:** 2026-11-16
 - **Deciders:** propuesto por F7b-08 para la decisión del propietario. Mientras esté `Proposed` no obliga al código, no empieza ningún work item de código del canal y no se envía nada a TikTok. Las preguntas para el propietario están en §13.
 - **Work items:** F7b-08 [#863](https://github.com/PapiCuche/crm-gooddoggy/issues/863) (investigación, borrador de la solicitud y este ADR). La serie de código de §12 se crea solo si el propietario acepta.
-- **Related:** ADR-001, ADR-002 §3.3, ADR-003, ADR-008, ADR-010, ADR-011, ADR-013, ADR-015, ADR-022, ADR-023, ADR-029 (patrón del canal), ADR-033, ADR-034 (Accepted el 2026-11-16; IA), ADR-035 (Accepted el 2026-11-16; Instagram y Messenger, el patrón más parecido), ADR-040 (clave de la ingesta por cuenta), [tiktok-business-messaging.md](../research/tiktok-business-messaging.md), [tiktok-access-request-draft.md](../research/tiktok-access-request-draft.md), [phase-7.md](../phases/phase-7.md)
+- **Related:** ADR-001, ADR-002 §3.3, ADR-003, ADR-008, ADR-010, ADR-011, ADR-013, ADR-015, ADR-022, ADR-023, ADR-029 (patrón del canal), ADR-033, ADR-034 (Accepted el 2026-11-16; IA; este ADR lo acota en §8 si se acepta), ADR-035 (Accepted el 2026-11-16; Instagram y Messenger, el patrón más parecido), ADR-040 (clave de la ingesta por cuenta), [tiktok-business-messaging.md](../research/tiktok-business-messaging.md), [tiktok-access-request-draft.md](../research/tiktok-access-request-draft.md), [phase-7.md](../phases/phase-7.md)
 
 ## Context
 
@@ -16,7 +16,7 @@ El propietario necesita atender en el Inbox los mensajes directos de la cuenta d
 - **El desarrollador** tiene que ser una empresa (no se admiten personas), con un correo y un sitio en un dominio propio; puede registrarse como «Direct Advertiser» y declarar la app como de **uso interno** [T19] [T20].
 - **La DSPR** no tiene excepciones, suele tardar 2-4 semanas tras un inicio de hasta 10 días hábiles, es manual y pide políticas firmadas, MFA de administradores, cifrado en reposo y en tránsito, gestión de vulnerabilidades, respuesta a incidentes, aviso de privacidad y **borrado de los datos cuando se retira la autorización** [T2] [T14]. Que TikTok apruebe a un anunciante con una sola cuenta: **SIN VERIFICAR**.
 - **Límites oficiales:** tras el primer mensaje del usuario, hasta 10 mensajes en 48 h; cada respuesta suya abre 48 h ilimitadas; pasadas 48 h sin respuesta, solo tres mensajes más [T18]. El cliente siempre empieza.
-- **Proveedores:** de los nueve de la lista oficial de socios de mensajería de TikTok [T8] (una lista de gestión de mensajes, anuncios y medición que no nombra la Business Messaging API), solo Infobip, respond.io y Qiscus documentan mensajes directos de TikTok; Infobip es el único con webhook de entrada, API de salida y DPA estándar publicados [P3] [P6] [P7].
+- **Proveedores:** de los nueve de la lista oficial de socios de mensajería de TikTok [T8] (una lista de gestión de mensajes, anuncios y medición que no nombra la Business Messaging API), solo Infobip, respond.io y Qiscus documentan mensajes directos de TikTok (Pancake: **SIN VERIFICAR**, su guía habla de medir anuncios); Infobip es el único con webhook de entrada, API de salida y DPA estándar publicados [P3] [P6] [P7].
 
 ### Lo que ya existe y este ADR reutiliza
 
@@ -53,8 +53,10 @@ Si el propietario elige el plan B (D-TT-01), o si la vía directa se rechaza o n
 
 - **Ruta propia:** `POST /webhooks/tiktok/` (y `/webhooks/infobip/` solo en el plan B), detrás de la misma regla de Caddy para `/webhooks/*` (ADR-033 §4.3), con tope de cuerpo y el orden firma → parsear → esquema.
 - **Firma antes de parsear.** El esquema de la Business Messaging API está **SIN VERIFICAR** (§6 de la investigación). El verificador se escribe **solo** después de leer la documentación oficial que se abre con la aprobación; hasta entonces el simulador usa el esquema de TikTok for Developers (`TikTok-Signature`, HMAC-SHA256 de `timestamp.cuerpo`, margen corto) [T12] marcado como provisional. `401` vacío si falla; `200` con firma válida aunque el cuerpo no sirva.
-- **Ingesta:** nuevas versiones de `webhook_ingress_insert` y del resolutor en una migración nueva (nunca se editan las anteriores), con la plataforma `TIKTOK` y la clave de deduplicación `tt:msg:<id del mensaje>`; el payload se vacía al cerrar el ítem, como hoy.
-- **Enrutado:** una función `SECURITY DEFINER` mínima que, dado `('TIKTOK', id de la cuenta de empresa)`, devuelve `(organization_id, channel_account_id)` solo para cuentas vivas, sin SQL dinámico. Si ADR-035 ya creó `resolve_social_account`, se amplía su lista de plataformas en una versión nueva.
+- **Ingesta:** versiones nuevas, en una migración nueva (nunca se editan las anteriores), de las funciones de la ingesta social de la `0040`. `webhook_ingress_insert_social` y `webhook_ingress_refuse_social` aceptan hoy solo `provider = 'meta'`, las plataformas `MESSENGER` e `INSTAGRAM`, los prefijos `fb:` e `ig:` y un `routing_id` numérico de Meta; la versión nueva añade el proveedor `tiktok`, la plataforma `TIKTOK`, el prefijo `tt:` y la forma del id de la cuenta de TikTok (**SIN VERIFICAR** hasta leer la documentación que se abre con la aprobación).
+- **CHECK que necesitan una versión con `TIKTOK`** en la misma migración: `webhook_ingress_route_ck` (hoy `routing_id` solo para `MESSENGER` e `INSTAGRAM`), `channel_accounts_platform_ck`, `contact_identities_platform_ck` (hoy solo `MESSENGER` e `INSTAGRAM`) y, si el id de TikTok no cabe en `^[A-Za-z0-9._-]{1,100}$`, `contact_identities_external_ck`.
+- **Clave de deduplicación por cuenta**, como exige [ADR-040](ADR-040-social-ingress-key-per-account.md): `tt:msg:<id de la cuenta de empresa>:<id del mensaje>`, cada id con `urllib.parse.quote(id, safe="")`. Una clave global descartaría como duplicado el mensaje que otra cuenta conectada recibe con el mismo id. El payload se vacía al cerrar el ítem, como hoy.
+- **Enrutado:** `resolve_social_account` (`SECURITY DEFINER`, `0040`) existe y hoy rechaza toda plataforma que no sea `MESSENGER` o `INSTAGRAM` y todo id que no sea numérico de Meta (`^[0-9]{5,30}$`). Una versión nueva, en la migración de T2, añade `TIKTOK` con la validación del id de TikTok y sigue devolviendo, dado `('TIKTOK', id de la cuenta de empresa)`, `(organization_id, channel_account_id)` solo para cuentas vivas, sin SQL dinámico.
 - **Cruce obligatorio:** la cuenta del evento tiene que ser la del destinatario del mensaje; si no cuadra, `IGNORED` con `ACCOUNT_MISMATCH`, alerta y sin escribir nada, con su prueba de «evento firmado para una cuenta de otra organización».
 
 ### 5. Mensajes entrantes
@@ -65,7 +67,7 @@ Si el propietario elige el plan B (D-TT-01), o si la vía directa se rechaza o n
 | Imagen, publicación compartida, video, otro | `UNSUPPORTED` con una etiqueta fija del código; la imagen se resuelve en un work item posterior con ClamAV y el almacén (ADR-008) |
 | Mensaje propio (eco), si TikTok lo envía    | Se reconcilia por id sin duplicar; si no se puede, `IGNORED` con métrica                                                          |
 
-- **Identidad sin teléfono:** el cliente llega con un id de TikTok. Va a `contact_identities` (diseño de ADR-035 §5), única por (`organization_id`, `channel_account_id`, `external_id`), y crea un contacto nuevo sin teléfono con `display_name` fijo («Cliente de TikTok») hasta que haya nombre. **Nunca se fusiona** con otro contacto por nombre, usuario, teléfono ni correo. Si `contact_identities` no existe aún cuando empiece esta serie, la crea su primer work item con el diseño de ADR-035.
+- **Identidad sin teléfono:** el cliente llega con un id de TikTok. Va a `contact_identities` (existe desde la `0040`, ADR-035 §5), única por (`organization_id`, `channel_account_id`, `external_id`), y crea un contacto nuevo sin teléfono con `display_name` fijo («Cliente de TikTok») hasta que haya nombre. **Nunca se fusiona** con otro contacto por nombre, usuario, teléfono ni correo. Sus CHECK de plataforma se amplían en la migración de T2 (§4).
 - El id de TikTok y el nombre visible **son datos personales**: viven en el payload de la ingesta (vaciado al cerrar) y en `contact_identities`; nunca en registros, métricas, auditoría ni outbox.
 
 ### 6. Mensajes salientes
@@ -92,8 +94,8 @@ Si el propietario elige el plan B (D-TT-01), o si la vía directa se rechaza o n
 
 - **Borrado al desconectar** (exigido por [T14]): desconectar la cuenta revoca el token, la marca como desconectada y programa la **purga** de sus mensajes, identidades y medios de TikTok en un plazo fijo que decide el propietario (D-TT-05; se propone 30 días, para poder revertir una desconexión por error). La purga es un job de operación con su auditoría (sin el contenido).
 - **Retención:** la de los demás canales mientras la cuenta está conectada; el propietario la declara en el aviso de privacidad.
-- **IA:** los mensajes de TikTok **no** se envían al copiloto de IA (ADR-034) salvo que el propietario lo decida (D-TT-03) y el proveedor de IA figure como subencargado en la DSPR y en el aviso.
-- **Solo los alcances mínimos**; ningún alcance de anuncios que no se use.
+- **IA: este ADR acota ADR-034 si se acepta.** ADR-034 (Accepted) no excluye ningún canal del copiloto. Si ADR-039 se acepta, las rutas del copiloto que envían al modelo el contenido de una conversación (`conversations/<id>/copilot/suggest/` y `…/copilot/summary/`) rechazan las conversaciones de una cuenta `TIKTOK` con un código propio y sin llamar al modelo, salvo que el propietario lo permita (D-TT-03) y el proveedor de IA figure como subencargado en la DSPR y en el aviso de privacidad. Se implementa en T2 con su prueba (§12). El borrador de la DSPR declara lo mismo (subencargados y formulario de admisión).
+- **Alcances:** los que TikTok pide para solicitar la mensajería («Ad Account Management», «CTX Events Management» y «Measurement» [T2]) y «TikTok Accounts» si hace falta. El CRM no los usa para anuncios, medición ni perfilado: solo llama a los endpoints de mensajería. Si TikTok permite omitir los de anuncios, se omiten (pregunta 13 del borrador).
 - Los controles que pide la DSPR y sus brechas (B1-B11) están en [tiktok-access-request-draft.md §5-§6](../research/tiktok-access-request-draft.md#5-borrador-de-las-respuestas-a-la-dspr). Las brechas técnicas (cifrado del disco, `clamd` en producción, escaneo de vulnerabilidades, borrado) se cierran con sus propios work items, que no dependen de este ADR.
 
 ### 9. Simulador
@@ -110,14 +112,14 @@ Imágenes y otros medios (después, con ClamAV); mensajes automáticos de TikTok
 
 ### 12. Plan de la serie (solo si se acepta)
 
-| #   | Work item                                                                                  | Depende de                                 |
-| --- | ------------------------------------------------------------------------------------------ | ------------------------------------------ |
-| T0  | Aceptar ADR-039 y las decisiones D-TT                                                      | —                                          |
-| T1  | Simulador de TikTok (§9)                                                                   | T0                                         |
-| T2  | Webhook, ingesta, enrutado e identidades (§4-§5)                                           | T1 y `contact_identities` (ADR-035 o aquí) |
-| T3  | Adaptador de salida y política de 48 h con contador (§6-§7)                                | T2                                         |
-| T4  | Conexión OAuth, desconexión con purga y pantalla de canales (§2, §8, §10); cierra la serie | T3                                         |
-| T5  | Operativo: activar con la cuenta real, configurar el webhook y probar de punta a punta     | T4 y la aprobación de la DSPR              |
+| #   | Work item                                                                                                                           | Depende de                    |
+| --- | ----------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
+| T0  | Aceptar ADR-039 y las decisiones D-TT                                                                                               | —                             |
+| T1  | Simulador de TikTok (§9)                                                                                                            | T0                            |
+| T2  | Webhook, ingesta, enrutado e identidades (§4-§5); el copiloto rechaza las conversaciones `TIKTOK` salvo D-TT-03 (§8), con su prueba | T1                            |
+| T3  | Adaptador de salida y política de 48 h con contador (§6-§7)                                                                         | T2                            |
+| T4  | Conexión OAuth, desconexión con purga y pantalla de canales (§2, §8, §10); cierra la serie                                          | T3                            |
+| T5  | Operativo: activar con la cuenta real, configurar el webhook y probar de punta a punta                                              | T4 y la aprobación de la DSPR |
 
 T1 a T4 pueden avanzar mientras TikTok revisa la DSPR. Con el plan B, T2-T4 apuntan a la API del proveedor y T5 depende del contrato en lugar de la DSPR.
 
