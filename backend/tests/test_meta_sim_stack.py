@@ -167,7 +167,8 @@ def test_the_simulator_pool_speaks_only_http_with_the_same_limits() -> None:
     for manager in (http._manager, http._simulator):
         assert manager.connection_pool_kw["timeout"] is http._LIMITS["timeout"]
         assert manager.connection_pool_kw["retries"] is http._LIMITS["retries"]
-    assert http._simulator.pool_classes_by_scheme == {"http": HTTPConnectionPool}
+    assert http._simulator.pool_classes_by_scheme == {"http": http._SimulatorPool}  # F8-13d
+    assert http._SimulatorPool.__mro__[1] is HTTPConnectionPool  # solo http, con `before_send`
 
 
 def test_in_local_mode_graph_still_has_to_be_in_the_allowlist(
