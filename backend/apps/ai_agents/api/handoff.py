@@ -14,6 +14,7 @@ from rest_framework.views import APIView
 
 from apps.access.permissions import rbac_errors
 from apps.ai_agents import replies
+from apps.ai_agents.handoff_text import Reply
 from apps.ai_agents.models import HANDOFF_MAX
 from core.api.schema import errors
 from core.tenancy import context
@@ -52,7 +53,7 @@ class AiHandoffReplyWriteSerializer(serializers.Serializer[Any]):
     )
 
 
-def shown(reply: replies.Reply) -> dict[str, Any]:
+def shown(reply: Reply) -> dict[str, Any]:
     state = {"text": reply.text, "initial": reply.initial, "changed_at": reply.changed_at}
     return AiHandoffReplySerializer(state).data  # type: ignore[no-any-return]
 

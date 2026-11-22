@@ -7,12 +7,13 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from django.conf import settings
 from django.db import transaction
+from django.db.models import QuerySet
 from django.utils import timezone
 
 from apps.access.selectors import AccessDenied, Denied, can, execution_context, has_permission
 from apps.audit.services import Entity, record
+from apps.conversations import handoff
 from apps.conversations.models import Conversation, HumanRequest, Message, Status
 from apps.conversations.policy import ConversationClosed
 from core.outbox import emit
@@ -55,10 +56,28 @@ def _write(
     emit(ctx, "conversation.updated", aggregate_type="conversation", aggregate_id=convo.pk)
 
 
-def handoff_reply(text: str) -> bool:
-    """¿Es `text` el texto fijo de traspaso del copiloto? Enviarlo no es atender: no cierra la
-    solicitud. Hoy, `AI_HANDOFF_REPLY`; #1046 lo hace por organización y cambia esta función."""
-    return text.split() == settings.AI_HANDOFF_REPLY.split()
+def handoff_reply(ctx: TenantContext, text: str) -> bool:
+    """¿Es `text` el texto de traspaso vigente de la organización de `ctx` (`handoff`), salvo
+    espacios? Enviarlo no es atender: no cierra la solicitud ni cuenta como respuesta. Se compara
+    con el de ahora: uno anterior, cambiado después, sí cuenta (F8-08l2, #1058)."""
+    return not _answered(ctx, [text])
+
+
+def _answered(ctx: TenantContext, bodies: list[str]) -> bool:
+    """¿Alguno de `bodies` no es el texto de traspaso? Sin ninguno, no lo lee."""
+    if not bodies:
+        return False
+    fixed = handoff.text(ctx).split()
+    return any(body.split() != fixed for body in bodies)
+
+
+def _late(ctx: TenantContext, mine: QuerySet[Message], after: datetime | None) -> bool:
+    """¿Respondió una persona al cliente desde `after`? Con su texto de traspaso, no; ni con una
+    nota o un mensaje del sistema."""
+    if after is None:
+        return False
+    late = mine.filter(direction="OUTBOUND", created_at__gte=after)
+    return _answered(ctx, list(late.values_list("body", flat=True)))
 
 
 def request_human(
@@ -67,7 +86,8 @@ def request_human(
 ) -> tuple[Conversation, bool]:  # fmt: skip
     """Pide que una persona atienda la conversación; `True` si la abrió ahora. Con una ya abierta
     la devuelve tal cual (quién, cuándo y por qué siguen siendo los primeros), y con `after` (el
-    copiloto: cuándo empezó su run) tampoco abre nada si desde entonces una persona ya respondió.
+    copiloto: cuándo empezó su run) tampoco abre nada si desde entonces una persona ya respondió
+    (con algo que no sea el texto de traspaso).
     `ConversationClosed` si está cerrada; `DoesNotExist` fuera del alcance; `AccessDenied` sin el
     permiso."""
     alias = require_scope(ctx)
@@ -78,8 +98,7 @@ def request_human(
         if convo.status == Status.CLOSED:
             raise ConversationClosed
         mine = Message.objects.using(alias).filter(conversation_id=convo.pk, sender_type="USER")
-        replied = after and mine.filter(direction="OUTBOUND", created_at__gte=after).exists()
-        if convo.human_requested_at is not None or replied:
+        if convo.human_requested_at is not None or _late(ctx, mine, after):
             return convo, False
         values = dict(zip(FIELDS, (timezone.now(), reason, ctx.user_id), strict=True))
         metadata = {"reason": reason} | ({"ai_run_id": str(ai_run_id)} if ai_run_id else {})
