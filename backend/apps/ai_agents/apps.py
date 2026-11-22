@@ -53,19 +53,23 @@ def drop_old_partitions(sender: Any, using: str = "default", **kwargs: Any) -> N
 
 
 class AiAgentsConfig(AppConfig):
-    """`ai_agents` (L4, ADR-034 §2): registra las tools al arrancar y cierra el registro."""
+    """`ai_agents` (L4, ADR-034 §2): registra las tools al arrancar y cierra el registro; sirve
+    a `conversations` el texto de traspaso de cada organización (F8-08l2)."""
 
     name = "apps.ai_agents"
     label = "ai_agents"
 
     def ready(self) -> None:
         from apps.ai_agents import context, detectors, registry, tools  # noqa: F401, PLC0415
+        from apps.ai_agents.handoff_text import in_scope  # noqa: PLC0415
         from apps.ai_agents.tools import stock  # noqa: PLC0415
+        from apps.conversations import handoff  # noqa: PLC0415
 
         registry.freeze()
         stock.few_units()  # F8-07d: un umbral inválido no arranca (y en cada llamada, sin leer)
         context.limit()  # F8-08d: igual con el número de mensajes del contexto
         context.caps()  # F8-08g: y con los topes del runtime del copiloto
         detectors.handoff_reply()  # F8-08f: y con el texto fijo del traspaso
+        handoff.serve(in_scope)  # F8-08l2: la solicitud de atención humana lo reconoce
         post_migrate.connect(ensure_partitions, sender=self, dispatch_uid="ai_agents_partitions")
         post_migrate.connect(drop_old_partitions, sender=self, dispatch_uid="ai_records_retention")
