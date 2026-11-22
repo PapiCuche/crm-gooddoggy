@@ -397,7 +397,12 @@ def test_the_models_only_read(world: SimpleNamespace) -> None:
 # F8-08g (#1024) añade aquí, a propósito, el módulo del runtime que llama a `records.save`; F8-08h
 # (#771), su ruta, que solo llega a `records` a través de él (su contrato en pyproject.toml); F8-08i
 # (#1025) pone la ruta de resumir en esos mismos módulos: ninguno nuevo
-API = ("apps.ai_agents.api", "apps.ai_agents.api.urls", "apps.ai_agents.api.views")
+API = (
+    "apps.ai_agents.api",
+    "apps.ai_agents.api.urls",
+    "apps.ai_agents.api.views",
+    "apps.ai_agents.api.handoff",
+)  # F8-08l: la ruta del texto de traspaso; `protected` lo cierra
 RUNTIME = frozenset({"apps.ai_agents.copilot", *API})
 
 
@@ -411,6 +416,7 @@ def test_only_the_records_writer_reaches_the_audit_service() -> None:
     (mine,) = [c for c in contracts if c.get("source_modules") == ["apps.ai_agents"]]
     assert mine["ignore_imports"] == [
         "apps.ai_agents.records -> apps.audit.services",
+        "apps.ai_agents.replies -> apps.audit.services",  # F8-08l: el cambio del texto de traspaso
         "apps.ai_agents.context -> apps.conversations.selectors",
         "apps.ai_agents.copilot -> apps.ai_gateway.gateway",  # F8-08g: el modelo, por el gateway
     ]
