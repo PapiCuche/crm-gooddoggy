@@ -3668,6 +3668,68 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/conversations/{conversation_id}/copilot/suggestions/{suggestion_id}/insert/:
+    post:
+      operationId: conversations_copilot_suggestion_insert
+      description: 'Devuelve el texto de una sugerencia para el compositor y audita
+        `ai.suggestion.inserted` en la misma transacción (`conversations.view` con
+        su alcance y `ai.use`; 403 `PERMISSION_DENIED` sin uno de los dos). No envía
+        nada ni llama al modelo. 404: fuera de alcance, de otra organización, conversación
+        o persona, inexistente, un resumen o ya purgada (30 días). 409 `AI_EVIDENCE_EXPIRED`:
+        su evidencia caducó; hay que regenerarla.'
+      parameters:
+      - in: path
+        name: conversation_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: suggestion_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - ai
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CopilotInsert'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/conversations/{conversation_id}/copilot/summary/:
     post:
       operationId: conversations_copilot_summary
@@ -13771,6 +13833,14 @@ components:
       required:
       - reason
       - requested
+    CopilotInsert:
+      type: object
+      properties:
+        text:
+          type: string
+          description: El texto guardado, con sus `[verificar]`.
+      required:
+      - text
     CopilotMark:
       type: object
       properties:

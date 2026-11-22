@@ -10,7 +10,11 @@ organización o inexistente, el mismo 404, sin llamar ni reservar. Nada se enví
 lleva el texto ya marcado, el tipo y la posición de cada marca y el aviso de traspaso; nunca el
 tramo original, la evidencia, los costos ni el cuerpo del proveedor. El resumen es solo para quien
 atiende: el texto del modelo con sus tramos «sin verificar» (tipo y posición) y el aviso. Los
-errores llevan solo su código."""
+errores llevan solo su código.
+
+Insertar (F8-08j, ADR-034 §9.2) es una ruta de tenant normal, en la transacción de la petición:
+no llama al modelo ni cuenta en el tope por persona. Devuelve el texto de una sugerencia de quien la
+pidió y lo audita en esa transacción."""
 
 from collections.abc import Callable
 from typing import Any
@@ -23,7 +27,7 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.ai_agents import copilot
+from apps.ai_agents import copilot, drafts
 from core.api.errors import INTERNAL_ERROR, PERMISSION_DENIED, ApiError
 from core.api.schema import errors
 
@@ -151,3 +155,34 @@ class SummaryView(APIView):
                                          "marks": marks, "handoff": handoff,
                                          "generated_by_ai": True}).data  # fmt: skip
         return Response(body, status=201)
+
+
+class CopilotInsertSerializer(serializers.Serializer[Any]):
+    text = serializers.CharField(help_text="El texto guardado, con sus `[verificar]`.")
+
+
+@extend_schema_view(
+    post=extend_schema(
+        operation_id="conversations_copilot_suggestion_insert", tags=["ai"], request=None,
+        responses={200: CopilotInsertSerializer, **errors(401, 403, 404, 409)},
+        description="Devuelve el texto de una sugerencia para el compositor y audita "
+        "`ai.suggestion.inserted` en la misma transacción (`conversations.view` con su alcance y "
+        "`ai.use`; 403 `PERMISSION_DENIED` sin uno de los dos). No envía nada ni llama al modelo. "
+        "404: fuera de alcance, de otra organización, conversación o persona, inexistente, un "
+        "resumen o ya purgada (30 días). 409 `AI_EVIDENCE_EXPIRED`: su evidencia caducó; hay que "
+        "regenerarla.",
+    ),
+)  # fmt: skip
+class InsertView(APIView):
+    required_permissions = {"POST": ("conversations.view", "ai.use")}
+
+    def post(
+        self, request: Request, conversation_id: UUID, suggestion_id: UUID, **kwargs: Any
+    ) -> Response:
+        try:
+            text = drafts.insert(request.tenant, conversation_id, suggestion_id)
+        except drafts.NotFound:
+            raise NotFound from None
+        except drafts.EvidenceExpired:
+            raise ApiError("AI_EVIDENCE_EXPIRED", 409) from None
+        return Response(CopilotInsertSerializer({"text": text}).data)

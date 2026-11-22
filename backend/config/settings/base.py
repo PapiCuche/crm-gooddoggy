@@ -264,6 +264,11 @@ CELERY_BEAT_SCHEDULE = {
         "task": "ai_gateway.reseal_provider_keys",
         "schedule": crontab(hour=4, minute=7),
     },
+    # F8-08j (D-F8-05): a diario, el texto de los borradores del copiloto de más de 30 días.
+    "ai_agents.purge_suggestion_text": {
+        "task": "ai_agents.purge_suggestion_text",
+        "schedule": crontab(hour=4, minute=37),
+    },
     # F8-05b5 (ADR-034 §5): cada 5 minutos cierra como gastadas las reservas de IA huérfanas.
     "ai_gateway.close_orphan_reservations": {
         "task": "ai_gateway.close_orphan_reservations",
@@ -476,6 +481,9 @@ AI_HANDOFF_REPLY = (
     "Gracias por escribirnos. Una persona de nuestro equipo va a continuar con tu consulta por "
     "este medio."
 )
+# F8-08j (D-F8-05, ADR-034 §13): días que se guarda el texto de una sugerencia o un resumen; después
+# la purga diaria lo pone a NULL (los hallazgos y los ids quedan).
+AI_SUGGESTION_TEXT_DAYS = 30
 # F8-08k (D-F8-05): el job de migraciones quita el detalle de la IA de más de 12 meses completos.
 # Apagado hasta que el propietario lo confirme con datos reales en producción; encenderlo es un PR.
 AI_RECORDS_RETENTION = False
