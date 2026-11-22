@@ -51,7 +51,7 @@ pytestmark = pytest.mark.usefixtures("tenant_db", "real_stack")
 DB = psycopg.Connection[Any]
 URL = "/api/v1/o/{}/conversations/{}/copilot/suggest/"
 FIGURES = final("Tenemos {{c1}} a 30 soles.", ("c1", "PRODUCT_NAME", "toolu_1", "products.0.name"))
-COUNTED = "SELECT key, failures FROM login_throttles WHERE key LIKE 'ai_:%' ORDER BY failures"
+COUNTED = "SELECT key, failures FROM login_throttles WHERE key LIKE 'ai_:%' ORDER BY failures, key"
 SPENT = ("SELECT (SELECT count(*) FROM ai_budget_reservations), (SELECT count(*) FROM ai_runs),"
          " (SELECT count(*) FROM ai_suggestions)")  # fmt: skip
 
@@ -235,7 +235,7 @@ def test_the_twenty_first_request_in_the_window_is_429_and_nobody_else_is_affect
     assert 0 < int(answers[-1]["Retry-After"]) <= 600
     desk.fake.replies = [GOOD]
     assert ask(desk).status_code == 201  # ana tiene su propio contador
-    counted = [(f"aic:usr:{desk.ana.pk}", 1), (f"aic:usr:{eva.pk}", 21)]
+    counted = [(f"aic:usr:{desk.ana.pk}", 1), (f"aio:org:{desk.a}", 1), (f"aic:usr:{eva.pk}", 21)]
     assert migrator.execute(COUNTED).fetchall() == counted  # ninguno de `aik:` (`ai.manage`)
 
 
@@ -260,6 +260,7 @@ def test_only_a_post_to_the_exact_copilot_routes_runs_without_the_tenant_transac
         ("POST", route + "x/"), ("POST", route[:-1]), ("POST", route + "%0A"),
         ("POST", route.upper().replace("/API/V1/O/ORG-A/", "/api/v1/o/org-a/")),
         ("POST", tail + "copilot/"), ("POST", tail + f"copilot/{other}s/{uuid4()}/insert/"),
+        ("POST", tail + "copilot/feedback/"),  # solo esos dos nombres (revisión de #1044)
         ("POST", tail + "messages/"), ("POST", tail),
         ("POST", f"/api/v1/o/org-a/conversations/x/copilot/{last}/"),
         ("POST", "/api/v1/o/org-a/ai/budget/"),

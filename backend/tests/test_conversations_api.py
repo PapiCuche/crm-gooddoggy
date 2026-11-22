@@ -31,7 +31,7 @@ UNAUTHENTICATED = (401, b'{"code":"NOT_AUTHENTICATED"}')
 ITEM = {
     "id", "number", "status", "attention_mode", "assignee_kind", "assigned_user_id",
     "assigned_team_id", "contact", "channel", "last_message_at", "last_inbound_at",
-    "last_message_preview", "last_message_direction", "standby_since", "version",
+    "last_message_preview", "last_message_direction", "standby_since", "human_request", "version",
 }  # fmt: skip
 DETAIL = ITEM | {
     "assigned_at",

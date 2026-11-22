@@ -117,6 +117,12 @@ AI_ACCOUNT_THROTTLE = (10, 10 * 60)
 # (segundos), con su propio contador; el presupuesto de la organización sigue siendo el tope duro.
 # PENDIENTE DEL PROPIETARIO (#771): el valor propuesto por el programa; se cambia por PR.
 AI_COPILOT_THROTTLE = (20, 10 * 60)
+# Y por organización (F8-08m, #1047): pedidos de sugerir y resumir de toda la organización por
+# ventana (segundos), con su propio contador, contados tras el permiso; que una organización no
+# agote el servidor ni el proveedor aunque cada persona esté bajo su tope. PROVISIONAL: el valor
+# propuesto por el programa (seis personas a tope), pendiente de confirmación del propietario; se
+# cambia por PR. El presupuesto sigue siendo el tope duro.
+AI_COPILOT_ORG_THROTTLE = (120, 10 * 60)
 # Subidas de medios (F7-09b2): peticiones de una persona por ventana (< su calma). Pendiente del PO.
 MEDIA_UPLOAD_THROTTLE = (30, 10 * 60)
 # Rutas que miden el suelo de costo de una cotización (F5-09e2): peticiones por persona y
@@ -364,6 +370,7 @@ SPECTACULAR_SETTINGS = {
         # El catálogo (F3-06, F3-06b): el estado de un producto y el de una variante son listas
         # distintas con valores en común.
         "ConversationStatusEnum": "apps.conversations.models.Status",  # F6-02
+        "HumanRequestReasonEnum": "apps.conversations.models.HumanRequest",  # F8-08n
         "AiProviderEnum": "apps.ai_gateway.models.Provider",  # F8-03c
         "AiProviderAccountStatusEnum": "apps.ai_gateway.models.AccountStatus",
         "QuickReplyVariableEnum": "apps.conversations.quick_replies.VARIABLES",  # F6-08a2

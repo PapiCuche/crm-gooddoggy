@@ -25,10 +25,22 @@ contador por persona (`aic:usr:<id>`, `AI_COPILOT_THROTTLE`): cada uno es una ll
 que el tope es el de la persona y no se duplica con una ruta más; no gasta el de las escrituras de
 `ai.manage`. Solo cuenta el `POST` (otro método no llama al modelo), antes del permiso y del
 alcance; el presupuesto de la organización sigue siendo el tope duro.
+
+Además, un contador por organización (`aio:org:<id>`, `AI_COPILOT_ORG_THROTTLE`, F8-08m): que una
+organización no agote el servidor (cada pedido ocupa un worker hasta el plazo) ni el proveedor
+aunque cada persona esté bajo su tope. No es este middleware: la organización solo se conoce tras
+`TenantResolutionMiddleware` (la de la sesión, nunca la del cuerpo) y el permiso, en la vista
+(`HasPermission`, ya dentro de DRF); así que la vista llama a `organization_wait` tras el permiso y
+antes del runtime, en autocommit (no hay transacción en esas rutas: nada lo deshace), y
+`organization_refund` devuelve el pedido que el runtime rechaza por alcance (`NotFound`), solo en
+la ventana en la que contó. Un
+anónimo, un 403 o el tope por persona nunca llegan ahí.
 """
 
 import re
 from collections.abc import Callable
+from datetime import datetime
+from uuid import UUID
 
 from django.conf import settings
 from django.db import connection
@@ -55,19 +67,44 @@ ON CONFLICT (key) DO UPDATE SET
                     THEN now() ELSE t.updated_at END
 RETURNING failures,
   GREATEST(CEIL(EXTRACT(EPOCH FROM updated_at
-    + %(window)s::int * interval '1 second' - clock_timestamp())), 1)::int
+    + %(window)s::int * interval '1 second' - clock_timestamp())), 1)::int,
+  updated_at
 """
+# Solo en la ventana en la que contó: si otra petición ya abrió una nueva, no le quita nada.
+_REFUND = """
+UPDATE login_throttles SET failures = GREATEST(failures - 1, 0)
+WHERE key = %(key)s AND updated_at = %(since)s
+"""
+
+
+def _counted(key: str, rule: tuple[int, int]) -> tuple[int, datetime]:
+    """Cuenta en la ventana fija de `key`: los segundos de espera si pasó el tope (0 si no) y el
+    inicio de la ventana en la que contó."""
+    limit, window = rule
+    with connection.cursor() as cursor:
+        cursor.execute(_COUNT, {"key": key, "window": window})
+        asked, wait, since = cursor.fetchone()
+    return (int(wait) if asked > limit else 0), since
 
 
 def wait_for(user_id: object, prefix: str = "aik") -> int:
     """Cuenta la escritura de esa persona y devuelve los segundos que tiene que esperar si pasó el
     tope (0 si no)."""
     rule = settings.AI_COPILOT_THROTTLE if prefix == "aic" else settings.AI_ACCOUNT_THROTTLE
-    limit, window = rule
+    return _counted(f"{prefix}:usr:{user_id}", rule)[0]
+
+
+def organization_wait(organization_id: UUID) -> tuple[int, datetime]:
+    """Cuenta un pedido al copiloto de la organización (la del contexto resuelto de la sesión):
+    los segundos de espera si pasó su tope (0 si no) y la ventana en la que contó."""
+    return _counted(f"aio:org:{organization_id}", settings.AI_COPILOT_ORG_THROTTLE)
+
+
+def organization_refund(organization_id: UUID, since: datetime) -> None:
+    """Devuelve el pedido que el runtime rechazó sin llamar (fuera de alcance o sin `ai.use`), solo
+    si su ventana (`since`, de `organization_wait`) sigue abierta."""
     with connection.cursor() as cursor:
-        cursor.execute(_COUNT, {"key": f"{prefix}:usr:{user_id}", "window": window})
-        asked, wait = cursor.fetchone()
-    return int(wait) if asked > limit else 0
+        cursor.execute(_REFUND, {"key": f"aio:org:{organization_id}", "since": since})
 
 
 class AiAccountThrottleMiddleware:

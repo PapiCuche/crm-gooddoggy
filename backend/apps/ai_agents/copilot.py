@@ -15,7 +15,7 @@ import re
 import time
 from collections import Counter
 from dataclasses import dataclass, field, replace
-from datetime import datetime
+from datetime import UTC, datetime
 from uuid import UUID
 
 from django.conf import settings
@@ -28,7 +28,9 @@ from apps.ai_agents.registry import Evidence
 from apps.ai_gateway import gateway
 from apps.ai_gateway.gateway import GatewayError
 from apps.ai_gateway.llm import Block, LLMRequest, LLMResponse, Outcome, Text, ToolResult, Turn
+from apps.conversations import attention
 from apps.conversations.models import Conversation
+from apps.conversations.policy import ConversationClosed
 from core.observability.logging import get_logger
 from core.tenancy.context import TenantContext
 from core.tenancy.scope import require_scope, tenant_scope
@@ -247,6 +249,24 @@ def _save(
     return run.id
 
 
+def _request_human(
+    ctx: TenantContext, conversation_id: UUID, reason: str, run_id: UUID, after: datetime
+) -> None:
+    """F8-08n: el traspaso queda en la conversación, en su scope y tras guardar el run. Cerrada o
+    respondida desde `after`: nada; sin acceso, `NotFound`; otro fallo, al log con códigos."""
+    try:
+        with tenant_scope(ctx):
+            attention.request_human(ctx, conversation_id=conversation_id, reason=reason,
+                                    ai_run_id=run_id, after=after)  # fmt: skip
+    except ConversationClosed:
+        pass
+    except Conversation.DoesNotExist, AccessDenied:
+        raise NotFound from None
+    except Exception as error:  # nunca su mensaje: puede llevar valores de la fila
+        logger.error("ai.copilot_handoff_unsaved", ai_run_id=str(run_id),
+                     error=type(error).__name__)  # fmt: skip
+
+
 def _suggested(
     ctx: TenantContext, state: _State, customer: tuple[str, ...]
 ) -> tuple[records.Suggestion, str | None]:
@@ -279,7 +299,7 @@ def _summarized(
 def _invoke(ctx: TenantContext, conversation_id: UUID, purpose: Purpose) -> Draft:
     if connections["default"].in_atomic_block:
         raise RuntimeError(f"{purpose.lower()}() abre scopes cortos: ninguna transacción abierta")
-    started = time.monotonic()
+    started, opened = time.monotonic(), datetime.now(UTC)
     tool_calls, seconds = context.caps()
     request, customer = _prepare(ctx, conversation_id, purpose)
     summary = purpose == Purpose.SUMMARY
@@ -294,6 +314,8 @@ def _invoke(ctx: TenantContext, conversation_id: UUID, purpose: Purpose) -> Draf
         raise CopilotError(stop.code, _save(ctx, state, stop.code, started)) from None
     except Exception:  # la base, una tool o un error nuestro: el run sin borrador, con sus reservas
         raise CopilotError("INTERNAL_ERROR", _save(ctx, state, "INTERNAL_ERROR", started)) from None
+    if handoff is not None:
+        _request_human(ctx, conversation_id, handoff, run_id, opened)
     return Draft(run_id, kept.id, kept.text, kept.findings, handoff,
                  kept.evidence_expires_at)  # fmt: skip
 

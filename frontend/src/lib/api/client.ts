@@ -73,6 +73,7 @@ import type {
   DiscountPolicySetRequest,
   Error,
   GrantScopeRequest,
+  HumanRequestState,
   InventoryImportsRowsListParams,
   InventoryLevelsListParams,
   InventoryMovementsListParams,
@@ -7652,7 +7653,7 @@ export const getConversationsCopilotSuggestUrl = (orgSlug: string, conversationI
 };
 
 /**
- * Pide al copiloto una sugerencia de respuesta (`conversations.view` con su alcance y `ai.use`; 403 `PERMISSION_DENIED` sin uno de los dos). No envía nada: la sugerencia se guarda y se audita (`ai.suggestion.created`). 404: fuera de alcance, de otra organización o inexistente. 409 `AI_DISABLED`, `AI_NOT_CONFIGURED`, `AI_BUDGET_NOT_SET` o `AI_BUDGET_EXHAUSTED`. 502 `PROVIDER_UNAVAILABLE`, `PROVIDER_ERROR`, `CREDENTIALS_REJECTED`, `PROVIDER_BILLING`, `AI_MALFORMED` o `AI_TURN_INVALID`. 504 `AI_DEADLINE`. 429 `RATE_LIMITED`: el tope por persona (uno para sugerir y resumir), con `Retry-After`.
+ * Pide al copiloto una sugerencia de respuesta (`conversations.view` con su alcance y `ai.use`; 403 `PERMISSION_DENIED` sin uno de los dos). No envía nada: la sugerencia se guarda y se audita (`ai.suggestion.created`). 404: fuera de alcance, de otra organización o inexistente. 409 `AI_DISABLED`, `AI_NOT_CONFIGURED`, `AI_BUDGET_NOT_SET` o `AI_BUDGET_EXHAUSTED`. 502 `PROVIDER_UNAVAILABLE`, `PROVIDER_ERROR`, `CREDENTIALS_REJECTED`, `PROVIDER_BILLING`, `AI_MALFORMED` o `AI_TURN_INVALID`. 504 `AI_DEADLINE`. 429 `RATE_LIMITED`: el tope por persona (uno para sugerir y resumir), con `Retry-After`. 429 `AI_ORG_RATE_LIMITED`: el de la organización (uno para sugerir y resumir; tras el permiso), con `Retry-After`.
  */
 export const conversationsCopilotSuggest = async (
   orgSlug: string,
@@ -7843,7 +7844,7 @@ export const getConversationsCopilotSummaryUrl = (orgSlug: string, conversationI
 };
 
 /**
- * Pide al copiloto un resumen de la conversación para quien atiende (`conversations.view` con su alcance y `ai.use`; 403 `PERMISSION_DENIED` sin uno de los dos), sin herramientas. Se muestra «Generado por IA», con sus cifras, términos y enlaces marcados «sin verificar» (`marks`), y no se inserta en el compositor. No envía nada: se guarda y se audita (`ai.summary.created`). 404: fuera de alcance, de otra organización o inexistente. 409 `AI_DISABLED`, `AI_NOT_CONFIGURED`, `AI_BUDGET_NOT_SET` o `AI_BUDGET_EXHAUSTED`. 502 `PROVIDER_UNAVAILABLE`, `PROVIDER_ERROR`, `CREDENTIALS_REJECTED`, `PROVIDER_BILLING`, `AI_MALFORMED` o `AI_TURN_INVALID`. 504 `AI_DEADLINE`. 429 `RATE_LIMITED`: el tope por persona (uno para sugerir y resumir), con `Retry-After`.
+ * Pide al copiloto un resumen de la conversación para quien atiende (`conversations.view` con su alcance y `ai.use`; 403 `PERMISSION_DENIED` sin uno de los dos), sin herramientas. Se muestra «Generado por IA», con sus cifras, términos y enlaces marcados «sin verificar» (`marks`), y no se inserta en el compositor. No envía nada: se guarda y se audita (`ai.summary.created`). 404: fuera de alcance, de otra organización o inexistente. 409 `AI_DISABLED`, `AI_NOT_CONFIGURED`, `AI_BUDGET_NOT_SET` o `AI_BUDGET_EXHAUSTED`. 502 `PROVIDER_UNAVAILABLE`, `PROVIDER_ERROR`, `CREDENTIALS_REJECTED`, `PROVIDER_BILLING`, `AI_MALFORMED` o `AI_TURN_INVALID`. 504 `AI_DEADLINE`. 429 `RATE_LIMITED`: el tope por persona (uno para sugerir y resumir), con `Retry-After`. 429 `AI_ORG_RATE_LIMITED`: el de la organización (uno para sugerir y resumir; tras el permiso), con `Retry-After`.
  */
 export const conversationsCopilotSummary = async (
   orgSlug: string,
@@ -7923,6 +7924,183 @@ export const useConversationsCopilotSummary = <TError = ErrorType<Error>, TConte
   TContext
 > => {
   return useMutation(getConversationsCopilotSummaryMutationOptions(options), queryClient);
+};
+
+export const getConversationHumanRequestCreateUrl = (orgSlug: string, conversationId: string) => {
+  return `/api/v1/o/${orgSlug}/conversations/${conversationId}/human-request/`;
+};
+
+/**
+ * Pide que una persona la atienda (`AGENT`); una abierta no cambia. Nada sale al cliente. 409 `CONVERSATION_CLOSED`; 404: no existe o fuera del alcance.
+ */
+export const conversationHumanRequestCreate = async (
+  orgSlug: string,
+  conversationId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<HumanRequestState> => {
+  return apiFetch<HumanRequestState>(
+    getConversationHumanRequestCreateUrl(orgSlug, conversationId),
+    {
+      ...options,
+      method: "POST",
+    },
+  );
+};
+
+export const getConversationHumanRequestCreateMutationKey = () =>
+  ["conversationHumanRequestCreate"] as const;
+
+export const getConversationHumanRequestCreateMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof conversationHumanRequestCreate>>,
+    TError,
+    ConversationHumanRequestCreateMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof conversationHumanRequestCreate>>,
+  TError,
+  ConversationHumanRequestCreateMutationVariables,
+  TContext
+> => {
+  const mutationKey = getConversationHumanRequestCreateMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof conversationHumanRequestCreate>>,
+    ConversationHumanRequestCreateMutationVariables
+  > = (props) => {
+    const { orgSlug, conversationId } = props ?? {};
+
+    return conversationHumanRequestCreate(orgSlug, conversationId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ConversationHumanRequestCreateMutationResult = NonNullable<
+  Awaited<ReturnType<typeof conversationHumanRequestCreate>>
+>;
+
+export type ConversationHumanRequestCreateMutationError = ErrorType<Error>;
+export type ConversationHumanRequestCreateMutationVariables = {
+  orgSlug: string;
+  conversationId: string;
+};
+
+export const useConversationHumanRequestCreate = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof conversationHumanRequestCreate>>,
+      TError,
+      ConversationHumanRequestCreateMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof conversationHumanRequestCreate>>,
+  TError,
+  ConversationHumanRequestCreateMutationVariables,
+  TContext
+> => {
+  return useMutation(getConversationHumanRequestCreateMutationOptions(options), queryClient);
+};
+
+export const getConversationHumanRequestCloseUrl = (orgSlug: string, conversationId: string) => {
+  return `/api/v1/o/${orgSlug}/conversations/${conversationId}/human-request/`;
+};
+
+/**
+ * Cierra la solicitud; sin una abierta no cambia nada. 404: no existe o fuera del alcance.
+ */
+export const conversationHumanRequestClose = async (
+  orgSlug: string,
+  conversationId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<HumanRequestState> => {
+  return apiFetch<HumanRequestState>(getConversationHumanRequestCloseUrl(orgSlug, conversationId), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getConversationHumanRequestCloseMutationKey = () =>
+  ["conversationHumanRequestClose"] as const;
+
+export const getConversationHumanRequestCloseMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof conversationHumanRequestClose>>,
+    TError,
+    ConversationHumanRequestCloseMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof conversationHumanRequestClose>>,
+  TError,
+  ConversationHumanRequestCloseMutationVariables,
+  TContext
+> => {
+  const mutationKey = getConversationHumanRequestCloseMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof conversationHumanRequestClose>>,
+    ConversationHumanRequestCloseMutationVariables
+  > = (props) => {
+    const { orgSlug, conversationId } = props ?? {};
+
+    return conversationHumanRequestClose(orgSlug, conversationId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ConversationHumanRequestCloseMutationResult = NonNullable<
+  Awaited<ReturnType<typeof conversationHumanRequestClose>>
+>;
+
+export type ConversationHumanRequestCloseMutationError = ErrorType<Error>;
+export type ConversationHumanRequestCloseMutationVariables = {
+  orgSlug: string;
+  conversationId: string;
+};
+
+export const useConversationHumanRequestClose = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof conversationHumanRequestClose>>,
+      TError,
+      ConversationHumanRequestCloseMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof conversationHumanRequestClose>>,
+  TError,
+  ConversationHumanRequestCloseMutationVariables,
+  TContext
+> => {
+  return useMutation(getConversationHumanRequestCloseMutationOptions(options), queryClient);
 };
 
 export const getConversationMediaSendUrl = (orgSlug: string, conversationId: string) => {

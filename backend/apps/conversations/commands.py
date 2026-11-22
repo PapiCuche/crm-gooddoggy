@@ -40,7 +40,7 @@ from apps.access.selectors import (
 )
 from apps.audit.services import Entity, record
 from apps.contacts.models import Contact
-from apps.conversations import media, outbound_media
+from apps.conversations import attention, media, outbound_media
 from apps.conversations.channels import REASONS, Claim, Media, SendResult
 from apps.conversations.models import (
     META_ID,
@@ -171,6 +171,8 @@ def _status(
     convo.version += 1
     convo.save(using=alias, update_fields=["status", *stamps, "version", "updated_at"])
     record(ctx, action, Entity("conversation", convo.pk, convo.number), {"status": [old, new]})
+    if new in (Status.RESOLVED, Status.CLOSED):  # F8-08n: ya no espera a nadie
+        attention.clear(ctx, alias, convo, "CLOSED")
     emit(  # una pista para la pantalla: solo ids
         ctx, "conversation.updated", aggregate_type="conversation", aggregate_id=convo.pk,
     )  # fmt: skip
@@ -524,6 +526,8 @@ def record_outbound(
                 )
                 convo.save(using=alias, update_fields=[*LAST, "updated_at"])
             record(ctx, "message.queued", Entity("message", message.pk), None, _sent(message))
+            if not attention.handoff_reply(text):  # F8-08n: el aviso de traspaso no es atender
+                attention.clear(ctx, alias, convo, "REPLIED", message_id=message.pk)
             ids = {"conversation_id": convo.pk, "channel_account_id": convo.channel_account_id}
             emit(  # para el despachador (F6-04b); solo ids, nunca el texto
                 ctx,
@@ -701,6 +705,8 @@ def _assign(
     )  # fmt: skip
     if not moved:
         raise AssignmentConflict
+    if user_id is not None:  # F8-08n: una persona la atiende; soltarla no lo es
+        attention.clear(ctx, alias, convo, "ASSIGNED")
     ConversationAssignment.objects.using(alias).create(
         conversation_id=convo.pk, previous_team_id=convo.assigned_team_id, previous_user_id=old,
         new_team_id=convo.assigned_team_id, new_user_id=user_id, reason_code=reason,

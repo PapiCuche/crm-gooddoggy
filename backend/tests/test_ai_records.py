@@ -418,6 +418,7 @@ def test_only_the_records_writer_reaches_the_audit_service() -> None:
         "apps.ai_agents.replies -> apps.audit.services",  # F8-08l: el cambio del texto de traspaso
         "apps.ai_agents.context -> apps.conversations.selectors",
         "apps.ai_agents.copilot -> apps.ai_gateway.gateway",  # F8-08g: el modelo, por el gateway
+        "apps.ai_agents.copilot -> apps.conversations.attention",  # F8-08n: el traspaso
     ]
     (writer,) = [c for c in contracts if c.get("forbidden_modules") == ["apps.ai_agents.records"]]
     assert writer["type"] == "forbidden" and not writer.get("ignore_imports")
