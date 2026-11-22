@@ -127,6 +127,7 @@ docs/
 ├── fase-0/                   análisis A–U (histórico; decisiones actualizadas en 06)
 ├── adr/                      decisiones formales (inmutables una vez aceptadas)
 ├── architecture/             documentos vivos: estructura, tenancy, seguridad, dependencias, CI
+├── legal/                    borradores técnicos de avisos para revisión legal (no se publican desde aquí)
 ├── runbooks/                 operación: restauración de backups, rotación de secretos, incidentes (Fase 1+)
 └── phases/                   plan y cierre de cada fase (objetivo, archivos, tests, resultado)
 ```
