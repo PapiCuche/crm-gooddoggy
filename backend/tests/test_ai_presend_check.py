@@ -347,6 +347,41 @@ def test_a_check_the_database_does_not_answer_in_time_withholds_the_send(
     assert migrator.execute(LEDGER).fetchall() == [("PROVIDER_UNAVAILABLE", 0)]
 
 
+BOUND = {  # F8-13e: lo que pasaba con el tope por sentencia de F8-13d y ya no pasa
+    "many": (0.5, 3, 0.3, 0),  # tres sentencias de 0,3 s, cada una bajo el tope; juntas, no
+    "tiny": (0.0004, 1, 1.5, 0),  # menos de 1 ms daba `0ms`: sin tope
+    "late": (0.3, 0, 0, 0.5),  # un `True` que llega fuera del plazo
+}
+
+
+@pytest.mark.parametrize("case", BOUND)
+def test_the_whole_check_has_one_bound_and_a_late_yes_does_not_send(
+    desk: SimpleNamespace, provider: Provider, migrator: DB, monkeypatch: pytest.MonkeyPatch,
+    settings: Any, case: str,
+) -> None:  # fmt: skip
+    seconds, statements, each, after = BOUND[case]
+    settings.AI_SEND_CHECK_SECONDS = seconds
+    refused, calls = copilot._refused, list[None]()
+
+    def slow(*args: Any) -> Any:
+        calls.append(None)
+        if len(calls) != 2:  # la 1.ª es la de la reserva
+            return refused(*args)
+        with connection.cursor() as cursor:
+            for _ in range(statements):
+                cursor.execute("SELECT pg_sleep(%s)", [each])
+        answer = refused(*args)
+        threading.Event().wait(after)  # `desk` sustituye `time.sleep`
+        return answer
+
+    monkeypatch.setattr(copilot, "_refused", slow)
+    desk.fake.replies = [PLAIN]
+    started = time.monotonic()
+    assert suggest(desk) == "INTERNAL_ERROR" and time.monotonic() - started < 2.5
+    assert provider.settled(1) == [b""] and connection.execute_wrappers == []
+    assert migrator.execute(LEDGER).fetchall() == [("PROVIDER_UNAVAILABLE", 0)]
+
+
 def test_a_retry_on_a_new_connection_is_checked_again_and_withheld(
     desk: SimpleNamespace, provider: Provider, migrator: DB, other: DB,
     monkeypatch: pytest.MonkeyPatch,

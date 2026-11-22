@@ -40,6 +40,7 @@ from apps.ai_gateway.llm import (
 )
 from apps.ai_gateway.models import AccountStatus, AIProviderAccount
 from core import sealed
+from core.db import timeouts
 from core.observability.logging import get_logger
 from core.tenancy.context import TenantContext
 from core.tenancy.scope import require_scope, tenant_scope
@@ -48,7 +49,6 @@ logger = get_logger(__name__)
 ADAPTERS: dict[str, LLMProviderAdapter] = {"ANTHROPIC": AnthropicAdapter()}
 RESERVE = "SELECT public.ai_budget_reserve(%s, %s, %s, %s, %s)"
 SETTLE = "SELECT public.ai_budget_settle(%s, %s, %s, %s, %s, %s, %s, %s, %s)"
-CHECK_LIMIT = "SELECT set_config('statement_timeout', %s, true)"  # F8-13d: la de antes del envío
 SEND_SECONDS = 1  # F8-08g2: la espera de lectura mínima del cliente HTTP; con menos, no se envía
 REFUSED = {  # la restricción con la que `ai_budget_reserve` se niega -> el código
     "ai_budget_not_set": Outcome.AI_BUDGET_NOT_SET,
@@ -136,17 +136,21 @@ def _settled(ctx: TenantContext, held: UUID, *args: Any) -> None:
 
 
 def _again(ctx: TenantContext, admit: Callable[[], bool] | None) -> Callable[[], bool]:
-    """Antes de cada envío: `admit` en su propio scope, con `statement_timeout` =
-    `AI_SEND_CHECK_SECONDS` (una base que no contesta no retiene el envío: lo niega); un error no
-    envía nada (falla cerrado)."""
+    """Antes de cada envío: `admit` en su propio scope, con un plazo para **toda** la comprobación
+    (F8-13e): `AI_SEND_CHECK_SECONDS` desde antes de abrir la transacción; cada sentencia, con
+    `statement_timeout` = lo que queda (`core.db.timeouts.within`). Una base que no contesta a
+    tiempo, un `True` que llega tarde o un error no envían nada (falla cerrado)."""
 
     def proceed() -> bool:
         if admit is None:
             return True
+        end = time.monotonic() + settings.AI_SEND_CHECK_SECONDS
         try:
-            with tenant_scope(ctx), connections[require_scope(ctx)].cursor() as cursor:
-                cursor.execute(CHECK_LIMIT, [f"{int(settings.AI_SEND_CHECK_SECONDS * 1000)}ms"])
-                return admit()
+            with timeouts.within(end), tenant_scope(ctx):
+                passed = admit()
+            if time.monotonic() >= end:  # contestó, pero fuera del plazo
+                raise timeouts.Expired
+            return passed
         except Exception as error:  # nunca su mensaje: puede llevar valores
             logger.warning("ai.retry_withheld", error=type(error).__name__)
             return False

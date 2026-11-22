@@ -207,6 +207,28 @@ def check_ai_copilot_org_throttle(throttle: tuple[int, int], person: tuple[int, 
         )
 
 
+def check_ai_exclusion_throttle(throttle: tuple[int, int]) -> None:
+    """El tope por persona de excluir conversaciones de la IA (F8-13c, F8-13e): cada `PUT` puede
+    esperar a una llamada en curso con una conexión tomada. Ventana menor que la calma de la purga
+    del acceso."""
+    limit, window = throttle
+    if not (1 <= limit <= 60 and 60 <= window <= 840):
+        raise ImproperlyConfigured(
+            "AI_EXCLUSION_THROTTLE: 1 a 60 peticiones, ventana de 60 a 840 s"
+        )
+
+
+def check_ai_send_check_seconds(seconds: object) -> None:
+    """El plazo de la comprobación de justo antes de cada envío a la IA (F8-13e): un número de 0,1
+    a 10 s; con menos no cabe la comprobación y con más retiene la conexión al proveedor."""
+    if (
+        isinstance(seconds, bool)
+        or not isinstance(seconds, int | float)
+        or not (0.1 <= seconds <= 10)
+    ):
+        raise ImproperlyConfigured("AI_SEND_CHECK_SECONDS: un número de 0,1 a 10 segundos")
+
+
 def check_floor_throttle(rules: dict[str, tuple[int, int]]) -> None:
     """El tope de las rutas que miden el suelo de costo (F5-09e2): sin él, el costo se deduce."""
     quote, user = rules["quote"], rules["user"]

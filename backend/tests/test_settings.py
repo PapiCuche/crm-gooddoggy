@@ -503,6 +503,7 @@ def test_the_channel_limit_window_is_shorter_than_what_the_login_purge_keeps() -
     assert base.AI_ACCOUNT_THROTTLE[1] < kept  # los contadores `aik:` (F8-03d)
     assert base.AI_COPILOT_THROTTLE[1] < kept  # y los `aic:` (F8-08h)
     assert base.AI_COPILOT_ORG_THROTTLE[1] < kept  # y los `aio:` (F8-08m)
+    assert base.AI_EXCLUSION_THROTTLE[1] < kept  # y los `aix:` (F8-13c)
 
 
 @pytest.mark.parametrize("throttle", [(0, 600), (61, 600), (10, 59), (10, 841), (10, 3600)])
@@ -554,6 +555,35 @@ def test_production_refuses_an_organization_copilot_limit_it_cannot_enforce(
     env.check_ai_copilot_org_throttle((20, 600), (20, 600))  # el mismo que el de una persona
     with pytest.raises(ImproperlyConfigured, match="AI_COPILOT_ORG_THROTTLE"):
         env.check_ai_copilot_org_throttle(throttle, base.AI_COPILOT_THROTTLE)
+
+
+@pytest.mark.parametrize(
+    ("throttle", "seconds"),
+    [((0, 600), 3), ((61, 600), 3), ((30, 59), 3), ((30, 841), 3), ((30, 600), 0.0004),
+     ((30, 600), 0), ((30, 600), 0.09), ((30, 600), 10.5), ((30, 600), float("nan")),
+     ((30, 600), True), ((30, 600), "3"), ((30, 600), None)],
+)  # fmt: skip
+def test_production_refuses_an_exclusion_limit_or_a_send_check_it_cannot_enforce(
+    monkeypatch: pytest.MonkeyPatch, throttle: tuple[int, int], seconds: Any
+) -> None:
+    """F8-13e: el tope de excluir conversaciones y el plazo de la comprobación de antes de cada
+    envío (`0` o menos de 1 ms sería «sin tope») se comprueban al arrancar en production."""
+    from config import env
+    from config.settings import base
+
+    checked: list[Any] = []
+    monkeypatch.setattr(env, "check_ai_exclusion_throttle", checked.append)
+    monkeypatch.setattr(env, "check_ai_send_check_seconds", checked.append)
+    load_production(monkeypatch)
+    assert checked == [base.AI_EXCLUSION_THROTTLE, base.AI_SEND_CHECK_SECONDS]
+    monkeypatch.undo()
+    for limit, window, good in ((1, 60, 0.1), (60, 840, 10), (30, 600, 3), (30, 600, 0.5)):
+        env.check_ai_exclusion_throttle((limit, window))
+        env.check_ai_send_check_seconds(good)
+    name = "AI_EXCLUSION_THROTTLE" if throttle != (30, 600) else "AI_SEND_CHECK_SECONDS"
+    with pytest.raises(ImproperlyConfigured, match=f"^{name}:"):
+        env.check_ai_exclusion_throttle(throttle)
+        env.check_ai_send_check_seconds(seconds)
 
 
 @pytest.mark.parametrize("throttle", [(0, 600), (61, 600), (5, 59), (5, 841), (5, 3600)])
