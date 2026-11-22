@@ -2,13 +2,14 @@
 o el copiloto al detectar un traspaso, a nombre de su persona; se cierra a mano, al responder una
 persona, al tomarla o pasarla, o al resolverla o cerrarla. Idempotente; organización del contexto.
 Audita ids y códigos y deja `conversation.updated` para el Inbox; nada sale al cliente.
-También la exclusión de la IA de una conversación (F8-13, `set_ai_excluded`)."""
+También la exclusión de la IA de una conversación (F8-13, `set_ai_excluded`) y su lectura con
+candado compartido para el copiloto (F8-13c, `ai_included`)."""
 
 from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from django.db import transaction
+from django.db import connections, transaction
 from django.db.models import F, QuerySet
 from django.utils import timezone
 
@@ -23,6 +24,8 @@ from core.tenancy.scope import require_scope
 
 VIEW = "conversations.view"
 MANAGE_AI = "ai.manage"  # F8-13: volver a incluirla en la IA
+# F8-13c: compartido; `_visible` bloquea con FOR NO KEY UPDATE, que espera a este (y este, a él)
+INCLUDED = "SELECT ai_excluded_at IS NULL FROM conversations WHERE id = %s FOR SHARE"
 FIELDS = ("human_requested_at", "human_request_reason", "human_requested_by_user_id")
 
 
@@ -161,3 +164,14 @@ def set_ai_excluded(
         emit(ctx, "conversation.updated", aggregate_type="conversation", aggregate_id=convo.pk)
         convo.refresh_from_db(using=alias)
         return convo, True
+
+
+def ai_included(ctx: TenantContext, conversation_id: UUID) -> bool:
+    """F8-13c: si la conversación (RLS) no está excluida de la IA, con su fila bloqueada en modo
+    compartido hasta el fin de la transacción activa de `ctx`: `set_ai_excluded` espera a que
+    termine (la reserva del copiloto) o, si ya la bloqueó, esta espera a ver su marca. Sin fila,
+    `False` (falla cerrado). Sin permisos: quien llama ya los miró."""
+    with connections[require_scope(ctx)].cursor() as cursor:
+        cursor.execute(INCLUDED, [conversation_id])
+        row = cursor.fetchone()
+    return row is not None and row[0] is True

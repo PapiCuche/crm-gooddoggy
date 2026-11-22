@@ -3771,9 +3771,10 @@ paths:
         `AI_NOT_CONFIGURED`, `AI_BUDGET_NOT_SET` o `AI_BUDGET_EXHAUSTED`. 502 `PROVIDER_UNAVAILABLE`,
         `PROVIDER_ERROR`, `CREDENTIALS_REJECTED`, `PROVIDER_BILLING`, `AI_MALFORMED`
         o `AI_TURN_INVALID`. 409 `AI_EXCLUDED`: la conversación está excluida de la
-        IA (no se lee ni cuenta). 504 `AI_DEADLINE`. 429 `RATE_LIMITED`: el tope por
-        persona (uno para sugerir y resumir), con `Retry-After`. 429 `AI_ORG_RATE_LIMITED`:
-        el de la organización (uno para sugerir y resumir; tras el permiso), con `Retry-After`.'
+        IA (no se lee ni cuenta en el tope de la organización; sí en el de la persona).
+        504 `AI_DEADLINE`. 429 `RATE_LIMITED`: el tope por persona (uno para sugerir
+        y resumir), con `Retry-After`. 429 `AI_ORG_RATE_LIMITED`: el de la organización
+        (uno para sugerir y resumir; tras el permiso), con `Retry-After`.'
       parameters:
       - in: path
         name: conversation_id
@@ -3913,9 +3914,10 @@ paths:
         `AI_NOT_CONFIGURED`, `AI_BUDGET_NOT_SET` o `AI_BUDGET_EXHAUSTED`. 502 `PROVIDER_UNAVAILABLE`,
         `PROVIDER_ERROR`, `CREDENTIALS_REJECTED`, `PROVIDER_BILLING`, `AI_MALFORMED`
         o `AI_TURN_INVALID`. 409 `AI_EXCLUDED`: la conversación está excluida de la
-        IA (no se lee ni cuenta). 504 `AI_DEADLINE`. 429 `RATE_LIMITED`: el tope por
-        persona (uno para sugerir y resumir), con `Retry-After`. 429 `AI_ORG_RATE_LIMITED`:
-        el de la organización (uno para sugerir y resumir; tras el permiso), con `Retry-After`.'
+        IA (no se lee ni cuenta en el tope de la organización; sí en el de la persona).
+        504 `AI_DEADLINE`. 429 `RATE_LIMITED`: el tope por persona (uno para sugerir
+        y resumir), con `Retry-After`. 429 `AI_ORG_RATE_LIMITED`: el de la organización
+        (uno para sugerir y resumir; tras el permiso), con `Retry-After`.'
       parameters:
       - in: path
         name: conversation_id

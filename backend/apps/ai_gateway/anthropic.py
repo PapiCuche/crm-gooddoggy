@@ -1,11 +1,14 @@
 """El adaptador de Anthropic (F8-05; ADR-034 §3): la Messages API por `core.http`, nunca con el
 SDK; tools con `tool_choice: auto` y la respuesta final con `output_config.format`. Como mucho dos
 reintentos, solo tras un 429 o un 5xx (sin uso) y dentro del plazo; nunca tras un tiempo agotado o
-un corte (pudo facturar). Solo se registran el estado y el `request-id`, nunca el cuerpo."""
+un corte (pudo facturar), y solo si `proceed()` lo permite tras la espera (F8-13c: la exclusión de
+la conversación o la persona; si no, no se reenvía). Solo se registran el estado y el `request-id`,
+nunca el cuerpo."""
 
 import json
 import re
 import time
+from collections.abc import Callable
 from typing import Any
 
 from django.conf import settings
@@ -111,7 +114,9 @@ class AnthropicAdapter:
             output["format"] = {"type": "json_schema", "schema": request.output_schema}
         return json.dumps(body, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode()
 
-    def send(self, key: str, body: bytes, seconds: float) -> llm.LLMResponse:
+    def send(
+        self, key: str, body: bytes, seconds: float, proceed: Callable[[], bool]
+    ) -> llm.LLMResponse:
         url = f"https://{settings.AI_PROVIDER_HOSTS['ANTHROPIC']}/v1/messages"
         headers = {"x-api-key": key, "anthropic-version": probe.API_VERSION,
                    "content-type": "application/json"}  # fmt: skip
@@ -141,4 +146,6 @@ class AnthropicAdapter:
                 if not again or time.monotonic() + wait >= end:
                     raise ProviderError(outcome, billed=False, request_id=rid)
                 time.sleep(wait)
+                if not proceed():  # F8-13c: tras la espera, antes de reenviar el contenido
+                    raise ProviderError(Outcome.AI_WITHHELD, billed=False, request_id=rid)
         raise AssertionError("inalcanzable")  # pragma: no cover

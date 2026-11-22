@@ -11,7 +11,11 @@ run. Tools fijadas por el código; organización y persona de `ctx`; el log llev
 `ai_run_id`, códigos y duraciones. «Resumir» (`summarize`, F8-08i) es lo mismo sin tools.
 Una conversación excluida de la IA (F8-13) se rechaza con `AI_EXCLUDED` antes de leer su contexto
 y otra vez antes de cada llamada pagada; si la marca no se puede leer, no se llama (falla cerrado).
-Una llamada ya enviada termina, como con el interruptor."""
+F8-13c: esa comprobación corre dentro de la transacción de la reserva del gateway (`admit`), con
+`FOR SHARE` sobre la conversación: excluirla (`FOR NO KEY UPDATE`) espera a que la reserva se
+confirme. Una exclusión confirmada antes impide la reserva y el envío; una confirmada después puede
+ver salir la llamada ya reservada, como con el interruptor. Antes de cada reintento del proveedor se
+vuelve a mirar: si está excluida o la comprobación falla, no se reenvía."""
 
 import json
 import re
@@ -86,6 +90,7 @@ class _State:  # lo que se registra, también si la invocación se corta
     evidence: dict[str, Evidence | None] = field(default_factory=dict)
     reservations: list[UUID] = field(default_factory=list)
     retried: bool = False
+    refused: str | None = None  # F8-13c: el código de la última comprobación que lo negó
 
 
 def _admitted(ctx: TenantContext, conversation_id: UUID) -> None:
@@ -124,16 +129,22 @@ def _prepare(
 
 
 def _refused(ctx: TenantContext, conversation_id: UUID) -> str | None:
-    """Antes de cada llamada pagada: `ACCESS_DENIED` si la persona perdió su membresía o `ai.use`;
-    `AI_EXCLUDED` si la conversación está excluida o ya no se puede leer (falla cerrado)."""
-    with tenant_scope(ctx):
-        try:
-            if not has_permission(execution_context(ctx), "ai.use"):
-                return "ACCESS_DENIED"
-        except AccessDenied:
+    """En el scope del gateway, antes de reservar y de cada reintento: `ACCESS_DENIED` si la
+    persona perdió su membresía o `ai.use`; `AI_EXCLUDED` si la conversación está excluida o ya no
+    se puede leer (falla cerrado). Un error de la base sale tal cual."""
+    try:
+        if not has_permission(execution_context(ctx), "ai.use"):
             return "ACCESS_DENIED"
-        included = Conversation.objects.filter(pk=conversation_id, ai_excluded_at__isnull=True)
-        return None if included.exists() else EXCLUDED
+    except AccessDenied:
+        return "ACCESS_DENIED"
+    return None if attention.ai_included(ctx, conversation_id) else EXCLUDED  # FOR SHARE
+
+
+def _admits(ctx: TenantContext, state: _State) -> bool:
+    """El `admit` del gateway: guarda el código para el run (sin código, si falló: el gateway no
+    reenvía y el run queda `INTERNAL_ERROR`)."""
+    state.refused = _refused(ctx, state.conversation_id)
+    return state.refused is None
 
 
 def _call(ctx: TenantContext, state: _State) -> LLMResponse:
@@ -142,13 +153,14 @@ def _call(ctx: TenantContext, state: _State) -> LLMResponse:
         raise CopilotError("AI_DEADLINE")
     if not state.calls_left or len(state.request.turns) + 2 > settings.AI_TURN_LIMITS["turns"]:
         raise CopilotError(Outcome.AI_TURN_INVALID)  # su respuesta ya no se podría contestar
-    if refused := _refused(ctx, state.conversation_id):
-        raise CopilotError(refused)
     state.calls_left -= 1
     try:
-        reply = gateway.complete(ctx, state.request, deadline=state.deadline)
+        reply = gateway.complete(ctx, state.request, deadline=state.deadline,
+                                 admit=lambda: _admits(ctx, state))  # fmt: skip
     except GatewayError as error:  # sin tiempo ya ni para enviar, o cortado en el plazo
         state.reservations += [error.reservation_id] if error.reservation_id else []
+        if error.outcome == Outcome.AI_WITHHELD:  # F8-13c: excluida, sin `ai.use` o sin leerse
+            raise CopilotError(state.refused or "INTERNAL_ERROR") from None
         late = time.monotonic() >= state.deadline - MARGIN  # o liberada por falta de tiempo
         raise CopilotError("AI_DEADLINE" if late else error.outcome) from None
     except AccessDenied:  # la membresía cayó entre la comprobación y la reserva: no reservó

@@ -1,19 +1,25 @@
 """F8-13 (#1071): una conversación excluida de la IA nunca llega al proveedor, ni por la API ni
 llamando al runtime directamente: ni su contexto se lee, ni se reserva presupuesto, ni cuenta en los
-topes; la marca puesta a mitad corta la llamada siguiente. Con la API falsa (`tests.ai_sim`) que
-cuenta llamadas, middleware, sesión y PostgreSQL con `crm_app`. Datos ficticios."""
+topes salvo el de la persona (F8-13c); la marca puesta a mitad corta la llamada siguiente, la que
+espera su reserva y el reintento que espera su `retry-after` (F8-13c). Con la API falsa
+(`tests.ai_sim`) que cuenta llamadas, middleware, sesión y PostgreSQL con `crm_app`; la
+concurrencia, con hilos y conexiones reales. Datos ficticios."""
 
+import threading
+import time
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import Mock
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
-from django.db import OperationalError
+from django.db import OperationalError, connection
 from django.utils import timezone
 
 from apps.ai_agents import context, copilot, registry
-from apps.conversations import selectors
+from apps.ai_gateway import gateway
+from apps.audit.services import record as audit_record
+from apps.conversations import attention, selectors
 from apps.conversations.models import Conversation
 from core.tenancy.scope import tenant_scope
 from tests.test_ai_copilot_runtime import GOOD, PLAIN, SEARCH, desk
@@ -22,6 +28,7 @@ from tests.test_ai_copilot_suggest_api import ask as suggest
 from tests.test_ai_copilot_summary_api import ask as summary
 from tests.test_ai_copilot_summary_api import said
 from tests.test_ai_gateway import world
+from tests.test_ai_kill_switch import ahead, later
 from tests.test_memberships import ctx
 from tests.test_self_context import real_stack
 
@@ -55,21 +62,31 @@ def reads(desk: SimpleNamespace, monkeypatch: pytest.MonkeyPatch) -> list[str]:
     return seen
 
 
-def spent_nothing(migrator: DB) -> bool:
-    counted = [failures for _, failures in migrator.execute(COUNTED).fetchall()]
-    return migrator.execute(SPENT).fetchone() == (0, 0, 0) and not any(counted)
+def spent_nothing(migrator: DB, person: int = 0) -> bool:
+    """Ni reserva, ni run, ni borrador; el tope de la organización, sin contar; el de la persona,
+    `person` (F8-13c: una exclusión cuenta en el de la persona)."""
+    counted = dict(migrator.execute(COUNTED).fetchall())
+    mine = {key: n for key, n in counted.items() if key.startswith("aic:usr:")}
+    others = [n for key, n in counted.items() if not key.startswith("aic:usr:")]
+    return (migrator.execute(SPENT).fetchone() == (0, 0, 0) and not any(others)
+            and sum(mine.values()) == person)  # fmt: skip
+
+
+RUNS = "SELECT outcome, cardinality(reservation_ids) FROM ai_runs"
+LEDGER = "SELECT outcome, cost_usd FROM ai_llm_calls"
+USAGE = "SELECT spent_usd, reserved_usd FROM ai_budget_usage"
 
 
 @pytest.mark.parametrize("route", ASKS)
-def test_an_excluded_conversation_reads_calls_reserves_and_counts_nothing(
+def test_an_excluded_conversation_reads_calls_and_reserves_nothing_and_counts_for_the_person(
     desk: SimpleNamespace, migrator: DB, reads: list[str], route: str
 ) -> None:
     mark(desk)
     answers = [ASKS[route](desk) for _ in range(3)]
     assert [(a.status_code, a.json()) for a in answers] == [EXCLUDED] * 3
-    assert desk.fake.calls == [] and reads == [] and spent_nothing(migrator)
-    # antes del tope de la organización (ni lo cuenta); el de la persona, devuelto cada vez
-    assert migrator.execute(COUNTED).fetchall() == [(f"aic:usr:{desk.ana.pk}", 0)]
+    assert desk.fake.calls == [] and reads == [] and spent_nothing(migrator, person=3)
+    # antes del tope de la organización (ni lo cuenta); el de la persona cuenta cada vez (F8-13c)
+    assert migrator.execute(COUNTED).fetchall() == [(f"aic:usr:{desk.ana.pk}", 3)]
     mark(desk, on=False)  # incluida otra vez, el copiloto vuelve a responder
     desk.fake.replies = [PLAIN if route == "suggest" else said("Pide un collar.")]
     assert ASKS[route](desk).status_code == 201 and "build" in reads
@@ -98,7 +115,8 @@ def test_excluded_after_the_route_admitted_it_is_refused_before_its_context(
     monkeypatch.setattr(copilot, "admit", admitted)
     answer = suggest(desk)
     assert (answer.status_code, answer.json()) == EXCLUDED
-    assert desk.fake.calls == [] and reads == [] and spent_nothing(migrator)  # ambos devueltos
+    # la organización, devuelta; la persona, contada (F8-13c)
+    assert desk.fake.calls == [] and reads == [] and spent_nothing(migrator, person=1)
 
 
 def test_excluded_between_two_calls_of_one_run_stops_the_next_call(
@@ -133,3 +151,191 @@ def test_a_mark_that_cannot_be_read_calls_nothing(
         with pytest.raises(OperationalError):
             run(ctx(desk.a, desk.ana), desk.convo)
     assert desk.fake.calls == []
+
+
+def test_the_person_cap_still_stops_a_loop_on_an_excluded_conversation(
+    desk: SimpleNamespace, migrator: DB, settings: Any
+) -> None:
+    """F8-13c: antes, cada rechazo devolvía el pedido de la persona y podía repetirse sin coste."""
+    settings.AI_COPILOT_THROTTLE = (2, 600)
+    mark(desk)
+    answers = [suggest(desk) for _ in range(3)]
+    assert [a.status_code for a in answers] == [409, 409, 429]
+    assert answers[-1].json() == {"code": "RATE_LIMITED"}
+    assert desk.fake.calls == [] and spent_nothing(migrator, person=3)
+
+
+def test_excluded_after_the_context_and_before_the_first_call_reserves_and_calls_nothing(
+    desk: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    prepare = copilot._prepare
+
+    def prepared(*args: Any) -> Any:
+        built = prepare(*args)
+        mark(desk)  # ya leído el contexto, antes de la primera reserva
+        return built
+
+    monkeypatch.setattr(copilot, "_prepare", prepared)
+    desk.fake.replies = [PLAIN]
+    answer = suggest(desk)
+    assert (answer.status_code, answer.json()) == EXCLUDED and desk.fake.calls == []
+    assert migrator.execute(RUNS).fetchall() == [("AI_EXCLUDED", 0)]  # el run, sin reservas
+    assert migrator.execute(SPENT).fetchone() == (0, 1, 0)
+    counted = dict(migrator.execute(COUNTED).fetchall())  # con su run: los dos cuentan
+    assert counted == {f"aic:usr:{desk.ana.pk}": 1, f"aio:org:{desk.a}": 1}
+
+
+BROKEN = "SELECT ai_excluded_at IS NULL FROM conversations WHERE nope = %s FOR SHARE"
+
+
+def test_a_conversation_that_cannot_be_read_counts_as_excluded(desk: SimpleNamespace) -> None:
+    """Sin fila visible (inexistente o de otra organización, por RLS): falla cerrado."""
+    with tenant_scope(ctx(desk.a, desk.ana)) as tenant:
+        assert attention.ai_included(tenant, desk.convo) is True
+        assert attention.ai_included(tenant, uuid4()) is False
+    with tenant_scope(ctx(desk.b, desk.ana)) as other:
+        assert attention.ai_included(other, desk.convo) is False
+
+
+def test_the_organization_switch_is_checked_before_the_exclusion_lock(
+    desk: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """El interruptor sigue primero en la transacción de la reserva: apagada, ni mira la marca."""
+    seen: list[None] = []
+    monkeypatch.setattr(attention, "ai_included", ahead(lambda: seen.append(None),
+                                                        attention.ai_included))  # fmt: skip
+    migrator.execute("UPDATE ai_switches SET enabled = false WHERE organization_id = %s", [desk.a])
+    with pytest.raises(copilot.CopilotError) as caught:
+        copilot.suggest(ctx(desk.a, desk.ana), desk.convo)
+    assert caught.value.code == "AI_DISABLED" and seen == [] and desk.fake.calls == []
+
+
+def test_a_database_error_in_the_check_before_reserving_calls_and_reserves_nothing(
+    desk: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(attention, "INCLUDED", BROKEN)  # un error real de PostgreSQL
+    desk.fake.replies = [PLAIN]
+    with pytest.raises(copilot.CopilotError) as caught:
+        copilot.suggest(ctx(desk.a, desk.ana), desk.convo)
+    assert caught.value.code == "INTERNAL_ERROR" and caught.value.run_id is not None
+    assert desk.fake.calls == [] and migrator.execute(RUNS).fetchall() == [("INTERNAL_ERROR", 0)]
+    assert migrator.execute(SPENT).fetchone() == (0, 1, 0)  # ninguna reserva
+
+
+def broken_check(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(attention, "INCLUDED", BROKEN)
+
+
+def drop_ai_use(migrator: DB) -> None:
+    migrator.execute("DELETE FROM role_permissions WHERE permission_code = 'ai.use'")
+
+
+@pytest.mark.parametrize(("during", "outcome"), [
+    ("excluded", "AI_EXCLUDED"), ("ai.use", "ACCESS_DENIED"), ("broken", "INTERNAL_ERROR"),
+])  # fmt: skip
+def test_nothing_is_resent_after_a_retry_wait_once_it_is_withheld(
+    desk: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch, during: str, outcome: str
+) -> None:
+    """Un 429 con `retry-after`; durante la espera, la exclusión, perder `ai.use` o un error real
+    de la base en la comprobación: el proveedor no recibe nada más y la reserva se libera."""
+
+    def wait(_: float) -> None:
+        {"excluded": lambda: mark(desk), "ai.use": lambda: drop_ai_use(migrator),
+         "broken": lambda: broken_check(monkeypatch)}[during]()  # fmt: skip
+
+    monkeypatch.setattr(time, "sleep", wait)
+    desk.fake.script, desk.fake.replies = ["rate_limit"], [PLAIN]
+    with pytest.raises(copilot.CopilotError) as caught:
+        copilot.suggest(ctx(desk.a, desk.ana), desk.convo)
+    assert caught.value.code == outcome and len(desk.fake.calls) == 1
+    assert migrator.execute(RUNS).fetchall() == [(outcome, 1)]  # con su reserva
+    assert migrator.execute(LEDGER).fetchall() == [("PROVIDER_UNAVAILABLE", 0)]  # liberada
+    assert migrator.execute(USAGE).fetchone() == (0, 0)
+
+
+def test_a_retry_without_any_change_is_still_sent(
+    desk: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    desk.fake.script, desk.fake.replies = ["rate_limit"], [PLAIN]
+    copilot.suggest(ctx(desk.a, desk.ana), desk.convo)
+    assert len(desk.fake.calls) == 2 and desk.sleeps == [2.0]
+    assert migrator.execute(RUNS).fetchall() == [("OK", 1)]
+
+
+def exclude(desk: SimpleNamespace) -> None:
+    """El comando del `PUT …/ai-exclusion/`, con su propio `lock_timeout`: un bloqueo mutuo o una
+    espera sin fin fallan en segundos, no cuelgan la prueba."""
+    with tenant_scope(ctx(desk.a, desk.ana)) as tenant, connection.cursor() as cursor:
+        cursor.execute("SET LOCAL lock_timeout = '10s'")
+        version = Conversation.objects.get(pk=desk.convo).version
+        attention.set_ai_excluded(tenant, conversation_id=desk.convo, excluded=True,
+                                  version=version)  # fmt: skip
+
+
+def excluded_at(migrator: DB, desk: SimpleNamespace) -> Any:
+    sql = "SELECT ai_excluded_at FROM conversations WHERE id = %s"
+    return migrator.execute(sql, [desk.convo]).fetchone()[0]  # type: ignore[index]
+
+
+def test_an_exclusion_waits_for_the_reservation_that_read_the_conversation_included(
+    desk: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Hilos y conexiones reales: la reserva tiene la fila con FOR SHARE; el comando (FOR NO KEY
+    UPDATE) espera a que se confirme. La llamada ya reservada sale; la siguiente, no."""
+    inside, gate, done = threading.Event(), threading.Event(), list[Any]()
+
+    def pause() -> None:
+        inside.set()
+        gate.wait(10)
+
+    monkeypatch.setattr(gateway, "_reserve", ahead(pause, gateway._reserve))
+    desk.fake.replies = [PLAIN]
+    asking = later(lambda: done.append(copilot.suggest(ctx(desk.a, desk.ana), desk.convo)))
+    assert inside.wait(10)
+    stopping = later(lambda: exclude(desk))
+    stopping.join(0.5)
+    assert stopping.is_alive() and excluded_at(migrator, desk) is None  # espera a la reserva
+    gate.set()
+    for thread in (asking, stopping):
+        thread.join(15)
+        assert not thread.is_alive()
+    assert len(done) == 1 and len(desk.fake.calls) == 1  # reservada antes: sale
+    assert excluded_at(migrator, desk) is not None
+    desk.fake.replies = [PLAIN]
+    with pytest.raises(copilot.CopilotError) as caught:  # y la siguiente, ya no
+        copilot.suggest(ctx(desk.a, desk.ana), desk.convo)
+    assert caught.value.code == "AI_EXCLUDED" and len(desk.fake.calls) == 1
+
+
+def test_a_reservation_waits_for_an_exclusion_in_flight_and_then_sends_nothing(
+    desk: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """El comando ya bloqueó la fila (antes de confirmar): la comprobación de la reserva espera,
+    ve la marca confirmada y no reserva ni llama."""
+    inside, gate, outcome = threading.Event(), threading.Event(), list[str]()
+
+    def pause() -> None:
+        inside.set()
+        gate.wait(10)
+
+    monkeypatch.setattr(attention, "record", ahead(pause, audit_record))
+    stopping = later(lambda: exclude(desk))
+    assert inside.wait(10)
+    desk.fake.replies = [PLAIN]
+
+    def ask() -> None:
+        try:
+            copilot.suggest(ctx(desk.a, desk.ana), desk.convo)
+        except copilot.CopilotError as stop:
+            outcome.append(stop.code)
+
+    asking = later(ask)
+    asking.join(0.5)
+    assert asking.is_alive()  # leyó el contexto y espera en la comprobación de la reserva
+    gate.set()
+    for thread in (stopping, asking):
+        thread.join(15)
+        assert not thread.is_alive()
+    assert outcome == ["AI_EXCLUDED"] and desk.fake.calls == []
+    assert migrator.execute(RUNS).fetchall() == [("AI_EXCLUDED", 0)]
+    assert migrator.execute("SELECT count(*) FROM ai_budget_reservations").fetchone() == (0,)
