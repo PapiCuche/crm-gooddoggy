@@ -8,9 +8,9 @@ Procedimientos operativos. Se escriben a partir de la Fase 1, conforme exista lo
 - [Backups, restauración y simulacro de producción](backup-restore.md) (F1-16).
 - [Primer arranque de producción](production-first-boot.md) (F1-17).
 - [Alta de un miembro en producción](add-member.md) (F2-127).
+- [Activación del copiloto de IA: lista de producción y guía del propietario](ai-copilot-activation.md) (#1050), con el kill switch de IA.
 
 - Rotación de secretos (roles de BD, KEK de credenciales, `DJANGO_SECRET_KEY`, secretos de proveedores).
 - Recuperación de acceso MFA.
 - Incidente de fuga de datos / secreto expuesto.
 - Reproceso de webhooks fallidos.
-- Activación del kill switch de IA.
