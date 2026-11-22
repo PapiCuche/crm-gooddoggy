@@ -3,21 +3,17 @@
 valida al guardar y al usarlo: uno guardado que ya no vale no se propone (el inicial, y un aviso
 en el log con los códigos). La organización, siempre la del contexto."""
 
-from dataclasses import dataclass
-from datetime import datetime
-
 from django.db import connections, transaction
 from django.utils import timezone
 
 from apps.access.selectors import AccessDenied, Denied, execution_context, has_permission
 from apps.ai_agents import detectors
+from apps.ai_agents.handoff_text import Reply, effective
 from apps.ai_agents.models import AIHandoffReply
 from apps.audit.services import Entity, record
-from core.observability.logging import get_logger
 from core.tenancy.context import TenantContext
 from core.tenancy.scope import require_scope, tenant_scope
 
-logger = get_logger(__name__)
 ACTION = "ai.handoff_reply.changed"
 # La fila de la organización con el texto pedido; si ya existe (o otra petición la crea a la vez),
 # nada: entonces se bloquea y se cambia.
@@ -33,42 +29,24 @@ class InvalidReply(ValueError):  # noqa: N818 — lleva solo los códigos, nunca
         self.problems = problems
 
 
-@dataclass(frozen=True)
-class Reply:
-    text: str
-    initial: bool  # el del propietario: sin texto guardado, o el guardado ya no vale
-    changed_at: datetime | None
-
-
 def _allowed(ctx: TenantContext) -> None:
     ectx = execution_context(ctx)  # `AccessDenied` si no es un miembro activo
     if not has_permission(ectx, "ai.manage"):
         raise AccessDenied(Denied.PERMISSION)
 
 
-def _effective(alias: str) -> Reply:
-    """El que propone el copiloto, validado al usarlo."""
-    row: AIHandoffReply | None = AIHandoffReply.objects.using(alias).first()
-    if row is None:
-        return Reply(detectors.handoff_reply(), True, None)
-    if problems := detectors.reply_problems(row.text):
-        logger.warning("ai.handoff_reply_invalid", problems=list(problems))
-        return Reply(detectors.handoff_reply(), True, row.changed_at)
-    return Reply(row.text, False, row.changed_at)
-
-
 def current(ctx: TenantContext) -> str:
     """El texto de traspaso de la organización de `ctx`, en su propio scope corto. Sin permiso:
     lo usa el runtime del copiloto, que ya comprobó `ai.use`."""
     with tenant_scope(ctx):
-        return _effective(require_scope(ctx)).text
+        return effective(require_scope(ctx)).text
 
 
 def read(ctx: TenantContext) -> Reply:
     """El texto que propone el copiloto. `AccessDenied` sin `ai.manage`."""
     alias = require_scope(ctx)
     _allowed(ctx)
-    return _effective(alias)
+    return effective(alias)
 
 
 def change(ctx: TenantContext, text: str) -> Reply:
@@ -81,7 +59,7 @@ def change(ctx: TenantContext, text: str) -> Reply:
     if problems := detectors.reply_problems(text):
         raise InvalidReply(problems)
     with transaction.atomic(using=alias):
-        before = _effective(alias).text
+        before = effective(alias).text
         with connections[alias].cursor() as cursor:
             cursor.execute(_CREATE, [ctx.organization_id, text, ctx.user_id])
             created = cursor.fetchone()
@@ -95,5 +73,5 @@ def change(ctx: TenantContext, text: str) -> Reply:
         if created is not None or before != text:
             changes = {"length": [len(before), len(text)]}
             record(ctx, ACTION, Entity("ai_handoff_reply", row.pk), changes)
-        done = _effective(alias)
+        done = effective(alias)
     return done
