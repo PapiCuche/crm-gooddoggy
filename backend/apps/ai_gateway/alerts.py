@@ -19,7 +19,7 @@ from django.db import DatabaseError
 
 from apps.access.selectors import holders
 from apps.ai_gateway.models import AIBudget, AIBudgetUsage
-from apps.audit.models import AuditLog
+from apps.audit.selectors import entries
 from apps.audit.services import Entity, record
 from apps.organizations.models import Organization
 from core import mail
@@ -90,9 +90,7 @@ def _record(ctx: TenantContext, event_id: UUID) -> Found | str:
     if not AIBudgetUsage.objects.using(alias).filter(**marked).exists():
         return "unmarked"
     since = datetime.combine(month, time.min, tzinfo=UTC)  # antes del día 1 en Lima
-    alerted = AuditLog.objects.using(alias).filter(
-        occurred_at__gte=since, action=ACTION, entity_id=budget_id
-    )
+    alerted = entries().filter(occurred_at__gte=since, action=ACTION, entity_id=budget_id)
     if alerted.filter(metadata__event=kind, metadata__month=month.isoformat()).exists():
         return "duplicate"
     organizations = Organization.objects.using(alias).filter(
