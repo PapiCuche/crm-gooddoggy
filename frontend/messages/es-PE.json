@@ -241,7 +241,8 @@
       "LENGTH_REQUIRED": "El archivo no llegó completo al servidor. Vuelve a intentarlo.",
       "MEDIA_INFECTED": "El antivirus encontró un virus en este archivo, así que no se envió. Elige otro archivo.",
       "MEDIA_TOO_COMPLEX": "Este archivo es demasiado complejo para que el antivirus lo revise, así que no se envió. Elige otro archivo.",
-      "MEDIA_SCAN_UNAVAILABLE": "No se pudo revisar el archivo con el antivirus, así que no se envió. Vuelve a intentarlo en unos minutos."
+      "MEDIA_SCAN_UNAVAILABLE": "No se pudo revisar el archivo con el antivirus, así que no se envió. Vuelve a intentarlo en unos minutos.",
+      "UNVERIFIED_CONTENT": "El texto lleva la marca [verificar] del copiloto. Escribe tú el dato confirmado en su lugar, o quítalo, antes de enviar."
     }
   },
   "auth": {
@@ -2588,6 +2589,37 @@
         "firstName": "el nombre del cliente",
         "name": "el nombre completo del cliente",
         "org": "el nombre de tu empresa"
+      }
+    },
+    "copilot": {
+      "label": "Copiloto de IA",
+      "suggest": "Sugerir respuesta",
+      "again": "Sugerir otra",
+      "thinking": "Preparando una sugerencia…",
+      "ready": "Sugerencia lista. Revísala antes de insertarla.",
+      "draft": "Sugerencia del copiloto",
+      "unverified": "Lo marcado [verificar] no tiene respaldo en los datos: confírmalo o cámbialo antes de enviar.",
+      "mark": "sin verificar",
+      "insert": "Insertar",
+      "inserting": "Insertando…",
+      "inserted": "Sugerencia insertada en el cuadro de respuesta. Revísala y envíala tú.",
+      "discard": "Descartar",
+      "discarded": "Sugerencia descartada.",
+      "never": "Nunca se envía sola: la envías tú desde el cuadro de respuesta.",
+      "error": {
+        "RATE_LIMITED": "Pediste muchas sugerencias seguidas. Vuelve a probar en unos minutos.",
+        "RATE_LIMITED_WAIT": "Pediste muchas sugerencias seguidas. Vuelve a probar en {minutes, plural, one {# minuto} other {# minutos}}.",
+        "AI_ORG_RATE_LIMITED": "Tu empresa pidió muchas sugerencias seguidas. Vuelve a probar en unos minutos.",
+        "AI_ORG_RATE_LIMITED_WAIT": "Tu empresa pidió muchas sugerencias seguidas. Vuelve a probar en {minutes, plural, one {# minuto} other {# minutos}}.",
+        "AI_BUDGET_EXHAUSTED": "Se agotó el presupuesto de IA de tu empresa. Pide a un administrador que lo revise.",
+        "AI_BUDGET_NOT_SET": "La IA aún no tiene presupuesto. Pide a un administrador que lo configure.",
+        "AI_DISABLED": "La IA está apagada en tu empresa. Puedes responder sin el copiloto.",
+        "AI_NOT_CONFIGURED": "La IA aún no está configurada en tu empresa. Pide a un administrador que la configure.",
+        "AI_DEADLINE": "El copiloto tardó demasiado en responder. Inténtalo de nuevo.",
+        "AI_EVIDENCE_EXPIRED": "Los datos de esta sugerencia caducaron. Pide una nueva.",
+        "denied": "No puedes usar el copiloto en esta conversación. Puede que ya no esté en tu alcance.",
+        "gone": "Esa sugerencia ya no está disponible. Pide una nueva.",
+        "failed": "El copiloto no pudo preparar una sugerencia. Inténtalo de nuevo en unos minutos."
       }
     }
   },
