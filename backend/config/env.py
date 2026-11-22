@@ -207,12 +207,17 @@ def check_ai_copilot_org_throttle(throttle: tuple[int, int], person: tuple[int, 
         )
 
 
-def check_ai_exclusion_throttle(throttle: tuple[int, int]) -> None:
+def check_ai_exclusion_throttle(throttle: object) -> None:
     """El tope por persona de excluir conversaciones de la IA (F8-13c, F8-13e): cada `PUT` puede
-    esperar a una llamada en curso con una conexión tomada. Ventana menor que la calma de la purga
-    del acceso."""
-    limit, window = throttle
-    if not (1 <= limit <= 60 and 60 <= window <= 840):
+    esperar a una llamada en curso con una conexión tomada. Dos enteros (ni booleanos ni
+    decimales); ventana menor que la calma de la purga del acceso."""
+    if not (
+        isinstance(throttle, tuple)
+        and len(throttle) == 2
+        and all(type(value) is int for value in throttle)
+        and 1 <= throttle[0] <= 60
+        and 60 <= throttle[1] <= 840
+    ):
         raise ImproperlyConfigured(
             "AI_EXCLUSION_THROTTLE: 1 a 60 peticiones, ventana de 60 a 840 s"
         )

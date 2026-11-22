@@ -31,6 +31,7 @@ from apps.ai_gateway import gateway, orphans
 from apps.ai_gateway.llm import Outcome
 from apps.conversations import attention
 from core import http
+from core.tenancy import scope
 from core.tenancy.scope import tenant_scope
 from tests import ai_sim
 from tests.test_ai_copilot_exclusion import LEDGER, RUNS, USAGE, excluded_at, mark, put
@@ -380,6 +381,27 @@ def test_the_whole_check_has_one_bound_and_a_late_yes_does_not_send(
     assert suggest(desk) == "INTERNAL_ERROR" and time.monotonic() - started < 2.5
     assert provider.settled(1) == [b""] and connection.execute_wrappers == []
     assert migrator.execute(LEDGER).fetchall() == [("PROVIDER_UNAVAILABLE", 0)]
+
+
+def test_the_tenant_statement_that_opens_the_check_is_inside_the_bound(
+    desk: SimpleNamespace, monkeypatch: pytest.MonkeyPatch, settings: Any
+) -> None:
+    """F8-13e: el plazo empieza antes de la transacción; la sentencia de los GUC del tenant, la
+    primera de la comprobación, también sale con él: una que tarda 3 s se cancela al agotarse."""
+    settings.AI_SEND_CHECK_SECONDS = 0.3
+    monkeypatch.setattr(scope, "_SET", scope._SET.replace("SELECT ", "SELECT pg_sleep(3), ", 1))
+    seen: list[None] = []
+
+    def admit() -> bool:
+        seen.append(None)
+        return True
+
+    proceed = gateway._again(ctx(desk.a, desk.ana), admit)
+    started = time.monotonic()
+    assert proceed() is False and time.monotonic() - started < 1.5 and seen == []
+    assert connection.execute_wrappers == []
+    monkeypatch.undo()
+    assert proceed() is True and seen == [None]  # la misma conexión sigue sirviendo
 
 
 def test_a_retry_on_a_new_connection_is_checked_again_and_withheld(

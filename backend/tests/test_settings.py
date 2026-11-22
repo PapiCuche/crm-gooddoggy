@@ -561,7 +561,8 @@ def test_production_refuses_an_organization_copilot_limit_it_cannot_enforce(
     ("throttle", "seconds"),
     [((0, 600), 3), ((61, 600), 3), ((30, 59), 3), ((30, 841), 3), ((30, 600), 0.0004),
      ((30, 600), 0), ((30, 600), 0.09), ((30, 600), 10.5), ((30, 600), float("nan")),
-     ((30, 600), True), ((30, 600), "3"), ((30, 600), None)],
+     ((30, 600), True), ((30, 600), "3"), ((30, 600), None), ((True, 600), 3), ((1.5, 600), 3),
+     ((30, 600.0), 3), ([30, 600], 3), ((30,), 3), ((30, 600, 1), 3), (None, 3), ("30/600", 3)],
 )  # fmt: skip
 def test_production_refuses_an_exclusion_limit_or_a_send_check_it_cannot_enforce(
     monkeypatch: pytest.MonkeyPatch, throttle: tuple[int, int], seconds: Any
@@ -580,7 +581,8 @@ def test_production_refuses_an_exclusion_limit_or_a_send_check_it_cannot_enforce
     for limit, window, good in ((1, 60, 0.1), (60, 840, 10), (30, 600, 3), (30, 600, 0.5)):
         env.check_ai_exclusion_throttle((limit, window))
         env.check_ai_send_check_seconds(good)
-    name = "AI_EXCLUSION_THROTTLE" if throttle != (30, 600) else "AI_SEND_CHECK_SECONDS"
+    good = type(throttle) is tuple and throttle == (30, 600) and type(throttle[1]) is int
+    name = "AI_SEND_CHECK_SECONDS" if good else "AI_EXCLUSION_THROTTLE"
     with pytest.raises(ImproperlyConfigured, match=f"^{name}:"):
         env.check_ai_exclusion_throttle(throttle)
         env.check_ai_send_check_seconds(seconds)
