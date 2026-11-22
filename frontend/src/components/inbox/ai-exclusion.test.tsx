@@ -51,7 +51,7 @@ const refusal = (status: number, code: string): Reply => ({ status, body: { code
 // `refused`, que se dan una vez cada una y en orden; con otra versión, 409 como el backend. Con
 // `state.reads = false`, releer falla; `other` es otra persona que cambia la marca.
 function server(initial: Partial<typeof rosa> = {}, ...refused: Reply[]) {
-  const state = { ...rosa, ...initial, reads: true };
+  const state = { ...rosa, ...initial, reads: true, before: () => {} };
   const read = (body: unknown) => (state.reads ? { status: 200, body } : { status: 500, body: {} });
   const api: ReturnType<typeof mockApi> = mockApi({
     [`GET ${BASE}/`]: () => read({ results: [{ ...state }], next: null }),
@@ -61,6 +61,7 @@ function server(initial: Partial<typeof rosa> = {}, ...refused: Reply[]) {
     [PUT]: () => {
       const answer = refused.shift();
       if (answer) return answer;
+      state.before(); // otra persona, mientras viaja la petición
       const sent = api.mock.calls.at(-1)?.[1]?.body;
       const { excluded, version } = JSON.parse(String(sent)) as Sent;
       if (version !== state.version) return refusal(409, "CONVERSATION_VERSION_CONFLICT");
@@ -218,9 +219,58 @@ describe("exclusión de la IA en el Inbox (F8-13b)", () => {
     const dialog = await screen.findByRole("dialog");
     fireEvent.click(within(dialog).getByRole("button", { name: "Cancelar" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    // Solo la que respondió `STEP_UP_REQUIRED`: tras cancelar no se envía nada más.
     expect(s.calls(PUT)).toEqual([{ excluded: false, version: 1 }]);
+    expect(s.calls(STEP_UP)).toEqual([]);
     expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByText(/vuelve a estar incluida/)).toBeNull();
     expect(screen.getByText("Excluida de la IA")).toBeVisible();
+  });
+
+  // Escenario del propietario (#1081), volver a incluir: el código abierto, otra persona cambia la
+  // marca; la pregunta sigue siendo la leída y tras el código se envía la foto y se muestra el 409.
+  it("con el código abierto otra persona la incluye: tras el código va lo leído, 409 y nada más", async () => {
+    const s = server({ ai_excluded_at: "2026-11-21T10:00:00Z" }, STEP);
+    show(MANAGER);
+    await openChat();
+    fireEvent.click(await ask("Volver a incluir en la IA"));
+    await screen.findByRole("dialog");
+    s.other(false); // versión 2, ya incluida
+    fireEvent.click(screen.getByRole("button", { name: "Actualizar mensajes" }));
+    await waitFor(() => expect(screen.queryByText("Excluida de la IA")).toBeNull());
+    expect(screen.getByRole("group", { name: "Volver a incluir en la IA" })).toHaveTextContent(
+      "¿Volver a incluir esta conversación en la IA?",
+    );
+    await verify();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Otra persona cambió esta conversación",
+    );
+    expect(screen.queryByRole("group", { name: "Volver a incluir en la IA" })).toBeNull();
+    await act(async () => {});
+    expect(s.calls(PUT)).toEqual([
+      { excluded: false, version: 1 }, // la que pidió el código
+      { excluded: false, version: 1 }, // la repetición: la foto, no la acción contraria
+    ]);
+    expect(s.calls(STEP_UP)).toEqual([{ code: "123456" }]);
+  });
+
+  // El mismo escenario al excluir: excluir no pide código (ADR-034 §5), así que el cambio de otra
+  // persona llega mientras viaja la petición.
+  it("si otra persona la excluye mientras viaja la petición, va lo leído, 409 y nada más", async () => {
+    const s = server();
+    show(MANAGER);
+    await openChat();
+    const yes = await ask("Excluir de la IA");
+    s.state.before = () => s.other(true);
+    fireEvent.click(yes);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Otra persona cambió esta conversación",
+    );
+    expect(screen.queryByRole("group", { name: "Excluir de la IA" })).toBeNull();
+    await act(async () => {});
+    expect(s.calls(PUT)).toEqual([{ excluded: true, version: 1 }]);
+    expect(s.calls(STEP_UP)).toEqual([]);
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("si la repetición también pide el segundo factor, lo dice sin bucle", async () => {
@@ -299,6 +349,25 @@ describe("exclusión de la IA en el Inbox (F8-13b)", () => {
     },
   );
 
+  it.each([
+    ["Excluir de la IA", null, { excluded: true, version: 1 }],
+    ["Volver a incluir en la IA", "2026-11-21T10:00:00Z", { excluded: false, version: 1 }],
+  ])("un 409 en «%s» cierra la confirmación y no reenvía", async (name, at, sent) => {
+    const s = server({ ai_excluded_at: at });
+    show(MANAGER);
+    await openChat();
+    const yes = await ask(name);
+    s.state.version = 2; // otra cosa cambió; la marca, no
+    fireEvent.click(yes);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Otra persona cambió esta conversación",
+    );
+    expect(screen.queryByRole("group", { name })).toBeNull();
+    await act(async () => {});
+    expect(s.calls(PUT)).toEqual([sent]);
+    expect(s.calls(STEP_UP)).toEqual([]);
+  });
+
   it("con la marca igual pero otra versión, confirmar envía lo leído y la API lo rechaza", async () => {
     const s = server();
     show(MANAGER);
@@ -333,12 +402,17 @@ describe("exclusión de la IA en el Inbox (F8-13b)", () => {
     [403, "PERMISSION_DENIED", "Volver a incluir en la IA", "2026-11-21T10:00:00Z"],
     [404, "NOT_FOUND", "Volver a incluir en la IA", "2026-11-21T10:00:00Z"],
   ])("un %i (%s) en «%s» dice que no puede cambiarla", async (status, code, name, at) => {
-    server({ ai_excluded_at: at }, refusal(status, code));
+    const s = server({ ai_excluded_at: at }, refusal(status, code));
     show(MANAGER);
     await openChat();
     fireEvent.click(await ask(name));
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "No puedes cambiar esta conversación",
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(
+      "No puedes cambiar esta conversación. Puede que ya no esté en tu alcance.",
     );
+    expect(alert).not.toHaveTextContent("x");
+    await act(async () => {});
+    expect(s.calls(PUT)).toEqual([{ excluded: at === null, version: 1 }]); // nada se reenvía
+    expect(s.calls(STEP_UP)).toEqual([]);
   });
 });
