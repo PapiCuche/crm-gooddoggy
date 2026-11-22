@@ -1,7 +1,7 @@
 "use client";
 
 import { useInfiniteQuery } from "@tanstack/react-query";
-import { RefreshCw } from "lucide-react";
+import { Hand, RefreshCw } from "lucide-react";
 import { useFormatter, useTranslations } from "next-intl";
 
 import { useTenant } from "@/components/app-shell/tenant-context";
@@ -246,6 +246,12 @@ function Row({
           <span>
             <Assignee who={row} />
           </span>
+          {row.human_request ? (
+            <span className="text-foreground inline-flex items-center gap-1 font-semibold">
+              <Hand aria-hidden className="size-3" />
+              {t("humanRequest.badge")}
+            </span>
+          ) : null}
         </span>
       </button>
     </li>

@@ -1,7 +1,7 @@
 "use client";
 
-import { useMutation } from "@tanstack/react-query";
-import { Sparkles } from "lucide-react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { Hand, ScrollText, Sparkles } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { type ReactNode, useId, useRef, useState } from "react";
 
@@ -10,8 +10,17 @@ import { Button } from "@/components/ui/button";
 import {
   conversationsCopilotSuggest,
   conversationsCopilotSuggestionInsert,
+  conversationsCopilotSummary,
+  getConversationsListQueryKey,
+  getConversationsRetrieveQueryKey,
 } from "@/lib/api/client";
-import type { CopilotFinding, CopilotInsert, CopilotSuggestion } from "@/lib/api/model";
+import type {
+  CopilotFinding,
+  CopilotHandoff,
+  CopilotInsert,
+  CopilotSuggestion,
+  CopilotSummary,
+} from "@/lib/api/model";
 import { ApiError } from "@/lib/http";
 
 import { Plain } from "./plain";
@@ -38,7 +47,8 @@ export function utf16Ranges(text: string, findings: readonly CopilotFinding[]) {
   return kept;
 }
 
-function Marked({ text, findings, label }: CopilotSuggestion & { label: string }) {
+type Shown = { text: string; findings: readonly CopilotFinding[]; label: string };
+function Marked({ text, findings, label }: Shown) {
   const parts: ReactNode[] = [];
   let at = 0;
   for (const [start, end] of utf16Ranges(text, findings)) {
@@ -58,8 +68,28 @@ function Marked({ text, findings, label }: CopilotSuggestion & { label: string }
   return <Plain>{parts}</Plain>;
 }
 
+const REASONS = ["ASKED_FOR_PERSON", "UPSET", "MODEL"] as const;
+// El motivo del traspaso es un código: solo uno conocido elige su texto; otro, el genérico.
+const why = (handoff: CopilotHandoff) => REASONS.find((one) => one === handoff.reason) ?? "other";
+
+// El aviso de traspaso (ADR-034 §8): el cliente pide una persona. El servidor ya registró la
+// solicitud de atención humana; aquí solo se avisa, nada sale al cliente.
+function Handoff({ handoff, t }: { handoff: CopilotHandoff; t: Translate }) {
+  if (!handoff.requested) return null;
+  return (
+    <div className="bg-accent/40 border-foreground/30 flex gap-2 rounded-[10px] border p-2 text-sm">
+      <Hand aria-hidden className="mt-0.5 size-4 shrink-0" />
+      <p>
+        <strong className="font-semibold">{t(`handoff.${why(handoff)}`)}</strong>{" "}
+        {t("handoff.next")}
+      </p>
+    </div>
+  );
+}
+
+type Translate = ReturnType<typeof useTranslations>;
 // Qué decir ante un error, por código y nunca con el texto del servidor; con `Retry-After`, cuánto.
-function problem(error: Error, t: ReturnType<typeof useTranslations>) {
+function problem(error: Error, t: Translate) {
   if (!(error instanceof ApiError)) return t("error.failed");
   const { code, status, retryAfter } = error;
   if (code === "RATE_LIMITED" || code === "AI_ORG_RATE_LIMITED") {
@@ -86,7 +116,9 @@ function problem(error: Error, t: ReturnType<typeof useTranslations>) {
 // modos del cuadro y no ocupa otra fila; y `panel`, sobre el cuadro solo con una sugerencia o un
 // error: la sugerencia con lo que no tiene respaldo marcado, «Insertar» (`POST
 // …/suggestions/{id}/insert/`, que la audita) y «Descartar». Ningún camino de aquí envía: el texto
-// llega al cuadro de respuesta, editable, y sale solo con su «Enviar».
+// llega al cuadro de respuesta, editable, y sale solo con su «Enviar». F8-09b suma «Resumir» (`POST
+// …/copilot/summary/`): el resumen es solo para leer, sin «Insertar» ni nada que lo envíe; y el aviso
+// de traspaso cuando una respuesta lo marca.
 export function useCopilot({
   conversationId,
   onInsert,
@@ -100,8 +132,12 @@ export function useCopilot({
   const heading = useId();
   const asking = useRef(false); // un clic doble antes de pintar `isPending` no pide dos veces
   const inserting = useRef(false); // ni inserta (y audita) dos veces
+  const summing = useRef(false);
+  const client = useQueryClient();
   const suggestButton = useRef<HTMLButtonElement>(null);
+  const summaryButton = useRef<HTMLButtonElement>(null);
   const [draft, setDraft] = useState<CopilotSuggestion | null>(null);
+  const [summary, setSummary] = useState<CopilotSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState("");
 
@@ -113,7 +149,7 @@ export function useCopilot({
     },
     onSuccess: (done) => {
       setDraft(done);
-      setStatus(t("ready"));
+      announce(t("ready"), done.handoff);
     },
     onError: (failure) => {
       setStatus("");
@@ -121,6 +157,31 @@ export function useCopilot({
     },
     onSettled: () => (asking.current = false),
   });
+  const summarize = useMutation<CopilotSummary, ApiError>({
+    mutationFn: () => conversationsCopilotSummary(slug, conversationId),
+    onMutate: () => {
+      setError(null);
+      setStatus(t("summarizing"));
+    },
+    onSuccess: (done) => {
+      setSummary(done);
+      announce(t("summarized"), done.handoff);
+    },
+    onError: (failure) => {
+      setStatus("");
+      setError(problem(failure, t));
+    },
+    onSettled: () => (summing.current = false),
+  });
+  // Con traspaso el servidor registró la solicitud: la conversación y la lista se vuelven a leer.
+  function announce(text: string, handoff: CopilotHandoff) {
+    setStatus(handoff.requested ? `${text} ${t(`handoff.${why(handoff)}`)}` : text);
+    if (!handoff.requested) return;
+    void client.invalidateQueries({
+      queryKey: getConversationsRetrieveQueryKey(slug, conversationId),
+    });
+    void client.invalidateQueries({ queryKey: getConversationsListQueryKey(slug) });
+  }
   const insert = useMutation<CopilotInsert, ApiError, CopilotSuggestion>({
     mutationFn: ({ id }) => conversationsCopilotSuggestionInsert(slug, conversationId, id),
     onMutate: () => setError(null),
@@ -142,7 +203,26 @@ export function useCopilot({
   });
   const busy = suggest.isPending || insert.isPending;
   const label = suggest.isPending ? t("thinking") : draft ? t("again") : t("suggest");
+  const sumLabel = t(summarize.isPending ? "summarizing" : summary ? "resummarize" : "summarize");
 
+  // «Resumir», junto a «Sugerir respuesta» en la fila de los modos; también solo el icono en 390 px.
+  const summarizer = (
+    <Button
+      ref={summaryButton}
+      type="button"
+      variant="ghost"
+      className="border-border h-9 shrink-0 border aria-disabled:cursor-progress aria-disabled:opacity-60 max-sm:w-10 max-sm:px-0"
+      aria-disabled={summarize.isPending}
+      onClick={() => {
+        if (summing.current || summarize.isPending) return;
+        summing.current = true;
+        summarize.mutate();
+      }}
+    >
+      <ScrollText aria-hidden />
+      <span className="max-sm:sr-only">{sumLabel}</span>
+    </Button>
+  );
   const trigger = (
     <Button
       ref={suggestButton}
@@ -167,7 +247,7 @@ export function useCopilot({
       <p role="status" aria-live="polite" className="sr-only">
         {status}
       </p>
-      {draft || error ? (
+      {draft || summary || error ? (
         <section
           aria-labelledby={heading}
           className="border-border bg-surface-raised flex max-h-[45%] min-h-0 shrink-0 flex-col gap-2 overflow-y-auto border-t p-2 lg:p-3"
@@ -181,9 +261,48 @@ export function useCopilot({
               {error}
             </p>
           ) : null}
+          {summary ? (
+            <div className="bg-surface border-border flex flex-col gap-2 rounded-[10px] border p-3">
+              <p className="text-muted flex flex-wrap items-center gap-x-2 text-xs font-semibold uppercase">
+                <ScrollText aria-hidden className="size-3.5" />
+                {t("summary")}
+                <span className="bg-surface-raised border-border rounded-full border px-2 normal-case">
+                  {t("generated")}
+                </span>
+              </p>
+              <Handoff handoff={summary.handoff} t={t} />
+              <p className="text-sm leading-snug">
+                {/* Los tramos del resumen llegan con su posición suelta; se marcan igual. */}
+                <Marked
+                  text={summary.text}
+                  findings={summary.marks.map(({ type, ...position }) => ({ type, position }))}
+                  label={t("mark")}
+                />
+              </p>
+              {summary.marks.length > 0 ? (
+                <p className="text-muted text-xs">{t("summaryUnverified")}</p>
+              ) : null}
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="border-border h-9 border"
+                  onClick={() => {
+                    setSummary(null);
+                    setStatus(t("summaryClosed"));
+                    summaryButton.current?.focus();
+                  }}
+                >
+                  {t("closeSummary")}
+                </Button>
+                <p className="text-muted text-xs">{t("readOnly")}</p>
+              </div>
+            </div>
+          ) : null}
           {draft ? (
             <div className="bg-surface border-border flex flex-col gap-2 rounded-[10px] border p-3">
               <p className="text-muted text-xs font-semibold uppercase">{t("draft")}</p>
+              <Handoff handoff={draft.handoff} t={t} />
               <p className="text-sm leading-snug">
                 <Marked {...draft} label={t("mark")} />
               </p>
@@ -226,5 +345,5 @@ export function useCopilot({
       ) : null}
     </>
   );
-  return { trigger, panel };
+  return { trigger, summarizer, panel };
 }

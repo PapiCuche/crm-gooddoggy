@@ -41,6 +41,7 @@ import { Assignee, AssignmentActions } from "./assignment";
 import { ChannelMark } from "./attention";
 import { Composer, type Inserter, messagesKey, writableModes } from "./composer";
 import { AI_USE, useCopilot } from "./copilot";
+import { useHumanRequest } from "./human-request";
 import { MediaFile } from "./media-file";
 import { Plain } from "./plain";
 
@@ -95,6 +96,7 @@ export function ChatPanel({
     conversationId: conversation.id,
     onInsert: (text) => inserter.current?.(text),
   });
+  const human = useHumanRequest(conversation); // con `conversations.view`, como ver el chat
   const scroller = useRef<HTMLDivElement>(null);
   const kept = useRef<number | null>(null); // lo que faltaba por desplazar al pedir los anteriores
   const placed = useRef(false);
@@ -210,6 +212,7 @@ export function ChatPanel({
             <RefreshCw aria-hidden />
             <span className="max-lg:sr-only">{t("chat.refresh")}</span>
           </Button>
+          {human.button}
           {name === null ? null : (
             <Button
               id="customer-toggle"
@@ -241,6 +244,7 @@ export function ChatPanel({
               {t("noAccessContact")}
             </p>
           ) : null}
+          {human.state}
         </div>
         {detail.data ? (
           <AssignmentActions detail={detail.data} />
@@ -289,7 +293,14 @@ export function ChatPanel({
       {modes.reply || modes.note ? (
         <Composer
           inserter={inserter}
-          tools={offered ? copilot.trigger : null}
+          tools={
+            offered ? (
+              <>
+                {copilot.summarizer}
+                {copilot.trigger}
+              </>
+            ) : null
+          }
           conversation={conversation}
           modes={modes}
           onQueued={() => (toBottom.current = true)}

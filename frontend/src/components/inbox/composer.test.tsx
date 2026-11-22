@@ -203,18 +203,25 @@ describe("cuadro de redacción (F6-04c)", () => {
     expect(screen.getAllByText("Hola Rosa")).toHaveLength(1);
   });
 
-  it("editar el texto tras un fallo empieza un intento con otro id", async () => {
-    const s = server({ send: () => ({ status: 500, body: { code: "INTERNAL_ERROR" } }) });
+  it("tras un fallo, sumar texto conserva el id; cambiar lo que falló empieza otro", async () => {
+    let reply: Reply = { status: 500, body: { code: "INTERNAL_ERROR" } };
+    const s = server({ send: () => reply });
     show();
     await openChat();
     await type("uno");
     fireEvent.click(sendButton());
     await screen.findByRole("alert");
+    // Lo primero pudo haber llegado: con lo sumado detrás, el mismo id no deja que salga dos veces.
     await type("uno y dos");
+    reply = { status: 409, body: { code: "CLIENT_MESSAGE_ID_TAKEN" } };
     fireEvent.click(sendButton());
-    await waitFor(() => expect(s.posts()).toHaveLength(2));
-    const [one, two] = s.ids();
-    expect(two).not.toBe(one);
+    expect(await screen.findByText(/Puede que la primera parte ya se haya enviado/)).toBeVisible();
+    await type("dos");
+    fireEvent.click(sendButton());
+    await waitFor(() => expect(s.posts()).toHaveLength(3));
+    const [one, two, three] = s.ids();
+    expect(two).toBe(one);
+    expect(three).not.toBe(one);
   });
 
   it("explica 409 y 404 sin perder el texto; un id ocupado se renueva", async () => {
