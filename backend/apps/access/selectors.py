@@ -18,7 +18,7 @@ from uuid import UUID
 from django.apps import apps
 from django.contrib.postgres.expressions import ArraySubquery
 from django.core.exceptions import PermissionDenied
-from django.db.models import F, Model, OuterRef, QuerySet
+from django.db.models import Exists, F, Model, OuterRef, QuerySet
 
 from apps.access.catalog import BY_CODE, PermissionDef, Scope
 from apps.access.models import Role, RolePermission
@@ -139,6 +139,23 @@ def member_holds(ectx: ExecutionContext, user_id: UUID, code: str) -> bool:
         scope__isnull=not permission.supports_scope,
     )
     return grants.exists()
+
+
+def holders(ctx: TenantContext, code: str) -> list[tuple[UUID, str]]:
+    """Id y correo de los miembros activos (membresía y cuenta) de la organización de `ctx` que
+    tienen `code` por alguno de sus roles, con cualquier alcance. Para avisar a alguien (F8-12b):
+    no autoriza nada ni dice qué filas alcanza cada uno."""
+    alias = require_scope(ctx)
+    permission = definition(code)
+    grants = RolePermission.objects.using(alias).filter(
+        permission_id=code,
+        role__assignments__membership_id=OuterRef("pk"),
+        scope__isnull=not permission.supports_scope,
+    )
+    rows = apps.get_model("organizations", "OrganizationMembership")._default_manager.using(alias)
+    active = rows.filter(organization_id=ctx.organization_id, status=ACTIVE, user__is_active=True)
+    found = active.filter(Exists(grants)).order_by("user_id")
+    return list(found.values_list("user_id", "user__email"))
 
 
 def can(ectx: ExecutionContext, code: str, obj: Model | None = None) -> bool:
