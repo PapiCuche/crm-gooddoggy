@@ -3,7 +3,16 @@
 import { type InfiniteData, useMutation, useQueryClient } from "@tanstack/react-query";
 import { FileText, ImageIcon, Paperclip, RotateCw, Send, StickyNote, X } from "lucide-react";
 import { useFormatter, useTranslations } from "next-intl";
-import { type KeyboardEvent, useId, useRef, useState } from "react";
+import {
+  type KeyboardEvent,
+  type ReactNode,
+  type RefObject,
+  useEffect,
+  useId,
+  useImperativeHandle,
+  useRef,
+  useState,
+} from "react";
 
 import { useTenant } from "@/components/app-shell/tenant-context";
 import { Button } from "@/components/ui/button";
@@ -74,6 +83,9 @@ export const messagesKey = (slug: string, id: string) =>
   [...getConversationMessagesListQueryKey(slug, id), "pages"] as const;
 
 export type Mode = "reply" | "note";
+// Pone un texto en el cuadro de respuesta (el del copiloto, F8-09a): nunca envía.
+export type Inserter = (text: string) => void;
+const SETTLE = 500; // ms tras insertar en que un Enter no envía (el que pulsó «Insertar», repetido)
 const CODES = { reply: "messages.send", note: "messages.note" } as const;
 
 // ¿Qué modos se ofrecen? Es comodidad, no seguridad: la API decide en cada envío. Sin alcance
@@ -113,35 +125,53 @@ export function Composer({
   conversation,
   modes,
   onQueued,
+  inserter,
+  tools,
 }: {
   conversation: Conversation;
   modes: { reply: boolean; note: boolean };
   onQueued: () => void;
+  inserter?: RefObject<Inserter | null>; // el copiloto inserta en «Responder», que pasa a verse
+  tools?: ReactNode; // al final de la fila de los modos («Sugerir respuesta», F8-09a)
 }) {
   const t = useTranslations("inbox.composer");
   const [chosen, setChosen] = useState<Mode>(modes.reply ? "reply" : "note");
+  const replyInserter = useRef<Inserter | null>(null);
+  useImperativeHandle(inserter, () => (text) => {
+    setChosen("reply");
+    replyInserter.current?.(text);
+  });
   const shown: Mode = modes[chosen] ? chosen : modes.reply ? "reply" : "note";
   const both = modes.reply && modes.note;
   return (
     <div className="border-border flex min-w-0 shrink-0 flex-col gap-2 border-t p-2 lg:p-3">
-      {both ? (
-        <div role="group" aria-label={t("mode.label")} className="flex gap-2">
-          {(["reply", "note"] as const).map((mode) => (
-            <Button
-              key={mode}
-              type="button"
-              variant={shown === mode ? "accent" : "ghost"}
-              className="border-border h-9 min-w-0 border max-sm:flex-1"
-              aria-pressed={shown === mode}
-              aria-label={t(`mode.${mode}`)}
-              onClick={() => setChosen(mode)}
+      {both || tools ? (
+        <div className="flex min-w-0 gap-2">
+          {both ? (
+            <div
+              role="group"
+              aria-label={t("mode.label")}
+              className="flex min-w-0 gap-2 max-sm:flex-1"
             >
-              {mode === "note" ? <StickyNote aria-hidden /> : null}
-              {/* En 320 px las dos etiquetas largas no caben en una fila: se acortan, el nombre accesible no. */}
-              <span className="max-sm:hidden">{t(`mode.${mode}`)}</span>
-              <span className="sm:hidden">{t(`mode.${mode}Short`)}</span>
-            </Button>
-          ))}
+              {(["reply", "note"] as const).map((mode) => (
+                <Button
+                  key={mode}
+                  type="button"
+                  variant={shown === mode ? "accent" : "ghost"}
+                  className="border-border h-9 min-w-0 border max-sm:flex-1"
+                  aria-pressed={shown === mode}
+                  aria-label={t(`mode.${mode}`)}
+                  onClick={() => setChosen(mode)}
+                >
+                  {mode === "note" ? <StickyNote aria-hidden /> : null}
+                  {/* En 320 px las dos etiquetas largas no caben en una fila: se acortan, el nombre accesible no. */}
+                  <span className="max-sm:hidden">{t(`mode.${mode}`)}</span>
+                  <span className="sm:hidden">{t(`mode.${mode}Short`)}</span>
+                </Button>
+              ))}
+            </div>
+          ) : null}
+          {tools ? <div className="ml-auto flex">{tools}</div> : null}
         </div>
       ) : null}
       {(["reply", "note"] as const).map((mode) =>
@@ -153,6 +183,7 @@ export function Composer({
             tabbed={both}
             conversation={conversation}
             onQueued={onQueued}
+            inserter={mode === "reply" ? replyInserter : undefined}
           />
         ) : null,
       )}
@@ -166,12 +197,14 @@ function ComposeBox({
   tabbed,
   conversation,
   onQueued,
+  inserter,
 }: {
   mode: Mode;
   active: boolean;
   tabbed: boolean; // hay conmutador: su botón ya dice el modo, la etiqueta queda para lectores
   conversation: Conversation;
   onQueued: () => void;
+  inserter?: RefObject<Inserter | null>;
 }) {
   const t = useTranslations("inbox.composer");
   const errors = useTranslations("errors");
@@ -187,6 +220,8 @@ function ComposeBox({
   const [file, setFile] = useState<File | null>(null);
   const [refusal, setRefusal] = useState<string | null>(null); // el archivo elegido no se adjuntó
   const picker = useRef<HTMLInputElement>(null);
+  const settleUntil = useRef(0); // hasta cuándo un Enter no envía lo recién insertado
+  const [placed, setPlaced] = useState(0); // cada inserción del copiloto: enfocar al final
   const format = useFormatter();
   const labels = useTranslations("inbox.media");
   const note = mode === "note";
@@ -212,6 +247,23 @@ function ComposeBox({
       requestAnimationFrame(() => box.current?.setSelectionRange(value.length, value.length));
     },
   });
+
+  // El texto del copiloto se suma a lo ya escrito (no lo borra) y queda editable; no se envía. Si
+  // llega mientras sale un envío, ese envío solo quita del cuadro lo que él mandó (`onSuccess`).
+  useImperativeHandle(inserter, () => (value) => {
+    settleUntil.current = Date.now() + SETTLE; // otra inserción alarga la espera, no la acorta
+    setText((current) => (current.trim() ? `${current}\n\n${value}` : value));
+    setProblem(null);
+    setRefusal(null);
+    setSaved(null);
+    setPlaced((n) => n + 1);
+  });
+  useEffect(() => {
+    const field = box.current;
+    if (!placed || !field) return;
+    field.focus();
+    field.setSelectionRange(field.value.length, field.value.length);
+  }, [placed]);
 
   const send = useMutation<Message, ApiError, Outgoing>({
     mutationFn: ({ file: attached, ...request }) =>
@@ -249,7 +301,12 @@ function ComposeBox({
     },
     onSuccess: (done, request) => {
       attempt.current = null; // un id por acción: el siguiente texto lleva otro
-      setText("");
+      // Quita solo lo enviado: lo insertado mientras salía se queda y no se vuelve a enviar.
+      setText((current) =>
+        current.startsWith(request.body)
+          ? current.slice(request.body.length).replace(/^\n\n/, "")
+          : current,
+      );
       setFile((current) => (current === request.file ? null : current)); // solo el que salió
       const mine = `pending-${request.client_message_id}`;
       client.setQueryData<Pages>(key, (data) => {
@@ -326,6 +383,7 @@ function ComposeBox({
     const composing = event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229;
     if (event.key !== "Enter" || event.shiftKey || composing) return;
     event.preventDefault();
+    if (Date.now() < settleUntil.current) return; // recién insertado: se revisa antes de enviar
     submit();
   };
   const idle = note ? t("save") : t("send");
