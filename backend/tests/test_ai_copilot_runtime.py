@@ -547,7 +547,8 @@ def test_the_runtime_refuses_an_open_transaction_before_reading_anything(desk: A
 
 IMPORTS = {  # módulo → nombres: exactamente estos; uno nuevo se añade aquí a propósito
     "": "json re time", "collections": "Counter", "dataclasses": "dataclass field replace",
-    "datetime": "datetime", "uuid": "UUID", "django.conf": "settings", "django.db": "connections",
+    "datetime": "UTC datetime", "uuid": "UUID", "django.conf": "settings",
+    "django.db": "connections",
     "apps.access.selectors": "AccessDenied execution_context has_permission scoped",
     "apps.ai_agents": "context detectors guard records registry",
     "apps.ai_agents.context": "Purpose", "apps.ai_agents.registry": "Evidence",

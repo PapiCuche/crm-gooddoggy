@@ -5,7 +5,9 @@ traspaso que detecta el copiloto, con middleware, sesión, motor de autorizació
 
 import datetime as dt
 import importlib
+import logging
 import pathlib
+import re
 import tomllib
 from types import SimpleNamespace
 from typing import Any
@@ -13,20 +15,23 @@ from uuid import UUID, uuid4
 
 import psycopg
 import pytest
-from django.db import IntegrityError, connection
+from django.conf import settings
+from django.db import IntegrityError, OperationalError, connection
 from django.test import Client
 from django.utils import timezone
 
-from apps.access.selectors import AccessDenied
+from apps.access.selectors import AccessDenied, Denied
 from apps.ai_agents import copilot
 from apps.conversations import attention, commands
 from apps.conversations.models import Conversation
 from core.tenancy.scope import tenant_scope
+from tests.ai_queries import captured, writes
+from tests.conftest import migrator_conninfo
 from tests.test_ai_copilot_context import say
 from tests.test_ai_copilot_runtime import PLAIN, desk, run
 from tests.test_ai_gateway import world
 from tests.test_conversations_api import BASE, UNAUTHENTICATED, crm, inbox, real_stack
-from tests.test_conversations_assign_api import assign
+from tests.test_conversations_assign_api import assign, duel
 from tests.test_conversations_send_api import post
 from tests.test_member_branch import DENIED
 from tests.test_memberships import ctx
@@ -36,7 +41,12 @@ from tests.test_team_writes import send
 __all__ = ["crm", "desk", "inbox", "real_stack", "world"]  # los fixtures, para pytest
 pytestmark = pytest.mark.usefixtures("tenant_db")
 DB = psycopg.Connection[Any]
+NAME = "conversations_human_request_ck"
 MIGRATION = importlib.import_module("apps.conversations.migrations.0053_conversation_human_request")
+VALIDATE = importlib.import_module(
+    "apps.conversations.migrations.0054_validate_human_request_check"
+)
+HANDOFF = "Quiero hablar con una persona, por favor"
 COPILOT = "/api/v1/o/org-a/conversations/{}/copilot/suggest/"
 
 
@@ -44,20 +54,21 @@ def ask(client: Client, convo: UUID, method: str = "post", base: str = BASE) -> 
     return send(client, method, f"{base}{convo}/human-request/", None)
 
 
-def trail(migrator: DB) -> list[tuple[Any, ...]]:
-    """La auditoría de las solicitudes y los eventos para el Inbox, en orden."""
-    audited = migrator.execute(
-        "SELECT action, entity_id, changes, metadata FROM audit_logs "
-        "WHERE action LIKE 'conversation.human_%%' ORDER BY occurred_at, id"
-    ).fetchall()
-    return list(audited)
+def trail(migrator: DB) -> list[tuple[Any, ...]]:  # la auditoría de las solicitudes, en orden
+    sql = "SELECT action, entity_id, changes, metadata FROM audit_logs WHERE action LIKE %s"
+    return migrator.execute(sql + " ORDER BY occurred_at, id", ["conversation.human_%"]).fetchall()
 
 
 def events(migrator: DB) -> list[tuple[Any, ...]]:
-    found = migrator.execute(
-        "SELECT event_type, aggregate_id, payload FROM outbox_events ORDER BY id"
-    ).fetchall()
-    return list(found)
+    sql = "SELECT event_type, aggregate_id, payload FROM outbox_events ORDER BY id"
+    return migrator.execute(sql).fetchall()
+
+
+def fails(error: Exception) -> Any:
+    def raising(*_: Any, **__: Any) -> None:
+        raise error
+
+    return raising
 
 
 def state(org: UUID, convo: UUID) -> tuple[Any, ...]:
@@ -71,13 +82,9 @@ def test_a_person_asks_once_and_the_list_and_the_inbox_learn_it(
 ) -> None:
     convo, ana = inbox.convs["nobody"], signed(inbox.ana)
     messages = migrator.execute("SELECT count(*) FROM messages").fetchone()
-    first = ask(ana, convo)
-    assert first.status_code == 200, first.content
-    body = first.json()
-    assert body["id"] == str(convo) and set(body["human_request"]) == {
-        "reason", "requested_at", "requested_by_user_id",
-    }  # fmt: skip
-    shown = body["human_request"]
+    body = ask(ana, convo).json()
+    shown, fields = body["human_request"], {"reason", "requested_at", "requested_by_user_id"}
+    assert body["id"] == str(convo) and set(shown) == fields
     assert (shown["reason"], shown["requested_by_user_id"]) == ("AGENT", str(inbox.ana.pk))
     again = ask(ana, convo)  # idempotente: ni otra fila, ni otra auditoría, ni otro evento
     assert again.status_code == 200 and again.json() == body
@@ -159,16 +166,18 @@ def test_a_reply_from_a_person_or_taking_it_closes_the_request_and_releasing_doe
 ) -> None:
     convo, ana = inbox.convs["nobody"], signed(inbox.ana)
     ask(ana, convo)
-    note = send(
-        ana, "post", f"{BASE}{convo}/notes/", {"client_message_id": str(uuid4()), "body": "Nota"}
-    )
-    assert note.status_code in (200, 201) and state(inbox.a, convo)[0] == "AGENT"  # una nota, no
+    note = {"client_message_id": str(uuid4()), "body": "Nota"}
+    assert send(ana, "post", f"{BASE}{convo}/notes/", note).status_code == 201  # una nota, no
+    padded = f"  {settings.AI_HANDOFF_REPLY}\n"  # el texto fijo de traspaso no es atender
+    assert post(ana, convo, body=padded).status_code == 202 and state(inbox.a, convo)[0] == "AGENT"
     sent = post(ana, convo)
     assert sent.status_code == 202, sent.content
     assert state(inbox.a, convo) == (None, None, None)
-    closed = trail(migrator)[-1]
-    assert closed[0] == "conversation.human_request_closed"
-    assert closed[3] == {"cause": "REPLIED", "message_id": sent.json()["id"]}
+    closed = (
+        "conversation.human_request_closed",
+        {"cause": "REPLIED", "message_id": sent.json()["id"]},
+    )
+    assert trail(migrator)[-1][0::3] == closed
     other = inbox.convs["team"]  # sin persona: tomarla también la cierra
     ask(ana, other)
     assert assign(ana, other, action="TAKE").status_code == 200
@@ -186,22 +195,21 @@ def test_the_database_keeps_the_request_whole_and_going_back_refuses_an_open_one
 ) -> None:
     convo = inbox.convs["nobody"]
     for partial in ({"human_request_reason": "AGENT"}, {"human_requested_at": timezone.now()}):
-        with pytest.raises(IntegrityError, match="conversations_human_request_ck"):
+        with pytest.raises(IntegrityError, match=NAME):
             with tenant_scope(ctx(inbox.a)):
                 Conversation.objects.filter(pk=convo).update(**partial)
     wrong = {"human_requested_at": timezone.now(), "human_requested_by_user_id": inbox.ana.pk}
-    with pytest.raises(IntegrityError, match="conversations_human_request_ck"):
-        with tenant_scope(ctx(inbox.a)):
-            Conversation.objects.filter(pk=convo).update(**wrong, human_request_reason="BOT")
+    for bad in ("BOT", None):  # un NULL pasaría el `IN` de un CHECK
+        with pytest.raises(IntegrityError, match=NAME):
+            with tenant_scope(ctx(inbox.a)):
+                Conversation.objects.filter(pk=convo).update(**wrong, human_request_reason=bad)
     for stranger in (inbox.luis.pk, uuid4()):  # de B, o nadie: la FK a las membresías de A
         outside = wrong | {"human_requested_by_user_id": stranger, "human_request_reason": "AGENT"}
         with pytest.raises(IntegrityError, match="conversations_human_requested_by_fk"):
             with tenant_scope(ctx(inbox.a)):
                 Conversation.objects.filter(pk=convo).update(**outside)
-    valid = migrator.execute(
-        "SELECT convalidated FROM pg_constraint WHERE conname = 'conversations_human_request_ck'"
-    ).fetchone()
-    assert valid == (True,)  # la `0054` lo validó
+    valid = "SELECT convalidated FROM pg_constraint WHERE conname = %s"
+    assert migrator.execute(valid, [NAME]).fetchone() == (True,)  # la `0054` lo validó
     with pytest.raises(RuntimeError, match="BYPASSRLS"):  # `crm_app` no ve todas las filas
         MIGRATION.refuse_open(None, SimpleNamespace(connection=connection))
     editor = SimpleNamespace(connection=migrator)
@@ -215,12 +223,25 @@ def test_the_database_keeps_the_request_whole_and_going_back_refuses_an_open_one
 def test_a_handoff_the_copilot_detects_is_recorded_once_without_sending_anything(
     desk: SimpleNamespace, migrator: DB
 ) -> None:
-    say(desk, "Quiero hablar con una persona, por favor")
-    desk.fake.replies = [PLAIN, PLAIN]
-    ana = signed(desk.ana)
-    answer = send(ana, "post", COPILOT.format(desk.convo), {})
-    assert answer.status_code == 201, answer.content
-    assert answer.json()["handoff"]["reason"] == "ASKED_FOR_PERSON"
+    """Y con el traspaso, además de `ai_*` y `audit_logs` (ADR-034 §2), solo se escriben las
+    columnas de la solicitud y su `conversation.updated` (decisión del propietario en #771,
+    2026-11-21)."""
+    say(desk, HANDOFF)
+    desk.fake.replies, ana = [PLAIN, PLAIN], signed(desk.ana)
+    with captured() as seen:
+        answer = send(ana, "post", COPILOT.format(desk.convo), {})
+    assert answer.status_code == 201 and answer.json()["handoff"]["reason"] == "ASKED_FOR_PERSON"
+    tables = "ai_runs|ai_actions|ai_suggestions|audit_logs|login_throttles"
+    ai = rf'\s*((INSERT INTO|UPDATE) "?({tables})"? |SELECT pg_advisory_xact_lock_shared\()'
+    left = [s for s in writes(seen) if not re.match(ai, s)]
+    columns = ", ".join(f'"{c}" = [^,]+' for c in (*attention.FIELDS, "updated_at"))
+    allowed = (
+        rf'UPDATE "conversations" SET {columns} WHERE \(.*"conversations"."id" = \S+\)$',  # noqa: S608
+        r'SELECT .* FROM "conversations" WHERE .* FOR NO KEY UPDATE$',
+        r"INSERT INTO \"outbox_events\" .*'conversation\.updated'",
+    )
+    matched = sorted(i for s in left for i, a in enumerate(allowed) if re.match(a, s, re.S))
+    assert matched == [0, 1, 2] and len(left) == 3, left
     run = migrator.execute("SELECT id FROM ai_runs").fetchone()
     assert run is not None
     assert state(desk.a, desk.convo)[:2] == ("ASKED_FOR_PERSON", desk.ana.pk)
@@ -236,21 +257,32 @@ def test_a_handoff_the_copilot_detects_is_recorded_once_without_sending_anything
     assert [e[0] for e in events(migrator)] == ["conversation.updated"]
 
 
-def test_the_copilot_on_a_closed_conversation_records_nothing_and_a_lost_one_is_not_found(
+def test_the_copilot_records_nothing_when_closed_or_answered_meanwhile_and_lost_is_not_found(
     desk: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    say(desk, "Quiero hablar con una persona, por favor")
+    say(desk, HANDOFF)
     with tenant_scope(ctx(desk.a)):
         Conversation.objects.filter(pk=desk.convo).update(status="CLOSED", closed_at=timezone.now())
     assert run(desk, PLAIN).handoff_reason == "ASKED_FOR_PERSON"  # el aviso sale igual
+    with tenant_scope(ctx(desk.a)):
+        Conversation.objects.filter(pk=desk.convo).update(status="OPEN", closed_at=None)
+    prepare = copilot._prepare
+
+    def answered(*args: Any) -> Any:  # una persona responde mientras el modelo trabaja
+        found = prepare(*args)
+        say(desk, "Ya te atiendo", direction="OUTBOUND", sender_type="USER",
+            sender_user_id=desk.ana.pk, delivery_status="SENT")  # fmt: skip
+        return found
+
+    monkeypatch.setattr(copilot, "_prepare", answered)
+    assert run(desk, PLAIN).handoff_reason == "ASKED_FOR_PERSON"
     assert state(desk.a, desk.convo) == (None, None, None) and trail(migrator) == []
-
-    def gone(*_: Any, **__: Any) -> None:  # perdió el alcance mientras el modelo respondía
-        raise Conversation.DoesNotExist
-
-    monkeypatch.setattr(attention, "request_human", gone)
-    with pytest.raises(copilot.NotFound):
-        run(desk, PLAIN)
+    monkeypatch.setattr(copilot, "_prepare", prepare)
+    say(desk, HANDOFF)
+    for lost in (Conversation.DoesNotExist(), AccessDenied(Denied.PERMISSION)):  # a mitad
+        monkeypatch.setattr(attention, "request_human", fails(lost))
+        with pytest.raises(copilot.NotFound):
+            run(desk, PLAIN)
 
 
 def test_only_the_api_the_commands_and_the_copilot_runtime_import_the_request() -> None:
@@ -301,3 +333,39 @@ def test_a_handoff_found_while_summarizing_is_recorded_too(
     run = migrator.execute("SELECT id FROM ai_runs WHERE purpose = 'SUMMARY'").fetchone()
     assert run is not None and state(desk.a, desk.convo)[:2] == ("ASKED_FOR_PERSON", desk.ana.pk)
     assert trail(migrator)[0][3] == {"reason": "ASKED_FOR_PERSON", "ai_run_id": str(run[0])}
+
+
+def test_two_requests_at_once_record_one(inbox: SimpleNamespace, migrator: DB) -> None:
+    convo = inbox.convs["nobody"]
+
+    def request(tenant: Any) -> bool:
+        return attention.request_human(tenant, conversation_id=convo, reason="AGENT")[1]
+
+    assert duel(inbox.a, (inbox.ana, request), (inbox.sam, request)) == [True, False]
+    assert len(trail(migrator)) == 1
+
+
+def test_validating_waits_at_most_its_lock_timeout_and_leaves_none(migrator: DB) -> None:
+    migrator.execute("SET statement_timeout = '20s'")  # sin `lock_timeout`, fallaría por esto
+    with psycopg.connect(migrator_conninfo()) as other:
+        other.execute("LOCK TABLE conversations IN SHARE UPDATE EXCLUSIVE MODE")
+        with pytest.raises(psycopg.errors.LockNotAvailable):
+            VALIDATE.validate(None, SimpleNamespace(connection=migrator))
+    assert migrator.execute("SHOW lock_timeout").fetchone() == ("0",)
+
+
+@pytest.mark.usefixtures("real_stack")
+def test_a_database_fault_while_recording_keeps_the_draft_and_the_notice(
+    desk: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch, caplog: Any
+) -> None:
+    say(desk, HANDOFF)
+    desk.fake.replies = [PLAIN]
+    monkeypatch.setattr(attention, "request_human", fails(OperationalError("lock timeout fila-x")))
+    with caplog.at_level(logging.DEBUG):
+        answer = send(signed(desk.ana), "post", COPILOT.format(desk.convo), {})
+    assert answer.status_code == 201, answer.content
+    assert answer.json()["handoff"] == {"requested": True, "reason": "ASKED_FOR_PERSON"}
+    assert migrator.execute("SELECT count(*) FROM ai_suggestions").fetchone() == (1,)
+    logged = caplog.text + str([r.__dict__ for r in caplog.records])
+    assert "ai.copilot_handoff_unsaved" in logged and "OperationalError" in logged
+    assert "fila-x" not in logged

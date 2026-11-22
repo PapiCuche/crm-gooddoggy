@@ -526,7 +526,8 @@ def record_outbound(
                 )
                 convo.save(using=alias, update_fields=[*LAST, "updated_at"])
             record(ctx, "message.queued", Entity("message", message.pk), None, _sent(message))
-            attention.clear(ctx, alias, convo, "REPLIED", message_id=message.pk)  # F8-08n
+            if not attention.handoff_reply(text):  # F8-08n: el aviso de traspaso no es atender
+                attention.clear(ctx, alias, convo, "REPLIED", message_id=message.pk)
             ids = {"conversation_id": convo.pk, "channel_account_id": convo.channel_account_id}
             emit(  # para el despachador (F6-04b); solo ids, nunca el texto
                 ctx,

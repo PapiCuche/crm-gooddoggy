@@ -9,15 +9,17 @@ solo ids y códigos y deja `conversation.updated` en el outbox de eventos para q
 se actualice; nunca un mensaje: nada sale al cliente. No usa `attention_mode` (ADR-034 §12: este
 corte no lo cambia) ni la asignación (una persona puede tenerla y aun así hacer falta otra)."""
 
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
 from apps.access.selectors import AccessDenied, Denied, can, execution_context, has_permission
 from apps.audit.services import Entity, record
-from apps.conversations.models import Conversation, HumanRequest, Status
+from apps.conversations.models import Conversation, HumanRequest, Message, Status
 from apps.conversations.policy import ConversationClosed
 from core.outbox import emit
 from core.tenancy.context import TenantContext
@@ -59,12 +61,21 @@ def _write(
     emit(ctx, "conversation.updated", aggregate_type="conversation", aggregate_id=convo.pk)
 
 
+def handoff_reply(text: str) -> bool:
+    """¿Es `text` el texto fijo de traspaso del copiloto? Enviarlo no es atender: no cierra la
+    solicitud. Hoy, `AI_HANDOFF_REPLY`; #1046 lo hace por organización y cambia esta función."""
+    return text.split() == settings.AI_HANDOFF_REPLY.split()
+
+
 def request_human(
-    ctx: TenantContext, *, conversation_id: UUID, reason: str, ai_run_id: UUID | None = None
-) -> tuple[Conversation, bool]:
+    ctx: TenantContext, *, conversation_id: UUID, reason: str, ai_run_id: UUID | None = None,
+    after: datetime | None = None,
+) -> tuple[Conversation, bool]:  # fmt: skip
     """Pide que una persona atienda la conversación; `True` si la abrió ahora. Con una ya abierta
-    la devuelve tal cual (quién, cuándo y por qué siguen siendo los primeros). `ConversationClosed`
-    si está cerrada; `DoesNotExist` fuera del alcance; `AccessDenied` sin el permiso."""
+    la devuelve tal cual (quién, cuándo y por qué siguen siendo los primeros), y con `after` (el
+    copiloto: cuándo empezó su run) tampoco abre nada si desde entonces una persona ya respondió.
+    `ConversationClosed` si está cerrada; `DoesNotExist` fuera del alcance; `AccessDenied` sin el
+    permiso."""
     alias = require_scope(ctx)
     if reason not in HumanRequest.values:
         raise ValueError("motivo no admitido")
@@ -72,7 +83,9 @@ def request_human(
         convo = _visible(ctx, alias, conversation_id)
         if convo.status == Status.CLOSED:
             raise ConversationClosed
-        if convo.human_requested_at is not None:
+        mine = Message.objects.using(alias).filter(conversation_id=convo.pk, sender_type="USER")
+        replied = after and mine.filter(direction="OUTBOUND", created_at__gte=after).exists()
+        if convo.human_requested_at is not None or replied:
             return convo, False
         values = dict(zip(FIELDS, (timezone.now(), reason, ctx.user_id), strict=True))
         metadata = {"reason": reason} | ({"ai_run_id": str(ai_run_id)} if ai_run_id else {})
