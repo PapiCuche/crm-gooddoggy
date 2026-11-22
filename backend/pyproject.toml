@@ -218,12 +218,12 @@ allowed_importers = ["apps.ai_agents.apps", "apps.ai_agents.copilot"]
 # vistas de sugerir (F8-08h) y resumir (F8-08i), que comparten módulo.
 name = "Ningún módulo de ai_agents importa su arranque (F8-08d)"
 type = "forbidden"
-source_modules = ["apps.ai_agents.tools", "apps.ai_agents.registry", "apps.ai_agents.fields", "apps.ai_agents.models", "apps.ai_agents.migrations", "apps.ai_agents.records", "apps.ai_agents.context", "apps.ai_agents.guard", "apps.ai_agents.detectors", "apps.ai_agents.copilot", "apps.ai_agents.api"]
+source_modules = ["apps.ai_agents.tools", "apps.ai_agents.registry", "apps.ai_agents.fields", "apps.ai_agents.models", "apps.ai_agents.migrations", "apps.ai_agents.records", "apps.ai_agents.context", "apps.ai_agents.guard", "apps.ai_agents.detectors", "apps.ai_agents.copilot", "apps.ai_agents.api", "apps.ai_agents.drafts", "apps.ai_agents.tasks"]
 forbidden_modules = ["apps.ai_agents.apps"]
 
 [[tool.importlinter.contracts]]
 # F8-08h (#771) y F8-08i (#1025): las rutas llegan al registro, al contexto, a las tools y al gateway
-# solo por el runtime
+# solo por el runtime (F8-08j, #1026: y al registro, por `drafts`, que inserta y purga)
 name = "La ruta del copiloto importa el runtime, no lo que el runtime usa (F8-08h)"
 type = "forbidden"
 source_modules = ["apps.ai_agents.api"]
@@ -235,8 +235,9 @@ allow_indirect_imports = true
 # una tool que importe `records` llegaría al escritor de la auditoría sin que nadie lo viera. Lo que
 # llama a `records.save` es el runtime del copiloto (F8-08g, #1024), que no está en esta lista.
 # El Output Guard (F8-08e, y sus detectores, F8-08f) es puro: devuelve sus hallazgos y el runtime los
-# registra.
-name = "Solo el runtime del copiloto importa su registro (F8-08b)"
+# registra. F8-08j (#1026): a propósito, `drafts` (insertar con su auditoría y purgar el texto) y su
+# tarea (`tasks`, que llega por `drafts`) tampoco están en la lista.
+name = "Solo el runtime del copiloto y sus borradores importan su registro (F8-08b, F8-08j)"
 type = "forbidden"
 source_modules = ["apps.ai_agents.tools", "apps.ai_agents.registry", "apps.ai_agents.fields", "apps.ai_agents.models", "apps.ai_agents.apps", "apps.ai_agents.migrations", "apps.ai_agents.context", "apps.ai_agents.guard", "apps.ai_agents.detectors"]
 forbidden_modules = ["apps.ai_agents.records"]
