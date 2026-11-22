@@ -40,6 +40,7 @@ const rosa = {
   ai_excluded_at: null as string | null,
 };
 type Reply = { status: number; body: unknown };
+type Sent = { excluded: boolean; version: number };
 const STEP: Reply = {
   status: 403,
   body: { code: "STEP_UP_REQUIRED", detail: "TEXTO DEL SERVIDOR" },
@@ -47,7 +48,8 @@ const STEP: Reply = {
 const refusal = (status: number, code: string): Reply => ({ status, body: { code, detail: "x" } });
 
 // La conversación vive en el "servidor": la ruta la cambia con lo enviado, salvo las respuestas de
-// `refused`, que se dan una vez cada una y en orden. Con `state.reads = false`, releer falla.
+// `refused`, que se dan una vez cada una y en orden; con otra versión, 409 como el backend. Con
+// `state.reads = false`, releer falla; `other` es otra persona que cambia la marca.
 function server(initial: Partial<typeof rosa> = {}, ...refused: Reply[]) {
   const state = { ...rosa, ...initial, reads: true };
   const read = (body: unknown) => (state.reads ? { status: 200, body } : { status: 500, body: {} });
@@ -60,7 +62,8 @@ function server(initial: Partial<typeof rosa> = {}, ...refused: Reply[]) {
       const answer = refused.shift();
       if (answer) return answer;
       const sent = api.mock.calls.at(-1)?.[1]?.body;
-      const { excluded } = JSON.parse(String(sent)) as { excluded: boolean };
+      const { excluded, version } = JSON.parse(String(sent)) as Sent;
+      if (version !== state.version) return refusal(409, "CONVERSATION_VERSION_CONFLICT");
       state.ai_excluded_at = excluded ? "2026-11-22T15:30:00Z" : null;
       state.version += 1;
       return {
@@ -73,7 +76,11 @@ function server(initial: Partial<typeof rosa> = {}, ...refused: Reply[]) {
     api.mock.calls
       .filter(([to, init]) => `${init?.method ?? "GET"} ${String(to)}` === route)
       .map(([, init]) => (init?.body ? JSON.parse(String(init.body)) : null));
-  return { calls, state };
+  const other = (excluded: boolean) => {
+    state.ai_excluded_at = excluded ? "2026-11-22T16:00:00Z" : null;
+    state.version += 1;
+  };
+  return { calls, state, other };
 }
 const show = (permissions: Grant[]) =>
   renderApp(
@@ -146,8 +153,14 @@ describe("exclusión de la IA en el Inbox (F8-13b)", () => {
     show(AGENT);
     await openChat();
     await ask("Excluir de la IA");
+    expect(screen.getByRole("group", { name: "Excluir de la IA" })).toHaveAccessibleDescription(
+      /Vale solo para esta conversación, no para el contacto/,
+    );
     fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
     expect(screen.queryByRole("group", { name: "Excluir de la IA" })).toBeNull();
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole("button", { name: "Excluir de la IA" })),
+    ); // vuelve a quien la abrió
     expect(s.calls(PUT)).toEqual([]);
     const yes = await ask("Excluir de la IA");
     fireEvent.click(yes);
@@ -164,9 +177,8 @@ describe("exclusión de la IA en el Inbox (F8-13b)", () => {
     expect(screen.queryByRole("button", { name: "Sugerir respuesta" })).toBeNull();
     fireEvent.click(await ask("Volver a incluir en la IA"));
     await verify();
-    expect(
-      await screen.findByText("La conversación vuelve a estar incluida en la IA."),
-    ).toBeVisible();
+    const done = await screen.findByText("La conversación vuelve a estar incluida en la IA.");
+    await waitFor(() => expect(document.activeElement).toBe(done)); // no el botón, ya con otro texto
     expect(s.calls(STEP_UP)).toEqual([{ code: "123456" }]);
     // la primera la rechazó el servidor por el segundo factor; se repite una vez, con la misma versión
     expect(s.calls(PUT)).toEqual([
@@ -216,21 +228,24 @@ describe("exclusión de la IA en el Inbox (F8-13b)", () => {
     expect(screen.getByText("Excluida de la IA")).toBeVisible();
   });
 
-  it("una versión vieja lo dice con su texto, no reenvía y el siguiente intento usa la nueva", async () => {
-    const s = server({}, refusal(409, "CONVERSATION_VERSION_CONFLICT"));
+  it("una versión vieja lo dice, cierra la confirmación y no reenvía; al reabrir usa la nueva", async () => {
+    const s = server();
     show(AGENT);
     await openChat();
     const yes = await ask("Excluir de la IA");
-    s.state.version = 2; // otra persona la cambió después de leerla
+    s.state.version = 2; // otra persona cambió otra cosa de la conversación después de leerla
     fireEvent.click(yes);
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("Otra persona cambió esta conversación");
     expect(alert).not.toHaveTextContent("x");
+    expect(screen.queryByRole("group", { name: "Excluir de la IA" })).toBeNull(); // nada listo
     expect(screen.queryByText("Excluida de la IA")).toBeNull();
+    const opener = screen.getByRole("button", { name: "Excluir de la IA" });
+    await waitFor(() => expect(document.activeElement).toBe(opener));
     expect(s.calls(PUT)).toEqual([{ excluded: true, version: 1 }]); // nada se reenvía solo
     await waitFor(() => expect(s.calls(`GET ${BASE}/1/`).length).toBeGreaterThan(1)); // relee
     await act(async () => {}); // y la relectura llega a la caché
-    fireEvent.click(screen.getByRole("button", { name: "Confirmar" }));
+    fireEvent.click(await ask("Excluir de la IA"));
     expect(await screen.findByText("Conversación excluida de la IA.")).toBeVisible();
     expect(s.calls(PUT)).toEqual([
       { excluded: true, version: 1 },
@@ -238,14 +253,69 @@ describe("exclusión de la IA en el Inbox (F8-13b)", () => {
     ]);
   });
 
+  // La revisión de #1081: con la confirmación abierta, una relectura (tiempo real, «Actualizar»)
+  // con la marca cambiada no convierte «Confirmar» en la acción contraria.
   it.each([
-    [403, "PERMISSION_DENIED"],
-    [404, "NOT_FOUND"],
-  ])("un %i (%s) dice que no puede cambiarla", async (status, code) => {
-    server({ ai_excluded_at: "2026-11-21T10:00:00Z" }, refusal(status, code));
+    ["Excluir de la IA", false],
+    ["Volver a incluir en la IA", true],
+  ])(
+    "si otra persona cambia la marca con «%s» abierto, se cierra sin enviar",
+    async (name, was) => {
+      const s = server({ ai_excluded_at: was ? "2026-11-21T10:00:00Z" : null });
+      show(MANAGER);
+      await openChat();
+      await ask(name);
+      s.other(!was);
+      fireEvent.click(screen.getByRole("button", { name: "Actualizar mensajes" }));
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "Otra persona cambió esta conversación",
+      );
+      expect(screen.queryByRole("group", { name })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Confirmar" })).toBeNull();
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(s.calls(PUT)).toEqual([]);
+      expect(s.calls(STEP_UP)).toEqual([]);
+    },
+  );
+
+  it("con la marca igual pero otra versión, confirmar envía lo leído y la API lo rechaza", async () => {
+    const s = server();
     show(MANAGER);
     await openChat();
-    fireEvent.click(await ask("Volver a incluir en la IA"));
+    await ask("Excluir de la IA");
+    s.state.version = 2;
+    fireEvent.click(screen.getByRole("button", { name: "Actualizar mensajes" }));
+    await waitFor(() => expect(s.calls(`GET ${BASE}/1/`).length).toBeGreaterThan(1));
+    await act(async () => {});
+    fireEvent.click(screen.getByRole("button", { name: "Confirmar" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Otra persona cambió esta conversación",
+    );
+    expect(s.calls(PUT)).toEqual([{ excluded: true, version: 1 }]);
+  });
+
+  it("el aviso de lo hecho se va si otra persona cambia la marca", async () => {
+    const s = server();
+    show(MANAGER);
+    await openChat();
+    fireEvent.click(await ask("Excluir de la IA"));
+    expect(await screen.findByText("Conversación excluida de la IA.")).toBeVisible();
+    s.other(false);
+    fireEvent.click(screen.getByRole("button", { name: "Actualizar mensajes" }));
+    await waitFor(() => expect(screen.queryByText("Excluida de la IA")).toBeNull());
+    expect(screen.queryByText("Conversación excluida de la IA.")).toBeNull();
+  });
+
+  it.each([
+    [403, "PERMISSION_DENIED", "Excluir de la IA", null],
+    [404, "NOT_FOUND", "Excluir de la IA", null],
+    [403, "PERMISSION_DENIED", "Volver a incluir en la IA", "2026-11-21T10:00:00Z"],
+    [404, "NOT_FOUND", "Volver a incluir en la IA", "2026-11-21T10:00:00Z"],
+  ])("un %i (%s) en «%s» dice que no puede cambiarla", async (status, code, name, at) => {
+    server({ ai_excluded_at: at }, refusal(status, code));
+    show(MANAGER);
+    await openChat();
+    fireEvent.click(await ask(name));
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "No puedes cambiar esta conversación",
     );
