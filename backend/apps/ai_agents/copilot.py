@@ -127,9 +127,10 @@ def _prepare(
 
 
 def _refused(ctx: TenantContext, conversation_id: UUID) -> str | None:
-    """En el scope del gateway, antes de reservar y de cada reintento: `ACCESS_DENIED` si la
-    persona perdió su membresía o `ai.use`; `AI_EXCLUDED` si la conversación está excluida o ya no
-    se puede leer (falla cerrado). Un error de la base sale tal cual."""
+    """En el scope del gateway, antes de reservar y de cada envío: `ACCESS_DENIED` si la persona
+    perdió su membresía o `ai.use`; `AI_EXCLUDED` si la conversación está excluida o ya no se puede
+    leer (falla cerrado). Un error de la base, o el candado perdido (`CallLockLost`), sale tal cual:
+    el run queda `INTERNAL_ERROR`, no excluido."""
     try:
         if not has_permission(execution_context(ctx), "ai.use"):
             return "ACCESS_DENIED"

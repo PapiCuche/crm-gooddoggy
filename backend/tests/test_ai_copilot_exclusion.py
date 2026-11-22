@@ -184,19 +184,21 @@ def test_excluded_after_the_context_and_before_the_first_call_reserves_and_calls
 BROKEN = attention.INCLUDED.replace("c.id = %s", "c.nope = %s")  # un error real de PostgreSQL
 
 
-def test_a_conversation_that_cannot_be_read_or_without_the_call_lock_counts_as_excluded(
+def test_a_conversation_that_cannot_be_read_counts_as_excluded_and_a_lost_lock_is_an_error(
     desk: SimpleNamespace,
 ) -> None:
-    """Sin fila visible (inexistente o de otra organización, por RLS) o sin el candado de la
-    llamada en esta sesión (nunca tomado o perdido con la conexión): falla cerrado."""
+    """Sin fila visible (inexistente o de otra organización, por RLS) o con la marca: `False`.
+    Incluida pero sin el candado en esta sesión (nunca tomado, soltado o de otra sesión):
+    `CallLockLost` (F8-13d: un fallo, no una exclusión). Nunca `True` sin el candado."""
     mine, other = ctx(desk.a, desk.ana), ctx(desk.b, desk.ana)
     with attention.ai_call(mine, desk.convo, 5), tenant_scope(mine):
         assert attention.ai_included(mine, desk.convo) is True
         assert attention.ai_included(mine, uuid4()) is False
-    with tenant_scope(mine):
-        assert attention.ai_included(mine, desk.convo) is False  # ya soltado
+    with tenant_scope(mine), pytest.raises(attention.CallLockLost):
+        attention.ai_included(mine, desk.convo)  # ya soltado
     with attention.ai_call(mine, uuid4(), 5), tenant_scope(mine):  # el de otra conversación
-        assert attention.ai_included(mine, desk.convo) is False
+        with pytest.raises(attention.CallLockLost):
+            attention.ai_included(mine, desk.convo)
     with attention.ai_call(other, desk.convo, 5), tenant_scope(other):
         assert attention.ai_included(other, desk.convo) is False
     held, done = threading.Event(), threading.Event()
@@ -208,10 +210,13 @@ def test_a_conversation_that_cannot_be_read_or_without_the_call_lock_counts_as_e
 
     holder = later(hold)
     assert held.wait(10)
-    with tenant_scope(mine):
-        assert attention.ai_included(mine, desk.convo) is False
+    with tenant_scope(mine), pytest.raises(attention.CallLockLost):
+        attention.ai_included(mine, desk.convo)
     done.set()
     holder.join(10)
+    mark(desk)
+    with tenant_scope(mine):  # con la marca, sin candado: excluida (es cierto)
+        assert attention.ai_included(mine, desk.convo) is False
 
 
 def test_the_organization_switch_is_checked_before_the_exclusion_lock(

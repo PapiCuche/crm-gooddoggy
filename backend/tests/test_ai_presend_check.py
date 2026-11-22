@@ -306,6 +306,47 @@ def test_a_mark_set_during_the_tls_handshake_is_seen_by_the_check_and_nothing_is
     assert migrator.execute(RUNS).fetchall() == [("AI_EXCLUDED", 1)]
 
 
+def test_a_lost_lock_on_a_reopened_connection_withholds_and_is_not_reported_as_excluded(
+    desk: SimpleNamespace, provider: Provider, migrator: DB, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """La conexión de la sesión se cierra durante el apretón TLS; la comprobación vuelve a conectar
+    (otro pid, sin el candado) con la marca vacía: no sale nada y el run es `INTERNAL_ERROR`, no un
+    `AI_EXCLUDED` que diría algo falso."""
+    owner, name, _ = WHERE["tls"]
+    monkeypatch.setattr(owner, name, getattr(owner, name))
+    ahead_of(owner, name, connection.close)
+    desk.fake.replies = [PLAIN]
+    assert suggest(desk) == "INTERNAL_ERROR"
+    assert provider.settled(1) == [b""] and excluded_at(migrator, desk) is None
+    assert migrator.execute(RUNS).fetchall() == [("INTERNAL_ERROR", 1)]
+    assert migrator.execute(LEDGER).fetchall() == [("PROVIDER_UNAVAILABLE", 0)]
+    assert migrator.execute(ADVISORY).fetchone() == (0,)
+
+
+def test_a_check_the_database_does_not_answer_in_time_withholds_the_send(
+    desk: SimpleNamespace, provider: Provider, migrator: DB, monkeypatch: pytest.MonkeyPatch,
+    settings: Any,
+) -> None:  # fmt: skip
+    """La comprobación de antes del envío tiene su `statement_timeout`: una base que tarda no la
+    retiene; se cancela, no sale nada y la reserva se libera."""
+    settings.AI_SEND_CHECK_SECONDS = 0.3
+    refused, calls = copilot._refused, list[None]()
+
+    def slow(*args: Any) -> Any:
+        calls.append(None)
+        if len(calls) == 2:  # la 1.ª es la de la reserva
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT pg_sleep(5)")
+        return refused(*args)
+
+    monkeypatch.setattr(copilot, "_refused", slow)
+    desk.fake.replies = [PLAIN]
+    started = time.monotonic()
+    assert suggest(desk) == "INTERNAL_ERROR" and time.monotonic() - started < 4
+    assert provider.settled(1) == [b""]
+    assert migrator.execute(LEDGER).fetchall() == [("PROVIDER_UNAVAILABLE", 0)]
+
+
 def test_a_retry_on_a_new_connection_is_checked_again_and_withheld(
     desk: SimpleNamespace, provider: Provider, migrator: DB, other: DB,
     monkeypatch: pytest.MonkeyPatch,
@@ -340,10 +381,12 @@ def test_after_the_session_dies_the_check_never_passes_even_on_a_new_connection(
                     seen.append(attention.ai_included(mine, desk.convo))
             except DatabaseError:
                 seen.append("error")
+            except attention.CallLockLost:
+                seen.append("lost")
         with connection.cursor() as cursor:
             cursor.execute("SELECT pg_backend_pid()")
             [(after,)] = cursor.fetchall()
-    assert True not in seen and False in seen and after != before
+    assert True not in seen and "lost" in seen and after != before
 
 
 @pytest.mark.parametrize("answer", [False, None, 1, "yes", RuntimeError("x"), DatabaseError("x")])

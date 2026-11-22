@@ -37,11 +37,11 @@ _CALL_SHARED, _CALL_FREE = (f"SELECT pg_advisory_lock_shared({_KEY})",
 _CALL_EXCLUSIVE, _ONE = (f"SELECT pg_advisory_xact_lock({_KEY})",
                          f"SELECT pg_try_advisory_xact_lock({_KEY})")  # fmt: skip
 _WAIT = "SELECT set_config('lock_timeout', %s, true)"
-# La marca, solo con el candado en esta sesión (falla cerrado). Sin `FOR SHARE`: con el candado, la
+# La marca y si esta sesión tiene el candado (falla cerrado). Sin `FOR SHARE`: con el candado, la
 # marca no cambia. Una clave `bigint` va en `classid` (alta) y `objid` (baja).
 INCLUDED = """
 WITH k AS (SELECT hashtextextended(%s, 0) AS v)
-SELECT c.ai_excluded_at IS NULL AND EXISTS (
+SELECT c.ai_excluded_at IS NULL, EXISTS (
   SELECT 1 FROM pg_locks l, k WHERE l.locktype = 'advisory' AND l.pid = pg_backend_pid()
     AND l.granted AND l.objsubid = 1
     AND l.classid = ((k.v >> 32) & 4294967295)::oid AND l.objid = (k.v & 4294967295)::oid)
@@ -50,6 +50,10 @@ FROM conversations c WHERE c.id = %s
 
 
 class AICallInProgress(Exception):  # noqa: N818 — una llamada a la IA no terminó a tiempo
+    pass
+
+
+class CallLockLost(Exception):  # noqa: N818 — F8-13d: la sesión ya no tiene el candado de la llamada
     pass
 
 
@@ -176,18 +180,23 @@ def set_ai_excluded(
     incluirla, además `ai.manage` (el segundo factor lo pide la ruta). Permiso, bloqueo, alcance
     sobre la fila bloqueada (si no, el mismo `DoesNotExist`), versión (`VersionConflict`) y estado:
     la misma marca no cambia nada. Audita solo ids y deja `conversation.updated` para el Inbox.
-    F8-13d: excluir mira alcance y versión antes de esperar; la fila, si sigue bloqueada todo el
-    plazo, es `ConversationBusy` (nada cambió)."""
+    F8-13d: los dos caminos miran alcance y versión antes de esperar; la fila, si sigue bloqueada
+    todo el plazo, es `ConversationBusy` (nada cambió)."""
     if type(excluded) is not bool or type(version) is not int or not 1 <= version <= 2**31 - 1:
         raise ValueError("exclusión: un booleano y una versión desde 1")
     alias = require_scope(ctx)
     with transaction.atomic(using=alias):
         if not excluded and not has_permission(execution_context(ctx), MANAGE_AI):
             raise AccessDenied(Denied.PERMISSION)
-        if excluded:  # F8-13c: el alcance (y la versión) antes de esperar; después, las llamadas
-            if _visible(ctx, alias, conversation_id, lock=False).version != version:
-                raise VersionConflict
+        # alcance y versión antes de esperar (el mismo 404, sin esperar); excluir espera además a
+        # las llamadas (F8-13c); incluir, solo a la fila, con el mismo tope (F8-13d)
+        if _visible(ctx, alias, conversation_id, lock=False).version != version:
+            raise VersionConflict
+        if excluded:
             _wait_for_calls(ctx, alias, conversation_id)
+        else:
+            with connections[alias].cursor() as cursor:
+                cursor.execute(_WAIT, [_ms(settings.AI_EXCLUSION_WAIT_SECONDS)])
         with _busy(ConversationBusy):
             convo = _visible(ctx, alias, conversation_id)
         if convo.version != version:
@@ -287,9 +296,15 @@ def ai_call(ctx: TenantContext, conversation_id: UUID, seconds: float) -> Iterat
 def ai_included(ctx: TenantContext, conversation_id: UUID) -> bool:
     """F8-13c: si la conversación (RLS) no está excluida de la IA **y** esta sesión tiene el
     candado de la llamada (`ai_call`): con él, ninguna exclusión se confirma hasta soltarlo. Sin
-    fila o sin el candado, `False` (falla cerrado). Sin permisos: quien llama ya los miró."""
+    fila o con la marca, `False`; incluida pero sin el candado (la sesión lo perdió, p. ej., al
+    volver a conectar), `CallLockLost` (F8-13d: un fallo, no una exclusión). Sin permisos: quien
+    llama ya los miró."""
     key = _key(ctx, conversation_id)
     with connections[require_scope(ctx)].cursor() as cursor:
         cursor.execute(INCLUDED, [key, conversation_id])
         row = cursor.fetchone()
-    return row is not None and row[0] is True
+    if row is None or row[0] is not True:
+        return False
+    if row[1] is not True:
+        raise CallLockLost
+    return True
