@@ -122,7 +122,7 @@ def test_the_scope_the_organization_and_the_version_come_before_any_change(
     with tenant_scope(ctx(inbox.a, inbox.ana)) as tenant:
         for wrong in ({"excluded": 1, "version": 1}, {"excluded": True, "version": True}):
             with pytest.raises(ValueError, match="exclusión"):
-                attention.set_ai_excluded(tenant, conversation_id=sam, **wrong)  # type: ignore[arg-type]
+                attention.set_ai_excluded(tenant, conversation_id=sam, **wrong)
 
 
 def test_two_people_at_once_with_the_same_version_change_it_once(
