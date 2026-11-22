@@ -1,0 +1,219 @@
+import { cleanup, configure, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { TenantProvider } from "@/components/app-shell/tenant-context";
+import type { Grant, SelfContext } from "@/lib/api/model";
+import { mockApi, renderApp } from "@/test-utils";
+
+import { Inbox } from "./inbox";
+
+const BASE = "/api/v1/o/acme/conversations";
+const PUT = `PUT ${BASE}/1/ai-exclusion/`;
+const STEP_UP = "POST /api/v1/auth/mfa/step-up/";
+const tenant: SelfContext = {
+  user: { id: "u1", email: "ana@acme.pe", first_name: "Ana", last_name: "López" },
+  organization: { id: "o1", slug: "acme", name: "Acme SAC" },
+  membership_id: "m1",
+  mfa: { required: false, missing: false },
+  roles: [],
+  permissions: [],
+};
+const grants = (...codes: string[]): Grant[] =>
+  codes.map((code) => ({ code, scopes: ["ORGANIZATION" as const] }));
+const AGENT = grants("conversations.view", "messages.send", "ai.use");
+const MANAGER = [...AGENT, ...grants("ai.manage")];
+const rosa = {
+  ...{ id: "1", number: "CONV-00001", status: "OPEN", attention_mode: "HUMAN" },
+  ...{ assignee_kind: "UNASSIGNED", assigned_user_id: null, assigned_team_id: null },
+  ...{ contact: { id: "c1", display_name: "Rosa Díaz" }, assignment_version: 1 },
+  ...{ channel: { id: "ch1", platform: "SANDBOX", name: "Sandbox" }, human_request: null },
+  ...{ last_message_at: "2026-11-04T15:30:00Z", last_inbound_at: null, version: 1 },
+  ...{ last_message_preview: null, last_message_direction: null, standby_since: null },
+  ai_excluded_at: null as string | null,
+};
+type Reply = { status: number; body: unknown };
+const STEP: Reply = {
+  status: 403,
+  body: { code: "STEP_UP_REQUIRED", detail: "TEXTO DEL SERVIDOR" },
+};
+const refusal = (status: number, code: string): Reply => ({ status, body: { code, detail: "x" } });
+
+// La conversación vive en el "servidor": la ruta la cambia con lo enviado, salvo las respuestas de
+// `refused`, que se dan una vez cada una y en orden.
+function server(initial: Partial<typeof rosa> = {}, ...refused: Reply[]) {
+  const state = { ...rosa, ...initial };
+  const api: ReturnType<typeof mockApi> = mockApi({
+    [`GET ${BASE}/`]: () => ({ status: 200, body: { results: [{ ...state }], next: null } }),
+    [`GET ${BASE}/1/`]: () => ({ status: 200, body: { ...state } }),
+    [`GET ${BASE}/1/messages/`]: { status: 200, body: { results: [], next: null } },
+    [STEP_UP]: { status: 200, body: { step_up_expires_in: 900 } },
+    [PUT]: () => {
+      const answer = refused.shift();
+      if (answer) return answer;
+      const sent = api.mock.calls.at(-1)?.[1]?.body;
+      const { excluded } = JSON.parse(String(sent)) as { excluded: boolean };
+      state.ai_excluded_at = excluded ? "2026-11-22T15:30:00Z" : null;
+      state.version += 1;
+      return {
+        status: 200,
+        body: { id: "1", ai_excluded_at: state.ai_excluded_at, version: state.version },
+      };
+    },
+  });
+  const calls = (route: string) =>
+    api.mock.calls
+      .filter(([to, init]) => `${init?.method ?? "GET"} ${String(to)}` === route)
+      .map(([, init]) => (init?.body ? JSON.parse(String(init.body)) : null));
+  return { calls };
+}
+const show = (permissions: Grant[]) =>
+  renderApp(
+    <TenantProvider value={{ ...tenant, permissions }}>
+      <Inbox />
+    </TenantProvider>,
+  );
+const openChat = async () => {
+  fireEvent.click(await screen.findByRole("button", { name: /Rosa Díaz/ }));
+  return screen.findByRole("heading", { level: 2 });
+};
+// Abre la confirmación (el foco va a «Cancelar») y devuelve el botón de confirmar.
+const ask = async (name: string) => {
+  fireEvent.click(await screen.findByRole("button", { name }));
+  const group = screen.getByRole("group", { name });
+  const cancel = within(group).getByRole("button", { name: "Cancelar" });
+  await waitFor(() => expect(document.activeElement).toBe(cancel)); // lo seguro primero
+  return within(group).getByRole("button", { name: "Confirmar" });
+};
+const verify = async () => {
+  const dialog = await screen.findByRole("dialog");
+  fireEvent.change(within(dialog).getByLabelText(/^Código/), { target: { value: "123456" } });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Verificar" }));
+};
+
+configure({ asyncUtilTimeout: 4000 });
+vi.setConfig({ testTimeout: 15_000 });
+beforeAll(() => {
+  // jsdom no implementa el `<dialog>` modal (el del código de segundo factor): se refleja `open`.
+  HTMLDialogElement.prototype.showModal = function (this: HTMLDialogElement) {
+    this.open = true;
+  };
+  HTMLDialogElement.prototype.close = function (this: HTMLDialogElement) {
+    this.open = false;
+    this.dispatchEvent(new Event("close"));
+  };
+});
+beforeEach(() => {
+  document.cookie = "csrftoken=token-de-prueba";
+});
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
+
+describe("exclusión de la IA en el Inbox (F8-13b)", () => {
+  it("quien atiende la excluye tras confirmar; el copiloto se va y no puede deshacerlo", async () => {
+    const s = server();
+    show(AGENT);
+    await openChat();
+    expect(await screen.findByRole("button", { name: "Sugerir respuesta" })).toBeVisible();
+    fireEvent.click(await ask("Excluir de la IA"));
+    const done = await screen.findByText("Conversación excluida de la IA.");
+    expect(done).toHaveAttribute("role", "status");
+    await waitFor(() => expect(document.activeElement).toBe(done)); // el botón pulsado ya no está
+    expect(s.calls(PUT)).toEqual([{ excluded: true, version: 1 }]);
+    expect(screen.getByText("Excluida de la IA")).toBeVisible();
+    expect(screen.getByRole("note")).toHaveTextContent("excluida de la IA");
+    expect(screen.queryByRole("button", { name: "Sugerir respuesta" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Resumir" })).toBeNull();
+    // Sin `ai.manage` no se ofrece volver a incluirla, ni con la marca puesta.
+    expect(screen.queryByRole("button", { name: /Volver a incluir/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Excluir de la IA" })).toBeNull();
+    // La lista, al releerse, la marca.
+    expect(await screen.findByText("Sin IA")).toBeVisible();
+  });
+
+  it("cancelar no envía nada, y un doble clic en confirmar es una sola petición", async () => {
+    const s = server();
+    show(AGENT);
+    await openChat();
+    await ask("Excluir de la IA");
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    expect(screen.queryByRole("group", { name: "Excluir de la IA" })).toBeNull();
+    expect(s.calls(PUT)).toEqual([]);
+    const yes = await ask("Excluir de la IA");
+    fireEvent.click(yes);
+    fireEvent.click(yes);
+    expect(await screen.findByText("Conversación excluida de la IA.")).toBeVisible();
+    expect(s.calls(PUT)).toEqual([{ excluded: true, version: 1 }]);
+  });
+
+  it("volver a incluirla pide `ai.manage`, la confirmación y el segundo factor", async () => {
+    const s = server({ ai_excluded_at: "2026-11-21T10:00:00Z", version: 4 }, STEP);
+    show(MANAGER);
+    await openChat();
+    expect(await screen.findByText("Excluida de la IA")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Sugerir respuesta" })).toBeNull();
+    fireEvent.click(await ask("Volver a incluir en la IA"));
+    await verify();
+    expect(
+      await screen.findByText("La conversación vuelve a estar incluida en la IA."),
+    ).toBeVisible();
+    expect(s.calls(STEP_UP)).toEqual([{ code: "123456" }]);
+    // la primera la rechazó el servidor por el segundo factor; se repite una vez, con la misma versión
+    expect(s.calls(PUT)).toEqual([
+      { excluded: false, version: 4 },
+      { excluded: false, version: 4 },
+    ]);
+    expect(await screen.findByRole("button", { name: "Sugerir respuesta" })).toBeVisible();
+    expect(screen.queryByText("Excluida de la IA")).toBeNull();
+  });
+
+  it("cancelar el segundo factor no cambia nada ni lo trata como un fallo", async () => {
+    const s = server({ ai_excluded_at: "2026-11-21T10:00:00Z" }, STEP);
+    show(MANAGER);
+    await openChat();
+    fireEvent.click(await ask("Volver a incluir en la IA"));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancelar" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(s.calls(PUT)).toEqual([{ excluded: false, version: 1 }]);
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByText("Excluida de la IA")).toBeVisible();
+  });
+
+  it("si la repetición también pide el segundo factor, lo dice sin bucle", async () => {
+    const s = server({ ai_excluded_at: "2026-11-21T10:00:00Z" }, STEP, STEP);
+    show(MANAGER);
+    await openChat();
+    fireEvent.click(await ask("Volver a incluir en la IA"));
+    await verify();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Confirma tu identidad con un código de segundo factor para volver a incluirla.",
+    );
+    expect(s.calls(PUT)).toHaveLength(2);
+  });
+
+  it("una versión vieja lo dice con su texto, no el del servidor", async () => {
+    server({}, refusal(409, "CONVERSATION_VERSION_CONFLICT"));
+    show(AGENT);
+    await openChat();
+    fireEvent.click(await ask("Excluir de la IA"));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Otra persona cambió esta conversación");
+    expect(alert).not.toHaveTextContent("x");
+    expect(screen.queryByText("Excluida de la IA")).toBeNull();
+  });
+
+  it.each([
+    [403, "PERMISSION_DENIED"],
+    [404, "NOT_FOUND"],
+  ])("un %i (%s) dice que no puede cambiarla", async (status, code) => {
+    server({ ai_excluded_at: "2026-11-21T10:00:00Z" }, refusal(status, code));
+    show(MANAGER);
+    await openChat();
+    fireEvent.click(await ask("Volver a incluir en la IA"));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "No puedes cambiar esta conversación",
+    );
+  });
+});
