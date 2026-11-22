@@ -13,6 +13,11 @@ urlpatterns = [
         views.SummaryView.as_view(),
         name="copilot-summary",
     ),
+    path(  # con el scope de la petición, como toda ruta de tenant: no llama al modelo (F8-08j)
+        "conversations/<uuid:conversation_id>/copilot/suggestions/<uuid:suggestion_id>/insert/",
+        views.InsertView.as_view(),
+        name="copilot-suggestion-insert",
+    ),
     # F8-08l: el texto de traspaso, en el scope de la petición como cualquier ruta de tenant
     path("ai/handoff-reply/", handoff.HandoffReplyView.as_view(), name="ai-handoff-reply"),
 ]
