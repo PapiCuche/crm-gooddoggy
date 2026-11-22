@@ -165,7 +165,12 @@ def provider(
     ca, tls = certificates
     server = Provider(tls, desk.fake)
     public = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))]
-    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: public)
+    resolve = socket.getaddrinfo  # la base (psycopg resuelve en Python) sigue con el real
+
+    def resolved(host: Any, *args: Any, **kwargs: Any) -> Any:
+        return public if host == ai_sim.HOST else resolve(host, *args, **kwargs)
+
+    monkeypatch.setattr(socket, "getaddrinfo", resolved)
 
     def local(address: Any, *args: Any, **kwargs: Any) -> socket.socket:
         assert address == ("93.184.216.34", 443)  # la IP validada y fijada
