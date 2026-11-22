@@ -12,7 +12,11 @@ from typing import Any, Protocol
 
 from django.conf import settings
 
-from core.observability.context import current_correlation_id, current_request_id
+from core.observability.context import (
+    current_correlation_id,
+    current_logged_tenant,
+    current_request_id,
+)
 from core.redaction import redact, redact_text
 from core.tenancy.context import current
 
@@ -50,7 +54,7 @@ class NoopReporter:
 
 def safe_ids() -> dict[str, str]:
     """Solo identificadores técnicos: nunca el TenantContext, la petición ni modelos."""
-    ctx = current()
+    ctx = current() or current_logged_tenant()  # entre los scopes del copiloto (F8-08i)
     ids = {
         "request_id": current_request_id(),
         "correlation_id": current_correlation_id() or (ctx.correlation_id if ctx else None),

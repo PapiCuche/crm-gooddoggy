@@ -239,8 +239,10 @@ def test_the_twenty_first_request_in_the_window_is_429_and_nobody_else_is_affect
     assert migrator.execute(COUNTED).fetchall() == counted  # ninguno de `aik:` (`ai.manage`)
 
 
-def test_only_a_post_to_the_exact_suggest_route_runs_without_the_tenant_transaction(
-    desk: SimpleNamespace,
+@pytest.mark.parametrize(("name", "other"), [("copilot-suggest", "summary"),
+                                             ("copilot-summary", "suggest")])  # fmt: skip
+def test_only_a_post_to_the_exact_copilot_routes_runs_without_the_tenant_transaction(
+    desk: SimpleNamespace, name: str, other: str
 ) -> None:
     seen: list[tuple[bool, bool, bool]] = []
 
@@ -250,15 +252,16 @@ def test_only_a_post_to_the_exact_suggest_route_runs_without_the_tenant_transact
         return HttpResponse()
 
     middleware, convo = TenantResolutionMiddleware(view), uuid4()
-    route = reverse("copilot-suggest", kwargs={"org_slug": "org-a", "conversation_id": convo})
+    route = reverse(name, kwargs={"org_slug": "org-a", "conversation_id": convo})
     assert UNSCOPED.fullmatch(route) and COPILOT.match(route)  # las mismas formas que el URLconf
-    tail = f"/api/v1/o/org-a/conversations/{convo}/"
+    tail, last = f"/api/v1/o/org-a/conversations/{convo}/", route.split("/")[-2]
     scoped = [
         ("GET", route), ("PUT", route), ("DELETE", route), ("PATCH", route),
         ("POST", route + "x/"), ("POST", route[:-1]), ("POST", route + "%0A"),
         ("POST", route.upper().replace("/API/V1/O/ORG-A/", "/api/v1/o/org-a/")),
-        ("POST", tail + "copilot/summary/"), ("POST", tail + "messages/"), ("POST", tail),
-        ("POST", "/api/v1/o/org-a/conversations/x/copilot/suggest/"),
+        ("POST", tail + "copilot/"), ("POST", tail + f"copilot/{other}s/{uuid4()}/insert/"),
+        ("POST", tail + "messages/"), ("POST", tail),
+        ("POST", f"/api/v1/o/org-a/conversations/x/copilot/{last}/"),
         ("POST", "/api/v1/o/org-a/ai/budget/"),
     ]  # fmt: skip
     for method, path in [("POST", route), *scoped]:
