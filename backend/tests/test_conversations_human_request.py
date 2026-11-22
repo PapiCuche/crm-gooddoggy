@@ -193,6 +193,11 @@ def test_the_database_keeps_the_request_whole_and_going_back_refuses_an_open_one
     with pytest.raises(IntegrityError, match="conversations_human_request_ck"):
         with tenant_scope(ctx(inbox.a)):
             Conversation.objects.filter(pk=convo).update(**wrong, human_request_reason="BOT")
+    for stranger in (inbox.luis.pk, uuid4()):  # de B, o nadie: la FK a las membresías de A
+        outside = wrong | {"human_requested_by_user_id": stranger, "human_request_reason": "AGENT"}
+        with pytest.raises(IntegrityError, match="conversations_human_requested_by_fk"):
+            with tenant_scope(ctx(inbox.a)):
+                Conversation.objects.filter(pk=convo).update(**outside)
     valid = migrator.execute(
         "SELECT convalidated FROM pg_constraint WHERE conname = 'conversations_human_request_ck'"
     ).fetchone()
