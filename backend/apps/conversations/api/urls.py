@@ -106,6 +106,11 @@ urlpatterns = [
         attention.HumanRequestView.as_view(),
         name="conversation-human-request",
     ),
+    path(  # F8-13: excluirla de la IA o volver a incluirla
+        "conversations/<uuid:conversation_id>/ai-exclusion/",
+        attention.AiExclusionView.as_view(),
+        name="conversation-ai-exclusion",
+    ),
     path("quick-replies/", ManagedRepliesView.as_view(), name="quick-replies"),
     path("quick-replies/<uuid:quick_reply_id>/", ManagedReplyView.as_view(), name="quick-reply"),
     path("quick-reply-categories/", ManagedCategoriesView.as_view(), name="quick-reply-categories"),

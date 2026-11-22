@@ -520,3 +520,29 @@ describe("resumen y aviso de traspaso (F8-09b)", () => {
     expect(s.sent()).toHaveLength(0);
   });
 });
+
+describe("conversación excluida de la IA (F8-13)", () => {
+  it("no ofrece «Sugerir» ni «Resumir» y explica por qué, sin llamar al copiloto", async () => {
+    const excluded = { ...rosa, ai_excluded_at: "2026-11-22T10:00:00Z" };
+    const s = server({ detail: () => ({ status: 200, body: excluded }) });
+    show();
+    await openChat();
+    expect(await screen.findByRole("note")).toHaveTextContent(
+      "Esta conversación está excluida de la IA: el copiloto no lee sus mensajes",
+    );
+    expect(screen.queryByRole("button", { name: "Sugerir respuesta" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Resumir" })).toBeNull();
+    expect(s.posts("/suggest/")).toHaveLength(0);
+    expect(s.posts("/summary/")).toHaveLength(0);
+  });
+
+  it("si la excluyeron entre medias, el 409 `AI_EXCLUDED` se explica con su texto", async () => {
+    server({ suggest: () => ({ status: 409, body: { code: "AI_EXCLUDED", detail: "x" } }) });
+    show();
+    await openChat();
+    fireEvent.click(await suggestButton());
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Esta conversación está excluida de la IA: el copiloto no la lee.",
+    );
+  });
+});

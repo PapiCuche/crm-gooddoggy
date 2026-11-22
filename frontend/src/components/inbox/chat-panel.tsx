@@ -87,10 +87,12 @@ export function ChatPanel({
   const conversation = detail.data ?? row;
   const modes = writableModes(permissions, conversation, user.id);
   // El copiloto solo inserta en «Responder»: sin `ai.use`, sin poder responder o cerrada, no se ofrece.
-  const offered =
+  // Excluida de la IA (F8-13), tampoco: ni «Sugerir» ni «Resumir» (el servidor ya lo rechaza).
+  const usable =
     modes.reply &&
     conversation.status !== "CLOSED" &&
     permissions.some(({ code }) => code === AI_USE);
+  const offered = usable && !conversation.ai_excluded_at;
   const inserter = useRef<Inserter | null>(null);
   const copilot = useCopilot({
     conversationId: conversation.id,
@@ -290,6 +292,11 @@ export function ChatPanel({
         {body}
       </div>
       {offered ? copilot.panel : null}
+      {usable && !offered ? (
+        <p role="note" className="border-border text-muted border-t px-3 py-2 text-sm">
+          {t("copilot.excluded")}
+        </p>
+      ) : null}
       {modes.reply || modes.note ? (
         <Composer
           inserter={inserter}

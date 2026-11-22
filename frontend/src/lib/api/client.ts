@@ -25,6 +25,8 @@ import type {
   AddStageRequest,
   AiBudget,
   AiBudgetWriteRequest,
+  AiExclusionInputRequest,
+  AiExclusionState,
   AiHandoffReply,
   AiHandoffReplyWriteRequest,
   AiProviderAccount,
@@ -7366,6 +7368,116 @@ export function useConversationsRetrieve<
   return withQueryKey(query, queryOptions.queryKey);
 }
 
+export const getConversationAiExclusionSetUrl = (orgSlug: string, conversationId: string) => {
+  return `/api/v1/o/${orgSlug}/conversations/${conversationId}/ai-exclusion/`;
+};
+
+/**
+ * Excluye la conversación de la IA (`conversations.view` y su alcance): el copiloto ya no la lee ni la manda a un proveedor (409 `AI_EXCLUDED`). Volver a incluirla pide además `ai.manage` y el segundo factor reciente (403 `STEP_UP_REQUIRED`). La misma marca no cambia nada. 409 `CONVERSATION_VERSION_CONFLICT`; 404: no existe o fuera del alcance.
+ */
+export const conversationAiExclusionSet = async (
+  orgSlug: string,
+  conversationId: string,
+  aiExclusionInputRequest: AiExclusionInputRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<AiExclusionState> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<AiExclusionState>(getConversationAiExclusionSetUrl(orgSlug, conversationId), {
+    ...options,
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(aiExclusionInputRequest),
+  });
+};
+
+export const getConversationAiExclusionSetMutationKey = () =>
+  ["conversationAiExclusionSet"] as const;
+
+export const getConversationAiExclusionSetMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof conversationAiExclusionSet>>,
+    TError,
+    ConversationAiExclusionSetMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof conversationAiExclusionSet>>,
+  TError,
+  ConversationAiExclusionSetMutationVariables,
+  TContext
+> => {
+  const mutationKey = getConversationAiExclusionSetMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof conversationAiExclusionSet>>,
+    ConversationAiExclusionSetMutationVariables
+  > = (props) => {
+    const { orgSlug, conversationId, data } = props ?? {};
+
+    return conversationAiExclusionSet(orgSlug, conversationId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ConversationAiExclusionSetMutationResult = NonNullable<
+  Awaited<ReturnType<typeof conversationAiExclusionSet>>
+>;
+export type ConversationAiExclusionSetMutationBody = AiExclusionInputRequest;
+export type ConversationAiExclusionSetMutationError = ErrorType<Error>;
+export type ConversationAiExclusionSetMutationVariables = {
+  orgSlug: string;
+  conversationId: string;
+  data: AiExclusionInputRequest;
+};
+
+export const useConversationAiExclusionSet = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof conversationAiExclusionSet>>,
+      TError,
+      ConversationAiExclusionSetMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof conversationAiExclusionSet>>,
+  TError,
+  ConversationAiExclusionSetMutationVariables,
+  TContext
+> => {
+  return useMutation(getConversationAiExclusionSetMutationOptions(options), queryClient);
+};
+
 export const getConversationAssignUrl = (orgSlug: string, conversationId: string) => {
   return `/api/v1/o/${orgSlug}/conversations/${conversationId}/assign/`;
 };
@@ -7653,7 +7765,7 @@ export const getConversationsCopilotSuggestUrl = (orgSlug: string, conversationI
 };
 
 /**
- * Pide al copiloto una sugerencia de respuesta (`conversations.view` con su alcance y `ai.use`; 403 `PERMISSION_DENIED` sin uno de los dos). No envía nada: la sugerencia se guarda y se audita (`ai.suggestion.created`). 404: fuera de alcance, de otra organización o inexistente. 409 `AI_DISABLED`, `AI_NOT_CONFIGURED`, `AI_BUDGET_NOT_SET` o `AI_BUDGET_EXHAUSTED`. 502 `PROVIDER_UNAVAILABLE`, `PROVIDER_ERROR`, `CREDENTIALS_REJECTED`, `PROVIDER_BILLING`, `AI_MALFORMED` o `AI_TURN_INVALID`. 504 `AI_DEADLINE`. 429 `RATE_LIMITED`: el tope por persona (uno para sugerir y resumir), con `Retry-After`. 429 `AI_ORG_RATE_LIMITED`: el de la organización (uno para sugerir y resumir; tras el permiso), con `Retry-After`.
+ * Pide al copiloto una sugerencia de respuesta (`conversations.view` con su alcance y `ai.use`; 403 `PERMISSION_DENIED` sin uno de los dos). No envía nada: la sugerencia se guarda y se audita (`ai.suggestion.created`). 404: fuera de alcance, de otra organización o inexistente. 409 `AI_DISABLED`, `AI_NOT_CONFIGURED`, `AI_BUDGET_NOT_SET` o `AI_BUDGET_EXHAUSTED`. 502 `PROVIDER_UNAVAILABLE`, `PROVIDER_ERROR`, `CREDENTIALS_REJECTED`, `PROVIDER_BILLING`, `AI_MALFORMED` o `AI_TURN_INVALID`. 409 `AI_EXCLUDED`: la conversación está excluida de la IA (no se lee ni cuenta). 504 `AI_DEADLINE`. 429 `RATE_LIMITED`: el tope por persona (uno para sugerir y resumir), con `Retry-After`. 429 `AI_ORG_RATE_LIMITED`: el de la organización (uno para sugerir y resumir; tras el permiso), con `Retry-After`.
  */
 export const conversationsCopilotSuggest = async (
   orgSlug: string,
@@ -7844,7 +7956,7 @@ export const getConversationsCopilotSummaryUrl = (orgSlug: string, conversationI
 };
 
 /**
- * Pide al copiloto un resumen de la conversación para quien atiende (`conversations.view` con su alcance y `ai.use`; 403 `PERMISSION_DENIED` sin uno de los dos), sin herramientas. Se muestra «Generado por IA», con sus cifras, términos y enlaces marcados «sin verificar» (`marks`), y no se inserta en el compositor. No envía nada: se guarda y se audita (`ai.summary.created`). 404: fuera de alcance, de otra organización o inexistente. 409 `AI_DISABLED`, `AI_NOT_CONFIGURED`, `AI_BUDGET_NOT_SET` o `AI_BUDGET_EXHAUSTED`. 502 `PROVIDER_UNAVAILABLE`, `PROVIDER_ERROR`, `CREDENTIALS_REJECTED`, `PROVIDER_BILLING`, `AI_MALFORMED` o `AI_TURN_INVALID`. 504 `AI_DEADLINE`. 429 `RATE_LIMITED`: el tope por persona (uno para sugerir y resumir), con `Retry-After`. 429 `AI_ORG_RATE_LIMITED`: el de la organización (uno para sugerir y resumir; tras el permiso), con `Retry-After`.
+ * Pide al copiloto un resumen de la conversación para quien atiende (`conversations.view` con su alcance y `ai.use`; 403 `PERMISSION_DENIED` sin uno de los dos), sin herramientas. Se muestra «Generado por IA», con sus cifras, términos y enlaces marcados «sin verificar» (`marks`), y no se inserta en el compositor. No envía nada: se guarda y se audita (`ai.summary.created`). 404: fuera de alcance, de otra organización o inexistente. 409 `AI_DISABLED`, `AI_NOT_CONFIGURED`, `AI_BUDGET_NOT_SET` o `AI_BUDGET_EXHAUSTED`. 502 `PROVIDER_UNAVAILABLE`, `PROVIDER_ERROR`, `CREDENTIALS_REJECTED`, `PROVIDER_BILLING`, `AI_MALFORMED` o `AI_TURN_INVALID`. 409 `AI_EXCLUDED`: la conversación está excluida de la IA (no se lee ni cuenta). 504 `AI_DEADLINE`. 429 `RATE_LIMITED`: el tope por persona (uno para sugerir y resumir), con `Retry-After`. 429 `AI_ORG_RATE_LIMITED`: el de la organización (uno para sugerir y resumir; tras el permiso), con `Retry-After`.
  */
 export const conversationsCopilotSummary = async (
   orgSlug: string,

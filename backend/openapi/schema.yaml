@@ -3569,6 +3569,73 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/conversations/{conversation_id}/ai-exclusion/:
+    put:
+      operationId: conversation_ai_exclusion_set
+      description: 'Excluye la conversación de la IA (`conversations.view` y su alcance):
+        el copiloto ya no la lee ni la manda a un proveedor (409 `AI_EXCLUDED`). Volver
+        a incluirla pide además `ai.manage` y el segundo factor reciente (403 `STEP_UP_REQUIRED`).
+        La misma marca no cambia nada. 409 `CONVERSATION_VERSION_CONFLICT`; 404: no
+        existe o fuera del alcance.'
+      parameters:
+      - in: path
+        name: conversation_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - conversations
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AiExclusionInputRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AiExclusionState'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/conversations/{conversation_id}/assign/:
     post:
       operationId: conversation_assign
@@ -3703,8 +3770,9 @@ paths:
         404: fuera de alcance, de otra organización o inexistente. 409 `AI_DISABLED`,
         `AI_NOT_CONFIGURED`, `AI_BUDGET_NOT_SET` o `AI_BUDGET_EXHAUSTED`. 502 `PROVIDER_UNAVAILABLE`,
         `PROVIDER_ERROR`, `CREDENTIALS_REJECTED`, `PROVIDER_BILLING`, `AI_MALFORMED`
-        o `AI_TURN_INVALID`. 504 `AI_DEADLINE`. 429 `RATE_LIMITED`: el tope por persona
-        (uno para sugerir y resumir), con `Retry-After`. 429 `AI_ORG_RATE_LIMITED`:
+        o `AI_TURN_INVALID`. 409 `AI_EXCLUDED`: la conversación está excluida de la
+        IA (no se lee ni cuenta). 504 `AI_DEADLINE`. 429 `RATE_LIMITED`: el tope por
+        persona (uno para sugerir y resumir), con `Retry-After`. 429 `AI_ORG_RATE_LIMITED`:
         el de la organización (uno para sugerir y resumir; tras el permiso), con `Retry-After`.'
       parameters:
       - in: path
@@ -3844,8 +3912,9 @@ paths:
         404: fuera de alcance, de otra organización o inexistente. 409 `AI_DISABLED`,
         `AI_NOT_CONFIGURED`, `AI_BUDGET_NOT_SET` o `AI_BUDGET_EXHAUSTED`. 502 `PROVIDER_UNAVAILABLE`,
         `PROVIDER_ERROR`, `CREDENTIALS_REJECTED`, `PROVIDER_BILLING`, `AI_MALFORMED`
-        o `AI_TURN_INVALID`. 504 `AI_DEADLINE`. 429 `RATE_LIMITED`: el tope por persona
-        (uno para sugerir y resumir), con `Retry-After`. 429 `AI_ORG_RATE_LIMITED`:
+        o `AI_TURN_INVALID`. 409 `AI_EXCLUDED`: la conversación está excluida de la
+        IA (no se lee ni cuenta). 504 `AI_DEADLINE`. 429 `RATE_LIMITED`: el tope por
+        persona (uno para sugerir y resumir), con `Retry-After`. 429 `AI_ORG_RATE_LIMITED`:
         el de la organización (uno para sugerir y resumir; tras el permiso), con `Retry-After`.'
       parameters:
       - in: path
@@ -12614,6 +12683,36 @@ components:
       required:
       - daily_usd
       - monthly_usd
+    AiExclusionInputRequest:
+      type: object
+      properties:
+        excluded:
+          type: boolean
+          description: '`true`: excluirla de la IA; `false`: volver a incluirla.'
+        version:
+          type: integer
+          maximum: 2147483647
+          minimum: 1
+          description: La leída; si cambió, 409.
+      required:
+      - excluded
+      - version
+    AiExclusionState:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        ai_excluded_at:
+          type: string
+          format: date-time
+          nullable: true
+        version:
+          type: integer
+      required:
+      - ai_excluded_at
+      - id
+      - version
     AiHandoffReply:
       type: object
       properties:
@@ -13786,9 +13885,16 @@ components:
           nullable: true
           description: Alguien pidió que una persona la atienda; `null` si no. Se
             cierra cuando una persona responde al cliente o la toma, o a mano.
+        ai_excluded_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: 'F8-13: desde cuándo está excluida de la IA; `null`: no lo
+            está.'
         version:
           type: integer
       required:
+      - ai_excluded_at
       - assigned_team_id
       - assigned_user_id
       - assignee_kind
@@ -13877,6 +13983,12 @@ components:
           nullable: true
           description: Alguien pidió que una persona la atienda; `null` si no. Se
             cierra cuando una persona responde al cliente o la toma, o a mano.
+        ai_excluded_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: 'F8-13: desde cuándo está excluida de la IA; `null`: no lo
+            está.'
         version:
           type: integer
         assigned_at:
@@ -13900,6 +14012,7 @@ components:
           type: string
           format: date-time
       required:
+      - ai_excluded_at
       - assigned_at
       - assigned_team_id
       - assigned_user_id
