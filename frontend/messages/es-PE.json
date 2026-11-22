@@ -33,7 +33,9 @@
       "inbox": "Inbox",
       "channels": "Canales",
       "tasks": "Mis tareas",
-      "quotes": "Cotizaciones"
+      "quotes": "Cotizaciones",
+      "quickReplies": "Respuestas rápidas",
+      "ai": "Inteligencia artificial"
     },
     "loading": "Cargando tu espacio…",
     "noRole": "Sin rol asignado",
@@ -66,6 +68,12 @@
       "label": "Secciones de clientes",
       "list": "Clientes",
       "tags": "Etiquetas"
+    },
+    "ai": {
+      "label": "Secciones de inteligencia artificial",
+      "provider": "Proveedor y estado",
+      "handoff": "Texto de traspaso",
+      "budget": "Presupuesto"
     }
   },
   "audit": {
@@ -135,7 +143,8 @@
         "branch_changed": "Sucursal de un miembro cambiada",
         "invited": "Persona invitada",
         "invitation_revoked": "Invitación revocada",
-        "created": "Miembro añadido por un operador"
+        "created": "Miembro añadido por un operador",
+        "activated": "Invitación aceptada"
       },
       "role": {
         "created": "Rol creado",
@@ -233,7 +242,8 @@
       "LENGTH_REQUIRED": "El archivo no llegó completo al servidor. Vuelve a intentarlo.",
       "MEDIA_INFECTED": "El antivirus encontró un virus en este archivo, así que no se envió. Elige otro archivo.",
       "MEDIA_TOO_COMPLEX": "Este archivo es demasiado complejo para que el antivirus lo revise, así que no se envió. Elige otro archivo.",
-      "MEDIA_SCAN_UNAVAILABLE": "No se pudo revisar el archivo con el antivirus, así que no se envió. Vuelve a intentarlo en unos minutos."
+      "MEDIA_SCAN_UNAVAILABLE": "No se pudo revisar el archivo con el antivirus, así que no se envió. Vuelve a intentarlo en unos minutos.",
+      "UNVERIFIED_CONTENT": "El texto lleva la marca [verificar] del copiloto. Escribe tú el dato confirmado en su lugar, o quítalo, antes de enviar."
     }
   },
   "auth": {
@@ -302,6 +312,46 @@
     "absentTitle": "Abre el enlace del correo.",
     "absentBody": "Esta página se abre desde el enlace que te enviamos. Si ya lo habías abierto y recargaste la página o volviste a ella, ábrelo otra vez desde el correo. Si no lo tienes, pide uno nuevo.",
     "askAgain": "Pedir otro enlace"
+  },
+  "invitationAccept": {
+    "pageTitle": "Invitación",
+    "eyebrow": "Good Doggy / Invitación",
+    "title": "Te invitaron a un equipo.",
+    "opening": "Abriendo la invitación…",
+    "checking": "Comprobando la invitación…",
+    "intro": "{organization} te invitó a su espacio en Good Doggy CRM con el correo {email}.",
+    "createIntro": "Ese correo todavía no tiene cuenta. Créala para aceptar:",
+    "loginIntro": "Ese correo ya tiene cuenta. Entra con ella para aceptar:",
+    "readyIntro": "Ya entraste. Acepta la invitación para unirte.",
+    "forgotHint": "Se abre en otra pestaña. Cuando tengas tu contraseña, vuelve a esta para entrar y aceptar.",
+    "otherAccount": "Esta invitación es para {email} y entraste con otra cuenta. Sal de ella y entra con {email}.",
+    "logout": "Salir y entrar con otra cuenta",
+    "loggingOut": "Saliendo…",
+    "email": "Correo",
+    "first": "Nombre",
+    "last": "Apellidos (opcional)",
+    "password": "Contraseña",
+    "confirm": "Repite la contraseña",
+    "rules": "Al menos 12 caracteres (los espacios cuentan). No puede tener solo números, ser una contraseña común ni parecerse a tu nombre o tu correo.",
+    "firstNameRequired": "Escribe tu nombre.",
+    "passwordRequired": "Escribe una contraseña.",
+    "passwordRefused": "Esa contraseña no sirve. Revisa las reglas y elige otra.",
+    "lastNameRefused": "Revisa los apellidos: como mucho 150 caracteres.",
+    "mismatch": "Las dos contraseñas no coinciden.",
+    "create": "Crear cuenta y aceptar",
+    "accept": "Aceptar invitación",
+    "accepting": "Aceptando…",
+    "retry": "Volver a intentar",
+    "doneTitle": "Ya eres parte de {organization}.",
+    "doneCreated": "Tu cuenta está lista. Entra con {email} y la contraseña que elegiste.",
+    "doneJoined": "Ya puedes trabajar en su espacio.",
+    "enter": "Entrar",
+    "open": "Ir a mis organizaciones",
+    "invalidTitle": "Esta invitación no vale.",
+    "invalidBody": "Puede que haya caducado, que ya se haya usado o que la hayan revocado. Pide a quien te invitó que te envíe otra.",
+    "invalidUnsure": "Si acabas de aceptarla y no viste la respuesta, puede que ya estés dentro: prueba a entrar.",
+    "absentTitle": "Abre el enlace del correo.",
+    "absentBody": "Esta página se abre desde el enlace de la invitación. Si recargaste la página o volviste a ella, ábrelo otra vez desde el correo."
   },
   "organizations": {
     "pageTitle": "Organizaciones",
@@ -419,6 +469,15 @@
       "REVOKED": "Revocada",
       "EXPIRED": "Caducada"
     },
+    "mail": "Correo: {state}",
+    "delivery": {
+      "NOT_SENT": "sin enviar",
+      "SENT": "enviada",
+      "NOT_DELIVERED": "no entregada"
+    },
+    "deliveryHelp": "«Enviada» quiere decir que el servidor de correo aceptó el mensaje; no confirma que haya llegado a la bandeja de entrada. «No entregada»: no consta que el servidor lo aceptara. «Sin enviar»: el correo aún no sale.",
+    "lastSent": "Último envío: {date}",
+    "sends": "Envíos: {count} de {max}",
     "create": {
       "open": "Invitar",
       "title": "Nueva invitación",
@@ -433,14 +492,37 @@
       "rolesInvalid": "Alguno de los roles elegidos ya no existe en la organización. Cierra el formulario y vuelve a abrirlo.",
       "member": "Ese correo ya es miembro de la organización.",
       "pending": "Ese correo ya tiene una invitación, pendiente o caducada.",
+      "soon": "Ese correo recibió una invitación hace menos de 15 minutos. Espera un poco y vuelve a intentarlo.",
       "limit": "La organización ya tiene 50 invitaciones pendientes o caducadas: es el máximo.",
       "daily": "La organización ya creó 100 invitaciones en las últimas 24 horas. Inténtalo más tarde.",
       "denied": "No tienes permiso para invitar con esos roles.",
-      "notSent": "Por ahora la invitación solo queda registrada: el correo con el enlace todavía no se envía.",
+      "notSent": "Le enviaremos un correo con el enlace para aceptar. El enlace vale 7 días.",
       "submit": "Invitar",
       "busy": "Invitando…",
       "cancel": "Cancelar",
-      "done": "Invitación a {email} registrada. Todavía no se envía ningún correo."
+      "done": "Invitación a {email} registrada. En unos minutos le llegará el correo con el enlace.",
+      "renewed": "{email} ya tenía una invitación pendiente: la renovamos con estos roles. El enlace anterior ya no vale y en unos minutos le llegará un correo nuevo.",
+      "soonUntil": "Ese correo recibió una invitación hace menos de 15 minutos. Desde las {when} podrás invitarlo otra vez.",
+      "sendLimit": "La invitación de ese correo ya se envió 5 veces, el máximo. Revócala e invita de nuevo.",
+      "addressLimit": "Ese correo ya recibió 3 invitaciones en las últimas 24 horas. Inténtalo más tarde.",
+      "addressLimitUntil": "Ese correo ya recibió 3 invitaciones en las últimas 24 horas. Desde el {when} podrás invitarlo otra vez."
+    },
+    "resend": {
+      "open": "Reenviar",
+      "label": "Reenviar la invitación de {email}",
+      "busy": "Reenviando…",
+      "done": "Reenvío pedido para {email}. El enlace anterior ya no vale y en unos minutos le llegará un correo nuevo.",
+      "maxed": "Ya se envió 5 veces, el máximo. Para enviarla otra vez, revócala e invita de nuevo.",
+      "soon": "Se envió hace menos de 15 minutos. Desde las {when} podrás reenviarla.",
+      "just": "Acabas de pedir el reenvío. Desde las {when} podrás volver a reenviarla.",
+      "daily": "Ese correo ya recibió 3 invitaciones en 24 horas. Desde el {when} podrás reenviarla.",
+      "soonLater": "Ese correo recibió una invitación hace menos de 15 minutos. Inténtalo más tarde.",
+      "dailyLater": "Ese correo ya recibió 3 invitaciones en 24 horas. Inténtalo más tarde.",
+      "roleGone": "Un rol de esta invitación ya no existe. Revócala e invita otra vez con otros roles.",
+      "member": "Ese correo ya es miembro de la organización.",
+      "denied": "No tienes permiso para reenviar esta invitación.",
+      "stale": "La invitación de {email} ya no está disponible. Revisa la lista.",
+      "settled": "La invitación de {email} ya no estaba pendiente. Revisa la lista."
     },
     "revoke": {
       "open": "Revocar",
@@ -1680,6 +1762,7 @@
     },
     "seenBy": "Quién la ve: {audience}",
     "default": "Predeterminada",
+    "aiCited": "La IA puede citarla",
     "active": "Activa",
     "inactive": "Inactiva",
     "order": "Orden {order}",
@@ -1701,8 +1784,6 @@
       "is_active": "Activa (una lista inactiva no se ofrece)",
       "is_default": "Predeterminada (la que se usa si no se elige otra)",
       "defaultHint": "Sin marcarla, la primera lista activa que ven todos pasa a ser la predeterminada.",
-      "ai": "IA pública",
-      "aiHint": "No tiene efecto hasta la Fase 8, cuando un agente de IA pueda dar precios a los clientes.",
       "save": "Guardar",
       "busy": "Guardando…",
       "cancel": "Cancelar",
@@ -1718,6 +1799,16 @@
       "denied": "No tienes permiso para administrar listas de precios.",
       "done": "Lista «{name}» {created, select, true {creada} other {guardada}}.",
       "doneStale": "Lista «{name}» {created, select, true {creada} other {guardada}}, pero la vista no se pudo actualizar. Recarga la página para verla."
+    },
+    "ai": {
+      "label": "La IA puede citar sus precios",
+      "labelFor": "La IA puede citar los precios de {name}",
+      "hint": "Solo lo decides tú, con tu código de segundo factor. Sin ninguna lista marcada, la IA no da precios.",
+      "on": "La IA ya puede citar los precios de «{name}».",
+      "off": "La IA ya no cita los precios de «{name}».",
+      "PERMISSION_DENIED": "No tienes permiso para decidir qué listas cita la IA.",
+      "VALIDATION_ERROR": "La lista interna nunca la cita la IA.",
+      "failed": "No se pudo cambiar si la IA cita «{name}». Vuelve a intentarlo."
     }
   },
   "prices": {
@@ -2364,7 +2455,17 @@
       "QUALITY_BLOCKED": "WhatsApp bloqueó el envío por la calidad del número.",
       "TEMPLATE_UNAVAILABLE": "La plantilla no está disponible.",
       "PROVIDER_ERROR": "WhatsApp tuvo un problema al procesar el envío.",
-      "MEDIA_NOT_SCANNED": "El archivo no se envió: aún no pasó el antivirus."
+      "MEDIA_NOT_SCANNED": "El archivo no se envió: aún no pasó el antivirus.",
+      "MESSAGES_ACCESS_OFF": "La cuenta de Instagram tiene apagado el acceso a los mensajes. Pide a quien administra los canales que lo active."
+    },
+    "failureSocial": {
+      "TOKEN_INVALID": "El acceso de {network} ya no es válido. Pide a quien administra los canales que reconecte la cuenta.",
+      "RECIPIENT_UNREACHABLE": "Esa persona no puede recibir mensajes de {network} ahora.",
+      "PROVIDER_REJECTED": "{network} rechazó el mensaje.",
+      "PROVIDER_UNKNOWN": "Puede que sí se haya enviado: {network} no lo confirmó. Reenviarlo podría duplicar el mensaje.",
+      "RATE_LIMITED": "{network} limitó el envío por exceso de mensajes. Inténtalo más tarde.",
+      "QUALITY_BLOCKED": "{network} bloqueó el envío.",
+      "PROVIDER_ERROR": "{network} tuvo un problema al procesar el envío."
     },
     "list": {
       "landmark": "Conversaciones",
@@ -2389,7 +2490,8 @@
       "hint": {
         "reply": "Enter envía; Mayús+Enter agrega una línea.",
         "note": "Solo tu equipo ve esto, el cliente no.",
-        "noteKeys": "Enter guarda; Mayús+Enter agrega una línea."
+        "noteKeys": "Enter guarda; Mayús+Enter agrega una línea.",
+        "pick": "Enter elige la respuesta rápida; Esc cierra la lista."
       },
       "count": "{count} de {max} caracteres",
       "over": "Te pasaste por {over, plural, one {# carácter} other {# caracteres}}.",
@@ -2416,10 +2518,12 @@
       "remove": "Quitar el archivo",
       "captionHint": "Puedes escribir un texto que lo acompañe (opcional).",
       "idTakenMedia": "Ese id de mensaje ya se usó para otro envío. Vuelve a enviar el archivo.",
+      "idTakenGrown": "Puede que la primera parte ya se haya enviado. Revisa el chat y quita del cuadro lo que ya salió antes de volver a enviar.",
       "overLimit": {
         "reply": "Pasaste el tope de caracteres: no se puede enviar.",
         "note": "Pasaste el tope de caracteres: no se puede guardar."
-      }
+      },
+      "placeholder": "Escribe / para usar una respuesta rápida"
     },
     "assign": {
       "take": "Tomar",
@@ -2450,6 +2554,110 @@
       "tags": "Etiquetas",
       "card": "Ver ficha del cliente",
       "noDeals": "No tienes permiso para ver las oportunidades."
+    },
+    "unanswered": {
+      "filter": "Sin responder",
+      "count": "{count, plural, one {# conversación sin responder} other {# conversaciones sin responder}}"
+    },
+    "network": {
+      "WHATSAPP": "WhatsApp",
+      "SANDBOX": "Sandbox",
+      "INSTAGRAM": "Instagram",
+      "MESSENGER": "Messenger",
+      "UNKNOWN": "Otra red"
+    },
+    "notify": {
+      "toggle": "Avisarme de mensajes nuevos",
+      "blocked": "El navegador bloqueó los avisos de esta página.",
+      "title": "Nuevo mensaje"
+    },
+    "channelAlert": {
+      "label": "Cuentas de canal con problemas",
+      "down": "está desconectada y no recibe ni envía mensajes.",
+      "token": "el token venció o ya no es válido; no se pueden enviar mensajes.",
+      "pending": "falta terminar la conexión o aprobar permisos.",
+      "link": "Revisar en Canales"
+    },
+    "quickReplies": {
+      "label": "Respuestas rápidas",
+      "keys": "↑ ↓ para moverte, Enter para elegir, Esc para cerrar.",
+      "loading": "Buscando respuestas…",
+      "empty": "No hay respuestas rápidas con ese atajo o texto.",
+      "inserting": "Preparando el texto…",
+      "gone": "Esa respuesta ya no está disponible. Elige otra.",
+      "count": "{count, plural, =0 {Sin respuestas rápidas} one {# respuesta rápida} other {# respuestas rápidas}}. Usa las flechas para moverte y Enter para elegir.",
+      "missing": "Quedó sin completar: {fields}. Revísalo antes de enviar.",
+      "variable": {
+        "firstName": "el nombre del cliente",
+        "name": "el nombre completo del cliente",
+        "org": "el nombre de tu empresa"
+      }
+    },
+    "humanRequest": {
+      "request": "Solicitar atención humana",
+      "close": "Cerrar la solicitud de atención humana",
+      "saving": "Guardando…",
+      "requested": "Se pidió que una persona atienda esta conversación. Al cliente no se le envió nada.",
+      "closed": "Solicitud de atención humana cerrada.",
+      "denied": "No puedes cambiar esta conversación. Puede que ya no esté en tu alcance.",
+      "open": "Atención humana solicitada:",
+      "badge": "Pide atención humana",
+      "by": "por",
+      "you": "ti",
+      "reason": {
+        "ASKED_FOR_PERSON": "El cliente pidió hablar con una persona.",
+        "UPSET": "El cliente parece molesto.",
+        "MODEL": "La recomendó el copiloto.",
+        "AGENT": "La pidió quien atiende."
+      }
+    },
+    "copilot": {
+      "label": "Copiloto de IA",
+      "suggest": "Sugerir respuesta",
+      "again": "Sugerir otra",
+      "thinking": "Preparando una sugerencia…",
+      "ready": "Sugerencia lista. Revísala antes de insertarla.",
+      "draft": "Sugerencia del copiloto",
+      "unverified": "Lo marcado [verificar] no tiene respaldo en los datos: confírmalo o cámbialo antes de enviar.",
+      "mark": "sin verificar",
+      "insert": "Insertar",
+      "inserting": "Insertando…",
+      "inserted": "Sugerencia insertada en el cuadro de respuesta. Revísala y envíala tú.",
+      "discard": "Descartar",
+      "discarded": "Sugerencia descartada.",
+      "never": "Nunca se envía sola: la envías tú desde el cuadro de respuesta.",
+      "summarize": "Resumir",
+      "resummarize": "Resumir de nuevo",
+      "summarizing": "Preparando un resumen…",
+      "summarized": "Resumen listo. Es solo para leer.",
+      "summary": "Resumen de la conversación",
+      "generated": "Generado por IA",
+      "summaryUnverified": "Lo marcado no tiene respaldo en los datos: confírmalo antes de usarlo.",
+      "closeSummary": "Cerrar resumen",
+      "summaryClosed": "Resumen cerrado.",
+      "readOnly": "Solo para leer: no se inserta ni se envía.",
+      "handoff": {
+        "ASKED_FOR_PERSON": "El cliente pidió hablar con una persona.",
+        "UPSET": "El cliente parece molesto.",
+        "MODEL": "El copiloto recomienda que lo atienda una persona.",
+        "other": "El copiloto recomienda que lo atienda una persona.",
+        "next": "Se pidió atención humana para esta conversación; al cliente no se le envía nada."
+      },
+      "error": {
+        "RATE_LIMITED": "Usaste el copiloto muchas veces seguidas. Vuelve a probar en unos minutos.",
+        "RATE_LIMITED_WAIT": "Usaste el copiloto muchas veces seguidas. Vuelve a probar en {minutes, plural, one {# minuto} other {# minutos}}.",
+        "AI_ORG_RATE_LIMITED": "Tu empresa usó el copiloto muchas veces seguidas. Vuelve a probar en unos minutos.",
+        "AI_ORG_RATE_LIMITED_WAIT": "Tu empresa usó el copiloto muchas veces seguidas. Vuelve a probar en {minutes, plural, one {# minuto} other {# minutos}}.",
+        "AI_BUDGET_EXHAUSTED": "Se agotó el presupuesto de IA de tu empresa. Pide a un administrador que lo revise.",
+        "AI_BUDGET_NOT_SET": "La IA aún no tiene presupuesto. Pide a un administrador que lo configure.",
+        "AI_DISABLED": "La IA está apagada en tu empresa. Puedes responder sin el copiloto.",
+        "AI_NOT_CONFIGURED": "La IA aún no está configurada en tu empresa. Pide a un administrador que la configure.",
+        "AI_DEADLINE": "El copiloto tardó demasiado en responder. Inténtalo de nuevo.",
+        "AI_EVIDENCE_EXPIRED": "Los datos de esta sugerencia caducaron. Pide una nueva.",
+        "denied": "No puedes usar el copiloto en esta conversación. Puede que ya no esté en tu alcance.",
+        "gone": "Esa sugerencia ya no está disponible. Pide una nueva.",
+        "failed": "El copiloto no pudo responder. Inténtalo de nuevo en unos minutos."
+      }
     }
   },
   "channels": {
@@ -2465,6 +2673,8 @@
     "platform": {
       "SANDBOX": "Sandbox",
       "WHATSAPP": "WhatsApp",
+      "MESSENGER": "Messenger",
+      "INSTAGRAM": "Instagram",
       "UNKNOWN": "Otro canal"
     },
     "status": {
@@ -2482,6 +2692,8 @@
       "LIMIT_REACHED": "Se alcanzó el límite de mensajería.",
       "DISCONNECTED_BY_ADMIN": "La desconectó un administrador.",
       "PROVIDER_ERROR": "Meta no respondió bien en la última comprobación.",
+      "MESSAGES_ACCESS_OFF": "El acceso a los mensajes está apagado en Instagram: actívalo en «Herramientas conectadas».",
+      "PAGE_NOT_SUBSCRIBED": "La página no tiene suscrita la app del CRM: los mensajes nuevos no llegan. Vuelve a suscribirla en Meta.",
       "UNKNOWN": "La cuenta informa de un motivo que esta versión no conoce."
     },
     "checklist": {
@@ -2489,6 +2701,11 @@
       "token": {
         "ok": "Token válido",
         "bad": "Falta un token válido"
+      },
+      "subscription": {
+        "ok": "Página suscrita a la app del CRM",
+        "bad": "La página no tiene suscrita la app del CRM",
+        "unknown": "Suscripción de la página sin comprobar"
       },
       "webhook": {
         "ok": "Mensajes de Meta recibidos",
@@ -2498,6 +2715,16 @@
         "ok": "Calidad del número buena",
         "warn": "La calidad del número bajó",
         "wait": "Falta la primera comprobación de calidad"
+      },
+      "access": {
+        "ok": "Acceso a los mensajes de Instagram activado",
+        "bad": "El acceso a los mensajes de Instagram está apagado",
+        "wait": "Falta confirmar el acceso a los mensajes de Instagram"
+      },
+      "control": {
+        "ok": "El CRM atiende las conversaciones",
+        "warn": "Otra app controla alguna conversación",
+        "wait": "Falta confirmar qué app atiende las conversaciones"
       }
     },
     "fields": {
@@ -2508,7 +2735,9 @@
       "quality": "Calidad",
       "tier": "Nivel de mensajería",
       "checked": "Última comprobación",
-      "neverChecked": "Todavía no se comprobó"
+      "neverChecked": "Todavía no se comprobó",
+      "page": "Página de Facebook (ID)",
+      "igAccount": "Cuenta de Instagram (ID)"
     },
     "quality": {
       "GREEN": "Buena",
@@ -2544,7 +2773,22 @@
       "wabaInvalid": "Ese ID de cuenta no sirve. Usa solo cifras.",
       "phoneRequired": "Escribe el ID del número de teléfono.",
       "tokenRequired": "Pega el token de acceso.",
-      "tokenInvalid": "Ese token no sirve."
+      "tokenInvalid": "Ese token no sirve.",
+      "page": "ID de la página de Facebook",
+      "linkedPage": "ID de la página de Facebook vinculada",
+      "igAccount": "ID de la cuenta profesional de Instagram",
+      "pageRequired": "Escribe el ID de la página.",
+      "igRequired": "Escribe el ID de la cuenta de Instagram.",
+      "messenger": {
+        "open": "Conectar Messenger",
+        "title": "Conectar una página de Messenger",
+        "note": "Se comprueba con Meta que el token gestiona esa página y se suscribe la app. La cuenta nace pendiente hasta recibir su primer mensaje."
+      },
+      "instagram": {
+        "open": "Conectar Instagram",
+        "title": "Conectar una cuenta de Instagram",
+        "note": "Se comprueba con Meta que la cuenta es la de esa página y se suscribe la app. La cuenta nace pendiente hasta recibir su primer mensaje."
+      }
     },
     "rotate": {
       "open": "Rotar token",
@@ -2556,7 +2800,8 @@
       "cancel": "Cancelar",
       "done": "El token se rotó.",
       "required": "Pega el token nuevo.",
-      "invalid": "Ese token no sirve."
+      "invalid": "Ese token no sirve.",
+      "socialHint": "Sustituye al anterior, que deja de valer. Instagram y Messenger de una misma página tienen cada uno su token: rotar uno no rota el otro. No se vuelve a mostrar ni se guarda en este navegador."
     },
     "disconnect": {
       "open": "Desconectar",
@@ -2566,7 +2811,7 @@
       "confirm": "Sí, desconectar",
       "busy": "Desconectando…",
       "cancel": "Cancelar",
-      "gone": "Esa cuenta ya no existe. Actualizamos la lista."
+      "done": "«<n>{name}</n>» quedó desconectada: ya no recibe ni envía mensajes."
     },
     "errors": {
       "denied": "No tienes permiso para gestionar los canales.",
@@ -2577,7 +2822,202 @@
       "STEP_UP_REQUIRED": "Confirma tu identidad con un código de segundo factor para continuar.",
       "RATE_LIMITED": "Demasiados intentos. Espera un momento antes de volver a probar.",
       "RATE_LIMITED_WAIT": "Demasiados intentos. Vuelve a probar en {minutes, plural, one {# minuto} other {# minutos}}.",
-      "NOT_FOUND": "Esa cuenta ya no existe. Actualizamos la lista."
+      "NOT_FOUND": "Esa cuenta ya no existe. Actualizamos la lista.",
+      "badPage": "No se puede registrar esa página.",
+      "badAccount": "No se puede registrar esa cuenta de Instagram.",
+      "SOCIAL_NOT_ENABLED": "Los canales de Messenger e Instagram no están habilitados en este despliegue.",
+      "SOCIAL_REJECTED": "Meta no aceptó ese token. Revisa que sea el del usuario del sistema y que gestione esa página."
+    },
+    "standby": {
+      "title": "Otra app controla una conversación",
+      "body": "Al menos una conversación abierta de esta cuenta la atiende otra app de la página. Sus mensajes llegan al Inbox, pero el CRM no responde nada automáticamente mientras otra app la controle."
+    }
+  },
+  "ai": {
+    "eyebrow": "Good Doggy / Inteligencia artificial",
+    "title": "Proveedor de IA",
+    "intro": "La clave de API con la que {organization} usa la IA. Aquí nunca se muestra la clave: solo sus últimos cuatro caracteres.",
+    "loading": "Cargando el proveedor de IA…",
+    "denied": "Solo quien tiene el permiso de gestionar la IA ve esta pantalla.",
+    "stepUp": "Para ver o cambiar la clave, confirma tu identidad con un código de segundo factor.",
+    "verify": "Confirmar con mi código",
+    "empty": "Todavía no hay ninguna clave guardada.",
+    "missing": "No encontramos el proveedor de IA de esta organización. Recarga la página.",
+    "model": {
+      "open": "Cambiar modelo",
+      "title": "Cambiar el modelo",
+      "label": "Modelo",
+      "hint": "El identificador exacto de un modelo de la lista permitida del CRM, en minúsculas. Cambia cuánto cuesta cada consulta.",
+      "required": "Escribe el identificador del modelo.",
+      "invalid": "Ese modelo no está en la lista permitida del CRM. Escribe el identificador exacto.",
+      "submit": "Guardar modelo",
+      "busy": "Guardando…",
+      "done": "El modelo quedó guardado. Las próximas consultas lo usan.",
+      "unchanged": "Es el modelo que ya usa la cuenta: no se cambió nada."
+    },
+    "budget": {
+      "title": "Presupuesto de IA",
+      "intro": "Los topes de gasto de {organization} con la IA, en dólares (USD). Sin los dos topes, la IA no responde.",
+      "loading": "Cargando el presupuesto de IA…",
+      "stepUp": "Para ver o cambiar los topes, confirma tu identidad con un código de segundo factor.",
+      "caps": "Topes de gasto",
+      "current": "Vigentes: {monthly} al mes y {daily} al día.",
+      "unset": "Todavía no hay topes: la IA no hace ninguna llamada hasta que guardes los dos.",
+      "fields": {
+        "monthly_usd": "Tope mensual (USD)",
+        "daily_usd": "Tope diario (USD)"
+      },
+      "hints": {
+        "monthly_usd": "Para el mes de Lima. Con punto y hasta 6 decimales, por ejemplo 50 o 12.50.",
+        "daily_usd": "Para el día de Lima. No puede superar al mensual."
+      },
+      "note": "Lo gastado no se muestra aquí: revísalo en la consola del proveedor. Bajar un tope por debajo de lo ya gastado corta la siguiente consulta. Cada cambio queda en la auditoría.",
+      "save": "Guardar topes",
+      "busy": "Guardando…",
+      "discard": "Descartar cambios",
+      "saved": "Los topes quedaron guardados. Se aplican desde la siguiente consulta.",
+      "unchanged": "No hay cambios que guardar.",
+      "problems": {
+        "REQUIRED": "Escribe un importe.",
+        "FORMAT": "Escribe solo números, con punto para los decimales (por ejemplo, 12.50).",
+        "DECIMALS": "Usa 6 decimales como mucho.",
+        "TOO_BIG": "Debe ser menor que un millón de dólares.",
+        "ZERO": "Debe ser mayor que cero.",
+        "ABOVE": "El tope diario no puede superar al mensual.",
+        "INVALID": "No se aceptó este importe: en USD, mayor que cero, menor que un millón, con 6 decimales como mucho y, el diario, sin superar al mensual."
+      }
+    },
+    "handoff": {
+      "title": "Texto de traspaso",
+      "intro": "Lo que el copiloto propone a quien atiende cuando un cliente de {organization} pide hablar con una persona. Quien atiende lo revisa y lo envía; nunca sale solo.",
+      "loading": "Cargando el texto de traspaso…",
+      "stepUp": "Para ver o cambiar el texto de traspaso, confirma tu identidad con un código de segundo factor.",
+      "label": "Texto que propone el copiloto",
+      "initial": "Texto inicial",
+      "custom": "Texto propio",
+      "initialNote": "Es el texto inicial de Good Doggy: el copiloto lo propone mientras la organización no guarde uno propio.",
+      "invalidNote": "El texto guardado ya no cumple las reglas: el copiloto propone el inicial hasta que guardes uno nuevo.",
+      "customNote": "El copiloto propone este texto de la organización.",
+      "changed": "Último cambio:",
+      "count": "{count} de {max} caracteres",
+      "over": "{count} de {max} caracteres: sobran {over}",
+      "note": "Nunca prometas atención inmediata ni rápida (como «enseguida», «pronto» o «en unos minutos»): una persona continuará la conversación cuando pueda. Tampoco incluyas cifras, plazos, precios, ofertas, stock, condiciones ni enlaces.",
+      "save": "Guardar texto",
+      "busy": "Guardando…",
+      "discard": "Descartar cambios",
+      "saved": "El texto quedó guardado. El copiloto lo propondrá desde ahora.",
+      "unchanged": "No hay cambios que guardar.",
+      "problemsTitle": "Corrige el texto antes de guardarlo:",
+      "problems": {
+        "EMPTY": "Escribe el texto de traspaso.",
+        "BODY": "Usa solo texto visible, sin caracteres ocultos ni de control.",
+        "TOO_LONG": "Usa como mucho {max} caracteres.",
+        "SCRIPT": "Usa solo letras del alfabeto latino.",
+        "SOON": "No prometas atención inmediata ni rápida (como «enseguida», «pronto» o «en unos minutos»).",
+        "FIGURE": "Quita las cifras, importes y monedas.",
+        "DELIVERY": "Quita los plazos, fechas, horarios y entregas.",
+        "DISCOUNT": "Quita los descuentos, ofertas y comparaciones de precio.",
+        "AVAILABILITY": "No hables de stock ni de disponibilidad de productos.",
+        "TERMS": "Quita las condiciones de pago, garantías, cambios y devoluciones.",
+        "LINK": "Quita los enlaces, dominios y correos.",
+        "MARKUP": "Quita las llaves y la marca [verificar].",
+        "OTHER": "El texto lleva algo que el copiloto no puede proponer. Revísalo."
+      }
+    },
+    "switch": {
+      "title": "Estado de la IA",
+      "intro": "Apagarla corta las siguientes llamadas de {organization} al proveedor de IA; la que ya estaba en curso termina. No afecta a los canales ni al Inbox.",
+      "loading": "Cargando el estado de la IA…",
+      "denied": "No tienes permiso para ver el estado de la IA.",
+      "effective": { "ON": "La IA está encendida.", "OFF": "La IA está apagada." },
+      "organization": "Esta organización",
+      "system": "Todo el sistema",
+      "changed": "Último cambio",
+      "never": "Nunca",
+      "state": { "ON": "Encendida", "OFF": "Apagada" },
+      "globalOff": "La IA está apagada en todo el sistema. Se enciende en el servidor, no desde esta pantalla: mientras siga apagada, la IA no funciona aunque esta organización esté encendida.",
+      "turnOff": {
+        "open": "Apagar la IA",
+        "busy": "Apagando…",
+        "done": "La IA quedó apagada en esta organización."
+      },
+      "turnOn": {
+        "open": "Encender la IA",
+        "title": "Encender la IA",
+        "notice": "Confirmo que el aviso de tratamiento de datos está publicado: qué datos salen a un proveedor de IA, para qué y su transferencia fuera del país.",
+        "required": "Marca la confirmación del aviso de datos para encender la IA.",
+        "submit": "Sí, encender",
+        "busy": "Encendiendo…",
+        "cancel": "Cancelar",
+        "done": "La IA quedó encendida en esta organización.",
+        "doneGlobalOff": "Esta organización quedó encendida, pero la IA sigue apagada hasta que se encienda en el servidor."
+      },
+      "onlyManage": "Para encenderla hace falta el permiso de gestionar la IA.",
+      "accountsNote": "La clave y el proveedor de IA los gestiona quien tiene el permiso de gestionar la IA.",
+      "errors": {
+        "denied": "No tienes permiso para cambiar el estado de la IA.",
+        "failed": "No se pudo cambiar el estado de la IA. Vuelve a intentarlo."
+      },
+      "readFailed": "Si es urgente, puedes apagarla igualmente."
+    },
+    "provider": { "ANTHROPIC": "Anthropic", "UNKNOWN": "Otro proveedor" },
+    "status": { "ACTIVE": "Activa", "DISABLED": "Borrada", "UNKNOWN": "Estado desconocido" },
+    "fields": {
+      "key": "Clave",
+      "configured": "Guardada",
+      "rotated": "Rotada",
+      "revoked": "Borrada",
+      "model": "Modelo"
+    },
+    "save": {
+      "open": "Guardar clave de Anthropic",
+      "title": "Guardar la clave de Anthropic",
+      "submit": "Guardar",
+      "busy": "Guardando…",
+      "done": "La clave quedó guardada. Prueba la conexión para comprobarla."
+    },
+    "rotate": {
+      "open": "Rotar clave",
+      "title": "Rotar la clave",
+      "submit": "Rotar",
+      "busy": "Rotando…",
+      "done": "La clave se rotó. La anterior ya no vale."
+    },
+    "key": {
+      "label": "Clave de API",
+      "hint": "La de la consola de Anthropic. No se vuelve a mostrar ni se guarda en este navegador.",
+      "required": "Pega la clave de API.",
+      "invalid": "Eso no tiene el formato de una clave de API."
+    },
+    "cancel": "Cancelar",
+    "remove": {
+      "open": "Borrar clave",
+      "title": "Borrar la clave de {provider}",
+      "question": "¿Borrar la clave de {provider}?",
+      "effect": "La IA deja de poder usar este proveedor y la clave se destruye. Para volver a usarlo hay que guardar una clave nueva.",
+      "confirm": "Sí, borrar",
+      "busy": "Borrando…",
+      "cancel": "Cancelar",
+      "done": "La clave se borró."
+    },
+    "test": {
+      "open": "Probar conexión",
+      "busy": "Probando…",
+      "OK": "Conexión correcta: el proveedor aceptó la clave.",
+      "CREDENTIALS_REJECTED": "El proveedor no aceptó la clave. Rótala por una válida.",
+      "PROVIDER_BILLING": "El proveedor rechazó la llamada por facturación o por el límite de gasto. Revísalo en su consola.",
+      "PROVIDER_UNAVAILABLE": "El proveedor no responde ahora. Inténtalo de nuevo en unos minutos.",
+      "UNKNOWN": "El resultado de la prueba no se pudo interpretar. Inténtalo de nuevo."
+    },
+    "errors": {
+      "denied": "No tienes permiso para gestionar la IA.",
+      "AI_ACCOUNT_EXISTS": "Ya hay una clave guardada para ese proveedor: rótala. Actualizamos la lista.",
+      "AI_ACCOUNT_CONFLICT": "Otra persona está guardando la clave ahora mismo. Vuelve a intentarlo.",
+      "STEP_UP_REQUIRED": "Confirma tu identidad con un código de segundo factor para continuar.",
+      "RATE_LIMITED": "Demasiados intentos. Espera un momento antes de volver a probar.",
+      "RATE_LIMITED_WAIT": "Demasiados intentos. Vuelve a probar en {minutes, plural, one {# minuto} other {# minutos}}.",
+      "NOT_FOUND": "Esa clave ya no existe. Actualizamos la lista.",
+      "AI_DISABLED": "La IA está apagada en todo el sistema: quien despliega el CRM debe encenderla antes de probar la conexión. No es un problema de la clave."
     }
   },
   "tasks": {
@@ -2951,6 +3391,91 @@
         "revise": "Revisión {number} abierta como borrador.",
         "cancel": "Cotización cancelada."
       }
+    }
+  },
+  "quickReplies": {
+    "eyebrow": "Good Doggy / Inbox",
+    "title": "Respuestas rápidas",
+    "intro": "Los textos que el equipo de {organization} inserta en el Inbox escribiendo «/» y el atajo. Una desactivada no aparece en el Inbox y libera su atajo.",
+    "loading": "Cargando respuestas rápidas…",
+    "denied": "No tienes permiso para gestionar las respuestas rápidas de esta organización.",
+    "categories": "Categorías",
+    "noCategories": "No hay categorías activas. Crea o reactiva una en «Categorías» para guardar respuestas.",
+    "emptyCategory": "Sin respuestas en esta categoría.",
+    "inactive": "Desactivada",
+    "order": "Orden {order}",
+    "uses": "{count, plural, =0 {Sin usos} one {# uso} other {# usos}}",
+    "stale": "«{name}» cambió o ya no existe. La lista se volvió a cargar: revisa y repite el cambio.",
+    "deactivateCategory": "Desactivar la categoría {name}",
+    "activateCategory": "Reactivar la categoría {name}",
+    "inUse": "La categoría «{name}» tiene respuestas activas: desactívalas o muévelas a otra categoría antes. La lista se volvió a cargar.",
+    "failed": "No se pudo cambiar «{name}». {reason}",
+    "reloadFailed": "Se guardó, pero la lista no se pudo actualizar. Recarga la página.",
+    "act": {
+      "deactivate": "Desactivar",
+      "activate": "Reactivar",
+      "delete": "Borrar",
+      "busy": "Guardando…",
+      "deactivateLabel": "Desactivar {name}",
+      "activateLabel": "Reactivar {name}",
+      "deleteLabel": "Borrar {name}",
+      "ask": "¿Borrar «{name}»? Deja de estar disponible y su atajo queda libre. No se puede deshacer.",
+      "confirm": "Sí, borrar",
+      "cancel": "Cancelar",
+      "deactivated": "«{name}» desactivada.",
+      "activated": "«{name}» reactivada.",
+      "deleted": "«{name}» borrada."
+    },
+    "form": {
+      "open": "Nueva respuesta",
+      "title": "Nueva respuesta rápida",
+      "edit": "Editar",
+      "editLabel": "Editar {name}",
+      "shortcut": "Atajo",
+      "shortcutHint": "Lo que se escribe tras «/» en el Inbox: hasta 32 letras sin acento, cifras, _ o -.",
+      "shortcutRequired": "Escribe el atajo.",
+      "shortcutInvalid": "Usa hasta 32 letras sin acento, cifras, _ o -, sin espacios.",
+      "shortcutTaken": "Ya hay una respuesta activa con ese atajo. Elige otro o desactiva la otra.",
+      "name": "Título",
+      "nameRequired": "Escribe el título.",
+      "nameInvalid": "El título no es válido: una línea de hasta 100 caracteres.",
+      "category": "Categoría",
+      "categoryInvalid": "Elige una categoría activa.",
+      "body": "Texto",
+      "bodyHint": "Hasta 4096 caracteres. Puedes usar {variables}.",
+      "bodyRequired": "Escribe el texto de la respuesta.",
+      "bodyInvalid": "El texto no es válido: solo admite las variables indicadas, con llaves dobles.",
+      "preview": "Vista previa con un cliente de ejemplo (Rosa Quispe):",
+      "sampleFirst": "Rosa",
+      "sampleName": "Rosa Quispe",
+      "create": "Crear respuesta",
+      "save": "Guardar",
+      "busy": "Guardando…",
+      "cancel": "Cancelar",
+      "denied": "No tienes permiso para gestionar las respuestas rápidas.",
+      "done": "Respuesta /{name} {created, select, true {creada} other {guardada}}.",
+      "unchanged": "Sin cambios en /{name}: no había nada que guardar."
+    },
+    "categoryForm": {
+      "open": "Nueva categoría",
+      "title": "Nueva categoría",
+      "edit": "Renombrar u ordenar",
+      "editLabel": "Renombrar u ordenar la categoría {name}",
+      "name": "Nombre",
+      "nameRequired": "Escribe el nombre de la categoría.",
+      "nameInvalid": "El nombre no es válido: una línea de hasta 100 caracteres.",
+      "nameTaken": "Ya hay una categoría con ese nombre, quizá desactivada. La lista se volvió a cargar.",
+      "order": "Orden",
+      "orderHint": "Opcional. Un número entero: van de menor a mayor. Vacío, al final.",
+      "orderRequired": "Escribe el orden: un número entero.",
+      "orderInvalid": "Escribe un número entero entre -32768 y 32767.",
+      "create": "Crear categoría",
+      "save": "Guardar",
+      "busy": "Guardando…",
+      "cancel": "Cancelar",
+      "denied": "No tienes permiso para gestionar las respuestas rápidas.",
+      "done": "Categoría «{name}» {created, select, true {creada} other {guardada}}.",
+      "unchanged": "Sin cambios en «{name}»: no había nada que guardar."
     }
   }
 }

@@ -7,6 +7,7 @@ se quedan.
 pasajero (seguro que no llegó) devuelve el reclamo y reintenta con espera creciente; al agotarse
 queda `FAILED` (`RETRIES_EXHAUSTED`). Un resultado ambiguo no se reenvía: sigue `SENDING`. Ningún
 registro lleva el texto. `publish_realtime` (F6-07a): tipo e ids al WebSocket del Inbox.
+`fetch_profile` (F7b-04c): el nombre del cliente de Instagram tras su primer mensaje.
 """
 
 import datetime as dt
@@ -29,6 +30,7 @@ from apps.conversations import (
     ingest_alerts,
     ingress,
     media,
+    profiles,
     realtime,
     scan,
 )
@@ -60,6 +62,8 @@ REQUEUE_WAIT = 120  # segundos: lo que el barredor de la cola deja pasar antes d
 MEDIA_GIVE_UP = 3  # fallos inesperados seguidos de `fetch_media` antes de dejarlo al barredor
 MEDIA_SWEEP_BATCH = 100  # adjuntos varados por organización y pasada
 MEDIA_SWEEP_SECONDS = 50.0  # lo máximo que una pasada del barredor de medios ocupa un worker
+PROFILE_RETRIES = 3  # reintentos de la lectura del perfil de Instagram si Meta no contesta
+PROFILE_QUIET = ("OK", "KEPT", "SKIPPED")  # lo demás alerta (sin el token ni el perfil)
 
 
 def deliver(
@@ -97,6 +101,9 @@ def deliver(
                 channel_account_id=claim.account_id,
                 credential_id=claim.credential.pk if claim.credential else None,
             )
+    elif result.reason == "MESSAGES_ACCESS_OFF":  # Instagram: el titular apagó los mensajes
+        with tenant_scope(ctx):
+            accounts.mark_messages_access_off(ctx, channel_account_id=claim.account_id)
 
 
 @subscribe("message.queued")
@@ -244,6 +251,67 @@ def sweep_media(batch_size: int = MEDIA_SWEEP_BATCH) -> dict[str, int]:
     return dict(done)
 
 
+@subscribe("contact_identity.created")
+@tenant_task(name="conversations.profile_event", bind=True, ignore_result=True, acks_late=True)
+def profile_event(task: Any, event_id: str) -> None:
+    """Handler del outbox: encola la lectura del nombre del cliente de Instagram (D-F7b-06)."""
+    event = OutboxEvent.objects.filter(id=event_id, event_type="contact_identity.created").first()
+    if event is not None:
+        ids = {
+            "identity_id": str(event.aggregate_id),
+            "organization_id": str(require().organization_id),
+        }
+        fetch_profile.apply_async(kwargs=ids)
+
+
+def read_profile(organization_id: UUID, identity_id: UUID) -> str:
+    """Lee `name` y `username` del cliente con el token de la página **sin transacción** (abierto
+    solo durante la llamada) y los aplica en otro scope (`profiles.apply_profile`). Todo dentro del
+    scope de `organization_id`: una identidad de otra organización no existe. Un rechazo no cambia
+    el nombre y alerta; un `190` deja además la cuenta en `ERROR` (`TOKEN_INVALID`, F7b-05a), solo
+    si ese token sigue siendo el de la cuenta.
+    `GraphUnavailable` si vale reintentar."""
+    ctx = TenantContext(organization_id, "celery")
+    with tenant_scope(ctx):
+        target = profiles.profile_target(ctx, identity_id=identity_id)
+    if target is None:
+        return "SKIPPED"
+    customer, credential = target
+    try:
+        token = credentials.open_token(credential)
+        try:
+            found = graph.profile(token, customer)
+        finally:
+            del token
+    except sealed.SealError:
+        return "UNREADABLE"
+    except graph.TokenRejected:  # la cuenta de la credencial, en el scope de esta organización
+        _reject(ctx, credential.owner_id, credential)
+        return "TOKEN_INVALID"
+    except graph.GraphRejected:  # el cliente ya no existe o no se deja leer: queda el nombre fijo
+        return "REJECTED"
+    except graph.ChannelNotEnabled, ValueError:
+        return "SKIPPED"
+    with tenant_scope(ctx):
+        return profiles.apply_profile(ctx, identity_id=identity_id, profile=found)
+
+
+@platform_task(name="conversations.fetch_profile", bind=True, ignore_result=True, acks_late=True)
+def fetch_profile(task: Any, identity_id: str, organization_id: str) -> None:
+    """`read_profile` con `PROFILE_RETRIES` reintentos acotados si Meta no contesta (límite de
+    tasa, 5xx, red). Registra ids y el resultado; nunca el token, el IGSID ni el perfil."""
+    try:
+        outcome = read_profile(UUID(organization_id), UUID(identity_id))
+    except graph.GraphUnavailable:
+        retries = task.request.retries
+        if retries < PROFILE_RETRIES:
+            countdown = min(BACKOFF_SECONDS * 2**retries, BACKOFF_MAX)
+            raise task.retry(countdown=countdown, max_retries=PROFILE_RETRIES) from None
+        outcome = "UNAVAILABLE"
+    log = logger.info if outcome in PROFILE_QUIET else logger.error
+    log("contact.profile", contact_identity_id=identity_id, outcome=outcome)
+
+
 @platform_task(name="conversations.dispatch_message", bind=True, ignore_result=True, acks_late=True)
 def dispatch_message(task: Any, message_id: str, organization_id: str) -> None:
     """Despacha un mensaje por su id y su organización (las pone quien encola: el handler o el
@@ -338,18 +406,24 @@ def _reject(ctx: TenantContext, account_id: UUID, credential: Credential) -> str
 def check_account(organization_id: UUID, account_id: UUID) -> str:
     """Comprueba una cuenta con la Graph API (ADR-029 §12): lee en su scope, llama **sin
     transacción** con el token abierto solo durante la llamada y guarda en otro scope. Meta que
-    rechaza el token deja la cuenta en `ERROR`; Meta caída no cambia nada. Devuelve un resultado
-    corto (`OK`, `REJECTED`, `UNAVAILABLE`, `SKIPPED`)."""
+    rechaza el token deja la cuenta en `ERROR`; Meta caída no cambia nada. En Messenger e Instagram
+    (F7b-06g) lee las apps suscritas de la página: solo un `190` es un token rechazado; otro rechazo
+    (sin rol en la página) no cambia el estado y solo guarda la hora (`KEPT`). Devuelve un resultado
+    corto (`OK`, `REJECTED`, `KEPT`, `UNAVAILABLE`, `SKIPPED`)."""
     ctx = TenantContext(organization_id, "celery")
     with tenant_scope(ctx):
         target = accounts.health_target(ctx, channel_account_id=account_id)
     if target is None:
         return "SKIPPED"
-    waba, number, credential = target
+    platform, parent, number, credential = target
+    whatsapp, result = platform == "WHATSAPP", "OK"
     try:
         token = credentials.open_token(credential)
         try:
-            seen = graph.phone_number(token, waba, number)
+            if whatsapp:
+                seen = graph.phone_number(token, parent, number)
+            else:
+                subscribed = graph.subscription(token, parent)
         finally:
             del token
     except sealed.SealError:
@@ -360,10 +434,19 @@ def check_account(organization_id: UUID, account_id: UUID) -> str:
             logger.error("channel.healthcheck_key_missing", key_version=credential.key_version)
             return "UNAVAILABLE"
         return _reject(ctx, account_id, credential)
-    except graph.GraphRejected:  # el token ya no abre ese número
-        return _reject(ctx, account_id, credential)
+    except graph.GraphRejected as error:  # el token ya no abre ese número (o esa página: un 190)
+        if whatsapp or isinstance(error, graph.TokenRejected):
+            return _reject(ctx, account_id, credential)
+        subscribed, result = None, "KEPT"
     except graph.GraphUnavailable, graph.ChannelNotEnabled:
         return "UNAVAILABLE"  # Meta caída: no cambia nada y se reintenta en la siguiente pasada
+    if not whatsapp:
+        with tenant_scope(ctx):
+            accounts.apply_subscription(
+                ctx, channel_account_id=account_id, credential_id=credential.pk,
+                subscribed=subscribed,
+            )  # fmt: skip
+        return result
     with tenant_scope(ctx):
         accounts.apply_health(
             ctx, channel_account_id=account_id, quality=seen["quality_rating"],
@@ -374,24 +457,45 @@ def check_account(organization_id: UUID, account_id: UUID) -> str:
 
 @platform_task(name="conversations.healthcheck_accounts", ignore_result=True)
 def healthcheck_accounts(batch_size: int = 50) -> dict[str, int]:
-    """Comprueba la salud de las cuentas de WhatsApp a las que les toca (sin comprobación desde
-    `CHANNEL_HEALTH_INTERVAL_MINUTES`): descubre (organización, cuenta) con una función SECURITY
-    DEFINER (solo ids) y trabaja en el scope de cada una. Un fallo en una cuenta no detiene las
-    demás y solo se registra su tipo. Con el canal apagado no hace nada."""
+    """Comprueba la salud de las cuentas de WhatsApp, Messenger e Instagram a las que les toca
+    (sin comprobación desde `CHANNEL_HEALTH_INTERVAL_MINUTES`): descubre (organización, cuenta)
+    con una función SECURITY DEFINER (solo ids) y trabaja en el scope de cada una. Un fallo en una
+    cuenta no detiene las demás y solo se registra su tipo. Con el canal apagado no hace nada."""
     if not settings.META_ENABLED:
         return {}
-    before = timezone.now() - dt.timedelta(minutes=settings.CHANNEL_HEALTH_INTERVAL_MINUTES)
+    with connection.cursor() as cursor:  # F7b-06j: con la hora de la base, no la del worker
+        minutes = settings.CHANNEL_HEALTH_INTERVAL_MINUTES
+        cursor.execute("SELECT statement_timestamp() - make_interval(mins => %s)", [minutes])
+        before = cursor.fetchone()[0]
     done: Counter[str] = Counter()
     started = time.monotonic()
     for organization_id, account_id in health_due(before, batch_size):
         if time.monotonic() - started > HEALTH_PASS_SECONDS:
             break  # con Meta lenta, una pasada no ocupa el worker más que esto: sigue la próxima
         try:
-            done[check_account(organization_id, account_id)] += 1
+            outcome = check_account(organization_id, account_id)
         except Exception as error:  # una cuenta no detiene a las demás; nada del error ni del token
             logger.error("channel.healthcheck_failed", error=type(error).__name__)
-            done["ERROR"] += 1
+            outcome = "ERROR"
+        done[outcome] += 1
+        if outcome in UNFINISHED:
+            _attempted(organization_id, account_id)
     return dict(done)
+
+
+# F7b-06h: lo que no guarda la hora de la comprobación. Sin el intento, esas cuentas seguirían al
+# frente de la cola y dejarían sin turno a las demás. `REJECTED` no: ya deja la cuenta en `ERROR`.
+UNFINISHED = ("SKIPPED", "UNAVAILABLE", "ERROR")
+
+
+def _attempted(organization_id: UUID, account_id: UUID) -> None:
+    """Guarda el intento en el scope de la cuenta; si falla, solo se registra su tipo."""
+    ctx = TenantContext(organization_id, "celery")
+    try:
+        with tenant_scope(ctx):
+            accounts.note_attempt(ctx, channel_account_id=account_id)
+    except Exception as error:  # noqa: BLE001 — la pasada sigue con las demás
+        logger.error("channel.healthcheck_attempt_failed", error=type(error).__name__)
 
 
 @platform_task(name="conversations.reseal_credentials")

@@ -8,7 +8,7 @@ from django.http import HttpRequest, HttpResponseBase, JsonResponse
 
 from core.api import AUTH_SCHEME
 from core.api.errors import NOT_AUTHENTICATED, NOT_FOUND, error_response
-from core.observability.context import current_correlation_id
+from core.observability.context import current_correlation_id, logged_tenant
 from core.tenancy.context import TenantContextError
 from core.tenancy.resolution import OrganizationSuspended, TenantNotFound, resolve_tenant
 from core.tenancy.scope import assert_clean_connection, tenant_scope
@@ -16,6 +16,14 @@ from core.tenancy.second_factor import MESSAGE, MFA_REQUIRED, SecondFactorRequir
 
 TENANT_PREFIX = "/api/v1/o/"
 TENANT_PATH = re.compile(r"^/api/v1/o/(?P<slug>[-a-zA-Z0-9_]+)/")
+# F8-08h y F8-08i (ADR-034 §7, tenancy-context §2): la única excepción, con su método: sugerir y
+# resumir. La vista llama al modelo **fuera** de toda transacción y abre ella sus `tenant_scope`
+# cortos. Lista cerrada y fija: las mismas formas de `<slug>` y `<uuid>` que el URLconf; cualquier
+# otra ruta, en una transacción.
+UNSCOPED = re.compile(
+    r"/api/v1/o/[-a-zA-Z0-9_]+/conversations/"
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/copilot/(suggest|summary)/"
+)
 
 
 def not_found() -> JsonResponse:
@@ -48,6 +56,10 @@ class TenantResolutionMiddleware:
         except SecondFactorRequired:  # ADR-023 §9 con `enforce`: ninguna ruta de tenant se abre
             return error_response(MFA_REQUIRED, 403, MESSAGE)
         request.tenant = ctx  # type: ignore[attr-defined]
+        if request.method == "POST" and UNSCOPED.fullmatch(request.path_info):
+            request.unscoped_tenant = ctx  # type: ignore[attr-defined]  # para `HasPermission`
+            with logged_tenant(ctx):  # los logs y Sentry entre scopes llevan sus ids igual
+                return self.get_response(request)  # sin scope: el permiso y la vista, los suyos
         with tenant_scope(ctx):  # toda la vista y su serialización en una transacción
             response = self.get_response(request)
             if response.streaming:

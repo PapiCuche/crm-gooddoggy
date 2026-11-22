@@ -23,6 +23,17 @@ import type {
 
 import type {
   AddStageRequest,
+  AiBudget,
+  AiBudgetWriteRequest,
+  AiHandoffReply,
+  AiHandoffReplyWriteRequest,
+  AiProviderAccount,
+  AiProviderAccountCreateRequest,
+  AiProviderKeyRequest,
+  AiProviderModelRequest,
+  AiProviderTest,
+  AiSwitch,
+  AiSwitchOnRequest,
   AssignRequest,
   Assignment,
   AuditListParams,
@@ -47,7 +58,12 @@ import type {
   ContactsListParams,
   ConversationDetail,
   ConversationMessagesListParams,
+  ConversationQuickRepliesListParams,
   ConversationsListParams,
+  ConversationsUnansweredCountParams,
+  CopilotInsert,
+  CopilotSuggestion,
+  CopilotSummary,
   Cost,
   CostHistoryListParams,
   CostPage,
@@ -57,11 +73,16 @@ import type {
   DiscountPolicySetRequest,
   Error,
   GrantScopeRequest,
+  HumanRequestState,
   InventoryImportsRowsListParams,
   InventoryLevelsListParams,
   InventoryMovementsListParams,
   InventoryReservationsListParams,
   Invitation,
+  InvitationAcceptRequest,
+  InvitationAccepted,
+  InvitationLinkRequest,
+  InvitationPreview,
   InvitationStatusChangeRequest,
   InvitationsListParams,
   InviteRequest,
@@ -71,6 +92,8 @@ import type {
   LostReason,
   LostReasonCreateRequest,
   LostReasonsListParams,
+  ManagedQuickReplyCategory,
+  ManagedQuickReplyCategoryCreateRequest,
   MemberBranch,
   MemberBranchChangeRequest,
   MemberStatus,
@@ -115,6 +138,7 @@ import type {
   PaginatedListMarginList,
   PaginatedListPriceList,
   PaginatedLostReasonList,
+  PaginatedManagedQuickReplyCategoryList,
   PaginatedMemberList,
   PaginatedMessageList,
   PaginatedMovementList,
@@ -125,6 +149,8 @@ import type {
   PaginatedPriceListList,
   PaginatedProductList,
   PaginatedPromotionList,
+  PaginatedQuickReplyList,
+  PaginatedQuickReplyUseList,
   PaginatedQuoteList,
   PaginatedReservationList,
   PaginatedRoleList,
@@ -143,11 +169,13 @@ import type {
   PatchedCategoryUpdateRequest,
   PatchedContactUpdateRequest,
   PatchedLostReasonUpdateRequest,
+  PatchedManagedQuickReplyCategoryUpdateRequest,
   PatchedNoteUpdateRequest,
   PatchedOpportunityUpdateRequest,
   PatchedPipelineUpdateRequest,
   PatchedPriceListUpdateRequest,
   PatchedProductUpdateRequest,
+  PatchedQuickReplyUpdateRequest,
   PatchedQuoteUpdateRequest,
   PatchedRoleUpdateRequest,
   PatchedStageUpdateRequest,
@@ -163,6 +191,7 @@ import type {
   Price,
   PriceBatchItemsListParams,
   PriceList,
+  PriceListAiExposableRequest,
   PriceListCreateRequest,
   PriceListMarginsListParams,
   PriceListPricesListParams,
@@ -174,6 +203,10 @@ import type {
   Promotion,
   PromotionCreateRequest,
   PromotionsListParams,
+  QuickRepliesListParams,
+  QuickReply,
+  QuickReplyCategoriesListParams,
+  QuickReplyCreateRequest,
   QuoteApproveRequest,
   QuoteCancelRequest,
   QuoteCreateRequest,
@@ -185,6 +218,7 @@ import type {
   QuoteRejectRequest,
   QuoteVersionRequest,
   QuotesListParams,
+  Rendered,
   Reservation,
   ReservationCreateRequest,
   ReservationReleaseRequest,
@@ -197,6 +231,8 @@ import type {
   SendMediaFormRequest,
   SendMessageRequest,
   Session,
+  SocialAccount,
+  SocialConnectRequest,
   StageOrderRequest,
   StockImport,
   StockImportCreateRequest,
@@ -220,6 +256,7 @@ import type {
   TokenRequest,
   Transfer,
   TransferCreateRequest,
+  UnansweredCount,
   Variant,
   VariantCreateRequest,
   VariantPriceHistoryListParams,
@@ -1701,6 +1738,217 @@ export function useAuthTestAccounts<
   return withQueryKey(query, queryOptions.queryKey);
 }
 
+export const getInvitationsAcceptUrl = () => {
+  return `/api/v1/invitations/accept/`;
+};
+
+/**
+ * Acepta la invitación: la membresía con sus roles y, sin cuenta, la crea (`first_name`,
+ * `password`); con cuenta, hay que tener su sesión. No inicia sesión. 400: el enlace no vale
+ * (`INVALID_INVITATION_LINK`, sin decir por qué) o `VALIDATION_ERROR`. 409 `ACCOUNT_EXISTS`:
+ * el correo tiene cuenta y no es la de la sesión. 429: demasiados intentos desde esta red.
+ */
+export const invitationsAccept = async (
+  invitationAcceptRequest: InvitationAcceptRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<InvitationAccepted> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<InvitationAccepted>(getInvitationsAcceptUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(invitationAcceptRequest),
+  });
+};
+
+export const getInvitationsAcceptMutationKey = () => ["invitationsAccept"] as const;
+
+export const getInvitationsAcceptMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof invitationsAccept>>,
+    TError,
+    InvitationsAcceptMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof invitationsAccept>>,
+  TError,
+  InvitationsAcceptMutationVariables,
+  TContext
+> => {
+  const mutationKey = getInvitationsAcceptMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof invitationsAccept>>,
+    InvitationsAcceptMutationVariables
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return invitationsAccept(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type InvitationsAcceptMutationResult = NonNullable<
+  Awaited<ReturnType<typeof invitationsAccept>>
+>;
+export type InvitationsAcceptMutationBody = InvitationAcceptRequest;
+export type InvitationsAcceptMutationError = ErrorType<Error>;
+export type InvitationsAcceptMutationVariables = { data: InvitationAcceptRequest };
+
+export const useInvitationsAccept = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof invitationsAccept>>,
+      TError,
+      InvitationsAcceptMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof invitationsAccept>>,
+  TError,
+  InvitationsAcceptMutationVariables,
+  TContext
+> => {
+  return useMutation(getInvitationsAcceptMutationOptions(options), queryClient);
+};
+
+export const getInvitationsPreviewUrl = () => {
+  return `/api/v1/invitations/preview/`;
+};
+
+/**
+ * Lo que enseña el enlace de una invitación pendiente: la organización, el correo
+ * invitado y si hay que crear una cuenta. No cambia nada. 400 `INVALID_INVITATION_LINK`:
+ * el enlace no vale, sin decir por qué. 429: demasiados intentos desde esta red.
+ */
+export const invitationsPreview = async (
+  invitationLinkRequest: InvitationLinkRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<InvitationPreview> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<InvitationPreview>(getInvitationsPreviewUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(invitationLinkRequest),
+  });
+};
+
+export const getInvitationsPreviewMutationKey = () => ["invitationsPreview"] as const;
+
+export const getInvitationsPreviewMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof invitationsPreview>>,
+    TError,
+    InvitationsPreviewMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof invitationsPreview>>,
+  TError,
+  InvitationsPreviewMutationVariables,
+  TContext
+> => {
+  const mutationKey = getInvitationsPreviewMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof invitationsPreview>>,
+    InvitationsPreviewMutationVariables
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return invitationsPreview(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type InvitationsPreviewMutationResult = NonNullable<
+  Awaited<ReturnType<typeof invitationsPreview>>
+>;
+export type InvitationsPreviewMutationBody = InvitationLinkRequest;
+export type InvitationsPreviewMutationError = ErrorType<Error>;
+export type InvitationsPreviewMutationVariables = { data: InvitationLinkRequest };
+
+export const useInvitationsPreview = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof invitationsPreview>>,
+      TError,
+      InvitationsPreviewMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof invitationsPreview>>,
+  TError,
+  InvitationsPreviewMutationVariables,
+  TContext
+> => {
+  return useMutation(getInvitationsPreviewMutationOptions(options), queryClient);
+};
+
 export const getMeOrganizationsUrl = () => {
   return `/api/v1/me/organizations/`;
 };
@@ -1811,6 +2059,1398 @@ export function useMeOrganizations<
 
   return withQueryKey(query, queryOptions.queryKey);
 }
+
+export const getAiBudgetRetrieveUrl = (orgSlug: string) => {
+  return `/api/v1/o/${orgSlug}/ai/budget/`;
+};
+
+/**
+ * Los topes mensual y diario de IA de la organización, en USD con 6 decimales (`ai.manage` y segundo factor reciente); null si no hay: sin los dos, la IA no llama (`AI_BUDGET_NOT_SET`). No cuenta en el tope por persona de las escrituras.
+ */
+export const aiBudgetRetrieve = async (
+  orgSlug: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<AiBudget> => {
+  return apiFetch<AiBudget>(getAiBudgetRetrieveUrl(orgSlug), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getAiBudgetRetrieveQueryKey = (orgSlug: string) => {
+  return [`/api/v1/o/${orgSlug}/ai/budget/`] as const;
+};
+
+export const getAiBudgetRetrieveQueryOptions = <
+  TData = Awaited<ReturnType<typeof aiBudgetRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof aiBudgetRetrieve>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getAiBudgetRetrieveQueryKey(orgSlug);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof aiBudgetRetrieve>>> = ({ signal }) =>
+    aiBudgetRetrieve(orgSlug, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: orgSlug !== null && orgSlug !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof aiBudgetRetrieve>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type AiBudgetRetrieveQueryResult = NonNullable<Awaited<ReturnType<typeof aiBudgetRetrieve>>>;
+export type AiBudgetRetrieveQueryError = ErrorType<Error>;
+
+export function useAiBudgetRetrieve<
+  TData = Awaited<ReturnType<typeof aiBudgetRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  options: {
+    query: Partial<UseQueryOptions<Awaited<ReturnType<typeof aiBudgetRetrieve>>, TError, TData>> &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof aiBudgetRetrieve>>,
+          TError,
+          Awaited<ReturnType<typeof aiBudgetRetrieve>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useAiBudgetRetrieve<
+  TData = Awaited<ReturnType<typeof aiBudgetRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof aiBudgetRetrieve>>, TError, TData>> &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof aiBudgetRetrieve>>,
+          TError,
+          Awaited<ReturnType<typeof aiBudgetRetrieve>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useAiBudgetRetrieve<
+  TData = Awaited<ReturnType<typeof aiBudgetRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof aiBudgetRetrieve>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function useAiBudgetRetrieve<
+  TData = Awaited<ReturnType<typeof aiBudgetRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof aiBudgetRetrieve>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getAiBudgetRetrieveQueryOptions(orgSlug, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+export const getAiBudgetUpdateUrl = (orgSlug: string) => {
+  return `/api/v1/o/${orgSlug}/ai/budget/`;
+};
+
+/**
+ * Fija los dos topes (`ai.manage` y segundo factor reciente) y lo audita (`ai.limits.changed`, con el antes y el después). Importes en USD mayores que cero, con 6 decimales como mucho; el diario no supera al mensual. Bajar un tope por debajo de lo gastado corta la siguiente llamada. 429 `RATE_LIMITED`: el tope por persona de las escrituras, con `Retry-After`.
+ */
+export const aiBudgetUpdate = async (
+  orgSlug: string,
+  aiBudgetWriteRequest: AiBudgetWriteRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<AiBudget> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<AiBudget>(getAiBudgetUpdateUrl(orgSlug), {
+    ...options,
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(aiBudgetWriteRequest),
+  });
+};
+
+export const getAiBudgetUpdateMutationKey = () => ["aiBudgetUpdate"] as const;
+
+export const getAiBudgetUpdateMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof aiBudgetUpdate>>,
+    TError,
+    AiBudgetUpdateMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof aiBudgetUpdate>>,
+  TError,
+  AiBudgetUpdateMutationVariables,
+  TContext
+> => {
+  const mutationKey = getAiBudgetUpdateMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof aiBudgetUpdate>>,
+    AiBudgetUpdateMutationVariables
+  > = (props) => {
+    const { orgSlug, data } = props ?? {};
+
+    return aiBudgetUpdate(orgSlug, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type AiBudgetUpdateMutationResult = NonNullable<Awaited<ReturnType<typeof aiBudgetUpdate>>>;
+export type AiBudgetUpdateMutationBody = AiBudgetWriteRequest;
+export type AiBudgetUpdateMutationError = ErrorType<Error>;
+export type AiBudgetUpdateMutationVariables = { orgSlug: string; data: AiBudgetWriteRequest };
+
+export const useAiBudgetUpdate = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof aiBudgetUpdate>>,
+      TError,
+      AiBudgetUpdateMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof aiBudgetUpdate>>,
+  TError,
+  AiBudgetUpdateMutationVariables,
+  TContext
+> => {
+  return useMutation(getAiBudgetUpdateMutationOptions(options), queryClient);
+};
+
+export const getAiHandoffReplyRetrieveUrl = (orgSlug: string) => {
+  return `/api/v1/o/${orgSlug}/ai/handoff-reply/`;
+};
+
+/**
+ * El texto de traspaso que propone el copiloto (`ai.manage` y segundo factor reciente): el de la organización o, sin él, el inicial. No cuenta en el tope por persona de las escrituras.
+ */
+export const aiHandoffReplyRetrieve = async (
+  orgSlug: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<AiHandoffReply> => {
+  return apiFetch<AiHandoffReply>(getAiHandoffReplyRetrieveUrl(orgSlug), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getAiHandoffReplyRetrieveQueryKey = (orgSlug: string) => {
+  return [`/api/v1/o/${orgSlug}/ai/handoff-reply/`] as const;
+};
+
+export const getAiHandoffReplyRetrieveQueryOptions = <
+  TData = Awaited<ReturnType<typeof aiHandoffReplyRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof aiHandoffReplyRetrieve>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getAiHandoffReplyRetrieveQueryKey(orgSlug);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof aiHandoffReplyRetrieve>>> = ({ signal }) =>
+    aiHandoffReplyRetrieve(orgSlug, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: orgSlug !== null && orgSlug !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof aiHandoffReplyRetrieve>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type AiHandoffReplyRetrieveQueryResult = NonNullable<
+  Awaited<ReturnType<typeof aiHandoffReplyRetrieve>>
+>;
+export type AiHandoffReplyRetrieveQueryError = ErrorType<Error>;
+
+export function useAiHandoffReplyRetrieve<
+  TData = Awaited<ReturnType<typeof aiHandoffReplyRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof aiHandoffReplyRetrieve>>, TError, TData>
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof aiHandoffReplyRetrieve>>,
+          TError,
+          Awaited<ReturnType<typeof aiHandoffReplyRetrieve>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useAiHandoffReplyRetrieve<
+  TData = Awaited<ReturnType<typeof aiHandoffReplyRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof aiHandoffReplyRetrieve>>, TError, TData>
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof aiHandoffReplyRetrieve>>,
+          TError,
+          Awaited<ReturnType<typeof aiHandoffReplyRetrieve>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useAiHandoffReplyRetrieve<
+  TData = Awaited<ReturnType<typeof aiHandoffReplyRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof aiHandoffReplyRetrieve>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function useAiHandoffReplyRetrieve<
+  TData = Awaited<ReturnType<typeof aiHandoffReplyRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof aiHandoffReplyRetrieve>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getAiHandoffReplyRetrieveQueryOptions(orgSlug, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+export const getAiHandoffReplyUpdateUrl = (orgSlug: string) => {
+  return `/api/v1/o/${orgSlug}/ai/handoff-reply/`;
+};
+
+/**
+ * Cambia el texto de traspaso de la organización (`ai.manage` y segundo factor reciente) y lo audita (`ai.handoff_reply.changed`, sin el texto). 400 en `text`: un código y un mensaje por problema (`BODY`, `TOO_LONG`, `SCRIPT`, `SOON`, `FIGURE`, `DELIVERY`, `DISCOUNT`, `AVAILABILITY`, `TERMS`, `LINK`, `MARKUP`); nunca repite lo enviado. 429 `RATE_LIMITED`: el tope por persona de las escrituras, con `Retry-After`.
+ */
+export const aiHandoffReplyUpdate = async (
+  orgSlug: string,
+  aiHandoffReplyWriteRequest: AiHandoffReplyWriteRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<AiHandoffReply> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<AiHandoffReply>(getAiHandoffReplyUpdateUrl(orgSlug), {
+    ...options,
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(aiHandoffReplyWriteRequest),
+  });
+};
+
+export const getAiHandoffReplyUpdateMutationKey = () => ["aiHandoffReplyUpdate"] as const;
+
+export const getAiHandoffReplyUpdateMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof aiHandoffReplyUpdate>>,
+    TError,
+    AiHandoffReplyUpdateMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof aiHandoffReplyUpdate>>,
+  TError,
+  AiHandoffReplyUpdateMutationVariables,
+  TContext
+> => {
+  const mutationKey = getAiHandoffReplyUpdateMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof aiHandoffReplyUpdate>>,
+    AiHandoffReplyUpdateMutationVariables
+  > = (props) => {
+    const { orgSlug, data } = props ?? {};
+
+    return aiHandoffReplyUpdate(orgSlug, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type AiHandoffReplyUpdateMutationResult = NonNullable<
+  Awaited<ReturnType<typeof aiHandoffReplyUpdate>>
+>;
+export type AiHandoffReplyUpdateMutationBody = AiHandoffReplyWriteRequest;
+export type AiHandoffReplyUpdateMutationError = ErrorType<Error>;
+export type AiHandoffReplyUpdateMutationVariables = {
+  orgSlug: string;
+  data: AiHandoffReplyWriteRequest;
+};
+
+export const useAiHandoffReplyUpdate = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof aiHandoffReplyUpdate>>,
+      TError,
+      AiHandoffReplyUpdateMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof aiHandoffReplyUpdate>>,
+  TError,
+  AiHandoffReplyUpdateMutationVariables,
+  TContext
+> => {
+  return useMutation(getAiHandoffReplyUpdateMutationOptions(options), queryClient);
+};
+
+export const getAiProviderAccountsListUrl = (orgSlug: string) => {
+  return `/api/v1/o/${orgSlug}/ai/provider-accounts/`;
+};
+
+/**
+ * Las cuentas de proveedor de IA de la organización, activas y desactivadas (`ai.manage` y segundo factor reciente). Nunca la clave ni su cifrado: solo `key_last_four`. No cuenta en el tope por persona de las escrituras.
+ */
+export const aiProviderAccountsList = async (
+  orgSlug: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<AiProviderAccount[]> => {
+  return apiFetch<AiProviderAccount[]>(getAiProviderAccountsListUrl(orgSlug), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getAiProviderAccountsListQueryKey = (orgSlug: string) => {
+  return [`/api/v1/o/${orgSlug}/ai/provider-accounts/`] as const;
+};
+
+export const getAiProviderAccountsListQueryOptions = <
+  TData = Awaited<ReturnType<typeof aiProviderAccountsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof aiProviderAccountsList>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getAiProviderAccountsListQueryKey(orgSlug);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof aiProviderAccountsList>>> = ({ signal }) =>
+    aiProviderAccountsList(orgSlug, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: orgSlug !== null && orgSlug !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof aiProviderAccountsList>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type AiProviderAccountsListQueryResult = NonNullable<
+  Awaited<ReturnType<typeof aiProviderAccountsList>>
+>;
+export type AiProviderAccountsListQueryError = ErrorType<Error>;
+
+export function useAiProviderAccountsList<
+  TData = Awaited<ReturnType<typeof aiProviderAccountsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof aiProviderAccountsList>>, TError, TData>
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof aiProviderAccountsList>>,
+          TError,
+          Awaited<ReturnType<typeof aiProviderAccountsList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useAiProviderAccountsList<
+  TData = Awaited<ReturnType<typeof aiProviderAccountsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof aiProviderAccountsList>>, TError, TData>
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof aiProviderAccountsList>>,
+          TError,
+          Awaited<ReturnType<typeof aiProviderAccountsList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useAiProviderAccountsList<
+  TData = Awaited<ReturnType<typeof aiProviderAccountsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof aiProviderAccountsList>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function useAiProviderAccountsList<
+  TData = Awaited<ReturnType<typeof aiProviderAccountsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof aiProviderAccountsList>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getAiProviderAccountsListQueryOptions(orgSlug, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+export const getAiProviderAccountsCreateUrl = (orgSlug: string) => {
+  return `/api/v1/o/${orgSlug}/ai/provider-accounts/`;
+};
+
+/**
+ * Guarda la clave de un proveedor (`ai.manage` y segundo factor reciente), cifrada; reactiva una cuenta desactivada. 400 en `api_key`: no tiene el formato de una clave. 409 `AI_ACCOUNT_EXISTS`: ya hay una activa (se rota). 409 `AI_ACCOUNT_CONFLICT`: otra petición la creó a la vez. 429 `RATE_LIMITED`: el tope por persona de las escrituras, con `Retry-After`.
+ */
+export const aiProviderAccountsCreate = async (
+  orgSlug: string,
+  aiProviderAccountCreateRequest: AiProviderAccountCreateRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<AiProviderAccount> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<AiProviderAccount>(getAiProviderAccountsCreateUrl(orgSlug), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(aiProviderAccountCreateRequest),
+  });
+};
+
+export const getAiProviderAccountsCreateMutationKey = () => ["aiProviderAccountsCreate"] as const;
+
+export const getAiProviderAccountsCreateMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof aiProviderAccountsCreate>>,
+    TError,
+    AiProviderAccountsCreateMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof aiProviderAccountsCreate>>,
+  TError,
+  AiProviderAccountsCreateMutationVariables,
+  TContext
+> => {
+  const mutationKey = getAiProviderAccountsCreateMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof aiProviderAccountsCreate>>,
+    AiProviderAccountsCreateMutationVariables
+  > = (props) => {
+    const { orgSlug, data } = props ?? {};
+
+    return aiProviderAccountsCreate(orgSlug, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type AiProviderAccountsCreateMutationResult = NonNullable<
+  Awaited<ReturnType<typeof aiProviderAccountsCreate>>
+>;
+export type AiProviderAccountsCreateMutationBody = AiProviderAccountCreateRequest;
+export type AiProviderAccountsCreateMutationError = ErrorType<Error>;
+export type AiProviderAccountsCreateMutationVariables = {
+  orgSlug: string;
+  data: AiProviderAccountCreateRequest;
+};
+
+export const useAiProviderAccountsCreate = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof aiProviderAccountsCreate>>,
+      TError,
+      AiProviderAccountsCreateMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof aiProviderAccountsCreate>>,
+  TError,
+  AiProviderAccountsCreateMutationVariables,
+  TContext
+> => {
+  return useMutation(getAiProviderAccountsCreateMutationOptions(options), queryClient);
+};
+
+export const getAiProviderAccountsDestroyUrl = (orgSlug: string, accountId: string) => {
+  return `/api/v1/o/${orgSlug}/ai/provider-accounts/${accountId}/`;
+};
+
+/**
+ * Desactiva la cuenta (`ai.manage` y segundo factor reciente): el cifrado de su clave se borra. Para volver a usarla se guarda una clave nueva. 404: no existe, es de otra organización o ya está desactivada. 429 `RATE_LIMITED`: el tope por persona de las escrituras, con `Retry-After`.
+ */
+export const aiProviderAccountsDestroy = async (
+  orgSlug: string,
+  accountId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<void> => {
+  return apiFetch<void>(getAiProviderAccountsDestroyUrl(orgSlug, accountId), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getAiProviderAccountsDestroyMutationKey = () => ["aiProviderAccountsDestroy"] as const;
+
+export const getAiProviderAccountsDestroyMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof aiProviderAccountsDestroy>>,
+    TError,
+    AiProviderAccountsDestroyMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof aiProviderAccountsDestroy>>,
+  TError,
+  AiProviderAccountsDestroyMutationVariables,
+  TContext
+> => {
+  const mutationKey = getAiProviderAccountsDestroyMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof aiProviderAccountsDestroy>>,
+    AiProviderAccountsDestroyMutationVariables
+  > = (props) => {
+    const { orgSlug, accountId } = props ?? {};
+
+    return aiProviderAccountsDestroy(orgSlug, accountId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type AiProviderAccountsDestroyMutationResult = NonNullable<
+  Awaited<ReturnType<typeof aiProviderAccountsDestroy>>
+>;
+
+export type AiProviderAccountsDestroyMutationError = ErrorType<Error>;
+export type AiProviderAccountsDestroyMutationVariables = { orgSlug: string; accountId: string };
+
+export const useAiProviderAccountsDestroy = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof aiProviderAccountsDestroy>>,
+      TError,
+      AiProviderAccountsDestroyMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof aiProviderAccountsDestroy>>,
+  TError,
+  AiProviderAccountsDestroyMutationVariables,
+  TContext
+> => {
+  return useMutation(getAiProviderAccountsDestroyMutationOptions(options), queryClient);
+};
+
+export const getAiProviderAccountsRotateKeyUrl = (orgSlug: string, accountId: string) => {
+  return `/api/v1/o/${orgSlug}/ai/provider-accounts/${accountId}/key/`;
+};
+
+/**
+ * Sustituye la clave de la cuenta (`ai.manage` y segundo factor reciente): la anterior se invalida y su cifrado se borra. 404: no existe, es de otra organización o está desactivada. 429 `RATE_LIMITED`: el tope por persona de las escrituras, con `Retry-After`.
+ */
+export const aiProviderAccountsRotateKey = async (
+  orgSlug: string,
+  accountId: string,
+  aiProviderKeyRequest: AiProviderKeyRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<AiProviderAccount> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<AiProviderAccount>(getAiProviderAccountsRotateKeyUrl(orgSlug, accountId), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(aiProviderKeyRequest),
+  });
+};
+
+export const getAiProviderAccountsRotateKeyMutationKey = () =>
+  ["aiProviderAccountsRotateKey"] as const;
+
+export const getAiProviderAccountsRotateKeyMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof aiProviderAccountsRotateKey>>,
+    TError,
+    AiProviderAccountsRotateKeyMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof aiProviderAccountsRotateKey>>,
+  TError,
+  AiProviderAccountsRotateKeyMutationVariables,
+  TContext
+> => {
+  const mutationKey = getAiProviderAccountsRotateKeyMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof aiProviderAccountsRotateKey>>,
+    AiProviderAccountsRotateKeyMutationVariables
+  > = (props) => {
+    const { orgSlug, accountId, data } = props ?? {};
+
+    return aiProviderAccountsRotateKey(orgSlug, accountId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type AiProviderAccountsRotateKeyMutationResult = NonNullable<
+  Awaited<ReturnType<typeof aiProviderAccountsRotateKey>>
+>;
+export type AiProviderAccountsRotateKeyMutationBody = AiProviderKeyRequest;
+export type AiProviderAccountsRotateKeyMutationError = ErrorType<Error>;
+export type AiProviderAccountsRotateKeyMutationVariables = {
+  orgSlug: string;
+  accountId: string;
+  data: AiProviderKeyRequest;
+};
+
+export const useAiProviderAccountsRotateKey = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof aiProviderAccountsRotateKey>>,
+      TError,
+      AiProviderAccountsRotateKeyMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof aiProviderAccountsRotateKey>>,
+  TError,
+  AiProviderAccountsRotateKeyMutationVariables,
+  TContext
+> => {
+  return useMutation(getAiProviderAccountsRotateKeyMutationOptions(options), queryClient);
+};
+
+export const getAiProviderAccountsSetModelUrl = (orgSlug: string, accountId: string) => {
+  return `/api/v1/o/${orgSlug}/ai/provider-accounts/${accountId}/model/`;
+};
+
+/**
+ * Elige el modelo de la cuenta (`ai.manage` y segundo factor reciente) entre los de la lista permitida de su proveedor y lo audita (`ai.account.model_changed`, con el antes y el después). Cambia cuánto gasta la organización. 400 en `model`: fuera de la lista (nunca repite lo enviado). 404: no existe, es de otra organización o está desactivada. 429 `RATE_LIMITED`: el tope por persona de las escrituras, con `Retry-After`.
+ */
+export const aiProviderAccountsSetModel = async (
+  orgSlug: string,
+  accountId: string,
+  aiProviderModelRequest: AiProviderModelRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<AiProviderAccount> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<AiProviderAccount>(getAiProviderAccountsSetModelUrl(orgSlug, accountId), {
+    ...options,
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(aiProviderModelRequest),
+  });
+};
+
+export const getAiProviderAccountsSetModelMutationKey = () =>
+  ["aiProviderAccountsSetModel"] as const;
+
+export const getAiProviderAccountsSetModelMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof aiProviderAccountsSetModel>>,
+    TError,
+    AiProviderAccountsSetModelMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof aiProviderAccountsSetModel>>,
+  TError,
+  AiProviderAccountsSetModelMutationVariables,
+  TContext
+> => {
+  const mutationKey = getAiProviderAccountsSetModelMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof aiProviderAccountsSetModel>>,
+    AiProviderAccountsSetModelMutationVariables
+  > = (props) => {
+    const { orgSlug, accountId, data } = props ?? {};
+
+    return aiProviderAccountsSetModel(orgSlug, accountId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type AiProviderAccountsSetModelMutationResult = NonNullable<
+  Awaited<ReturnType<typeof aiProviderAccountsSetModel>>
+>;
+export type AiProviderAccountsSetModelMutationBody = AiProviderModelRequest;
+export type AiProviderAccountsSetModelMutationError = ErrorType<Error>;
+export type AiProviderAccountsSetModelMutationVariables = {
+  orgSlug: string;
+  accountId: string;
+  data: AiProviderModelRequest;
+};
+
+export const useAiProviderAccountsSetModel = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof aiProviderAccountsSetModel>>,
+      TError,
+      AiProviderAccountsSetModelMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof aiProviderAccountsSetModel>>,
+  TError,
+  AiProviderAccountsSetModelMutationVariables,
+  TContext
+> => {
+  return useMutation(getAiProviderAccountsSetModelMutationOptions(options), queryClient);
+};
+
+export const getAiProviderAccountsTestUrl = (orgSlug: string, accountId: string) => {
+  return `/api/v1/o/${orgSlug}/ai/provider-accounts/${accountId}/test/`;
+};
+
+/**
+ * Prueba la clave de la cuenta contra el proveedor (`ai.manage` y segundo factor reciente) con la llamada más barata, sin reintentos, y la audita (`ai.account.tested`). 200 con el código: `OK`, `CREDENTIALS_REJECTED`, `PROVIDER_BILLING` o `PROVIDER_UNAVAILABLE`; nunca el cuerpo del proveedor ni la clave. 404: no existe, es de otra organización o está desactivada. 409 `AI_DISABLED`: `AI_ENABLED` apagado. 429 `RATE_LIMITED`: el tope por persona de las escrituras, con `Retry-After`.
+ */
+export const aiProviderAccountsTest = async (
+  orgSlug: string,
+  accountId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<AiProviderTest> => {
+  return apiFetch<AiProviderTest>(getAiProviderAccountsTestUrl(orgSlug, accountId), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getAiProviderAccountsTestMutationKey = () => ["aiProviderAccountsTest"] as const;
+
+export const getAiProviderAccountsTestMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof aiProviderAccountsTest>>,
+    TError,
+    AiProviderAccountsTestMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof aiProviderAccountsTest>>,
+  TError,
+  AiProviderAccountsTestMutationVariables,
+  TContext
+> => {
+  const mutationKey = getAiProviderAccountsTestMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof aiProviderAccountsTest>>,
+    AiProviderAccountsTestMutationVariables
+  > = (props) => {
+    const { orgSlug, accountId } = props ?? {};
+
+    return aiProviderAccountsTest(orgSlug, accountId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type AiProviderAccountsTestMutationResult = NonNullable<
+  Awaited<ReturnType<typeof aiProviderAccountsTest>>
+>;
+
+export type AiProviderAccountsTestMutationError = ErrorType<Error>;
+export type AiProviderAccountsTestMutationVariables = { orgSlug: string; accountId: string };
+
+export const useAiProviderAccountsTest = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof aiProviderAccountsTest>>,
+      TError,
+      AiProviderAccountsTestMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof aiProviderAccountsTest>>,
+  TError,
+  AiProviderAccountsTestMutationVariables,
+  TContext
+> => {
+  return useMutation(getAiProviderAccountsTestMutationOptions(options), queryClient);
+};
+
+export const getAiSwitchRetrieveUrl = (orgSlug: string) => {
+  return `/api/v1/o/${orgSlug}/ai/switch/`;
+};
+
+/**
+ * El interruptor de la organización y el del despliegue (`ai.kill_switch` o `ai.manage`, sin segundo factor). La IA llama solo con los dos encendidos; los dos nacen apagados.
+ */
+export const aiSwitchRetrieve = async (
+  orgSlug: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<AiSwitch> => {
+  return apiFetch<AiSwitch>(getAiSwitchRetrieveUrl(orgSlug), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getAiSwitchRetrieveQueryKey = (orgSlug: string) => {
+  return [`/api/v1/o/${orgSlug}/ai/switch/`] as const;
+};
+
+export const getAiSwitchRetrieveQueryOptions = <
+  TData = Awaited<ReturnType<typeof aiSwitchRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof aiSwitchRetrieve>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getAiSwitchRetrieveQueryKey(orgSlug);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof aiSwitchRetrieve>>> = ({ signal }) =>
+    aiSwitchRetrieve(orgSlug, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: orgSlug !== null && orgSlug !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof aiSwitchRetrieve>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type AiSwitchRetrieveQueryResult = NonNullable<Awaited<ReturnType<typeof aiSwitchRetrieve>>>;
+export type AiSwitchRetrieveQueryError = ErrorType<Error>;
+
+export function useAiSwitchRetrieve<
+  TData = Awaited<ReturnType<typeof aiSwitchRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  options: {
+    query: Partial<UseQueryOptions<Awaited<ReturnType<typeof aiSwitchRetrieve>>, TError, TData>> &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof aiSwitchRetrieve>>,
+          TError,
+          Awaited<ReturnType<typeof aiSwitchRetrieve>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useAiSwitchRetrieve<
+  TData = Awaited<ReturnType<typeof aiSwitchRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof aiSwitchRetrieve>>, TError, TData>> &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof aiSwitchRetrieve>>,
+          TError,
+          Awaited<ReturnType<typeof aiSwitchRetrieve>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useAiSwitchRetrieve<
+  TData = Awaited<ReturnType<typeof aiSwitchRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof aiSwitchRetrieve>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function useAiSwitchRetrieve<
+  TData = Awaited<ReturnType<typeof aiSwitchRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof aiSwitchRetrieve>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getAiSwitchRetrieveQueryOptions(orgSlug, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+export const getAiSwitchOffUrl = (orgSlug: string) => {
+  return `/api/v1/o/${orgSlug}/ai/switch/off/`;
+};
+
+/**
+ * Apaga la IA de la organización (`ai.kill_switch` o `ai.manage`, sin segundo factor ni tope por persona) y lo audita (`ai.kill_switch.activated`). La siguiente llamada recibe `AI_DISABLED`; la que ya reservó termina. Apagada ya, no cambia nada.
+ */
+export const aiSwitchOff = async (
+  orgSlug: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<AiSwitch> => {
+  return apiFetch<AiSwitch>(getAiSwitchOffUrl(orgSlug), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getAiSwitchOffMutationKey = () => ["aiSwitchOff"] as const;
+
+export const getAiSwitchOffMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof aiSwitchOff>>,
+    TError,
+    AiSwitchOffMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof aiSwitchOff>>,
+  TError,
+  AiSwitchOffMutationVariables,
+  TContext
+> => {
+  const mutationKey = getAiSwitchOffMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof aiSwitchOff>>,
+    AiSwitchOffMutationVariables
+  > = (props) => {
+    const { orgSlug } = props ?? {};
+
+    return aiSwitchOff(orgSlug, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type AiSwitchOffMutationResult = NonNullable<Awaited<ReturnType<typeof aiSwitchOff>>>;
+
+export type AiSwitchOffMutationError = ErrorType<Error>;
+export type AiSwitchOffMutationVariables = { orgSlug: string };
+
+export const useAiSwitchOff = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof aiSwitchOff>>,
+      TError,
+      AiSwitchOffMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof aiSwitchOff>>,
+  TError,
+  AiSwitchOffMutationVariables,
+  TContext
+> => {
+  return useMutation(getAiSwitchOffMutationOptions(options), queryClient);
+};
+
+export const getAiSwitchOnUrl = (orgSlug: string) => {
+  return `/api/v1/o/${orgSlug}/ai/switch/on/`;
+};
+
+/**
+ * Enciende la IA de la organización (`ai.manage` y segundo factor reciente) con la confirmación del aviso de datos y lo audita (`ai.kill_switch.deactivated`). No enciende `AI_ENABLED`. Encendida ya, no cambia nada. 429 `RATE_LIMITED`: el tope por persona de las escrituras, con `Retry-After`.
+ */
+export const aiSwitchOn = async (
+  orgSlug: string,
+  aiSwitchOnRequest: AiSwitchOnRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<AiSwitch> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<AiSwitch>(getAiSwitchOnUrl(orgSlug), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(aiSwitchOnRequest),
+  });
+};
+
+export const getAiSwitchOnMutationKey = () => ["aiSwitchOn"] as const;
+
+export const getAiSwitchOnMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof aiSwitchOn>>,
+    TError,
+    AiSwitchOnMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof aiSwitchOn>>,
+  TError,
+  AiSwitchOnMutationVariables,
+  TContext
+> => {
+  const mutationKey = getAiSwitchOnMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof aiSwitchOn>>,
+    AiSwitchOnMutationVariables
+  > = (props) => {
+    const { orgSlug, data } = props ?? {};
+
+    return aiSwitchOn(orgSlug, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type AiSwitchOnMutationResult = NonNullable<Awaited<ReturnType<typeof aiSwitchOn>>>;
+export type AiSwitchOnMutationBody = AiSwitchOnRequest;
+export type AiSwitchOnMutationError = ErrorType<Error>;
+export type AiSwitchOnMutationVariables = { orgSlug: string; data: AiSwitchOnRequest };
+
+export const useAiSwitchOn = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof aiSwitchOn>>,
+      TError,
+      AiSwitchOnMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof aiSwitchOn>>,
+  TError,
+  AiSwitchOnMutationVariables,
+  TContext
+> => {
+  return useMutation(getAiSwitchOnMutationOptions(options), queryClient);
+};
 
 export const getAuditListUrl = (orgSlug: string, params?: AuditListParams) => {
   const normalizedParams = new URLSearchParams();
@@ -3435,6 +5075,325 @@ export function useChannelsRetrieve<
   return withQueryKey(query, queryOptions.queryKey);
 }
 
+export const getChannelsSocialConnectUrl = (
+  orgSlug: string,
+  platform: "instagram" | "messenger",
+) => {
+  return `/api/v1/o/${orgSlug}/channels/${platform}/`;
+};
+
+/**
+ * Registra una página de Messenger o una cuenta de Instagram como la ruta de WhatsApp (ADR-035 §3): Meta comprueba la página (y su cuenta de Instagram) y se suscribe la app. El 400 sin oráculo va en `page_id` (Messenger) o `instagram_account_id`.
+ */
+export const channelsSocialConnect = async (
+  orgSlug: string,
+  platform: "instagram" | "messenger",
+  socialConnectRequest: SocialConnectRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<SocialAccount> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<SocialAccount>(getChannelsSocialConnectUrl(orgSlug, platform), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(socialConnectRequest),
+  });
+};
+
+export const getChannelsSocialConnectMutationKey = () => ["channelsSocialConnect"] as const;
+
+export const getChannelsSocialConnectMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof channelsSocialConnect>>,
+    TError,
+    ChannelsSocialConnectMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof channelsSocialConnect>>,
+  TError,
+  ChannelsSocialConnectMutationVariables,
+  TContext
+> => {
+  const mutationKey = getChannelsSocialConnectMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof channelsSocialConnect>>,
+    ChannelsSocialConnectMutationVariables
+  > = (props) => {
+    const { orgSlug, platform, data } = props ?? {};
+
+    return channelsSocialConnect(orgSlug, platform, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ChannelsSocialConnectMutationResult = NonNullable<
+  Awaited<ReturnType<typeof channelsSocialConnect>>
+>;
+export type ChannelsSocialConnectMutationBody = SocialConnectRequest;
+export type ChannelsSocialConnectMutationError = ErrorType<Error>;
+export type ChannelsSocialConnectMutationVariables = {
+  orgSlug: string;
+  platform: "instagram" | "messenger";
+  data: SocialConnectRequest;
+};
+
+export const useChannelsSocialConnect = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof channelsSocialConnect>>,
+      TError,
+      ChannelsSocialConnectMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof channelsSocialConnect>>,
+  TError,
+  ChannelsSocialConnectMutationVariables,
+  TContext
+> => {
+  return useMutation(getChannelsSocialConnectMutationOptions(options), queryClient);
+};
+
+export const getChannelsSocialDisconnectUrl = (
+  orgSlug: string,
+  platform: "instagram" | "messenger",
+  accountId: string,
+) => {
+  return `/api/v1/o/${orgSlug}/channels/${platform}/${accountId}/`;
+};
+
+/**
+ * Como en WhatsApp. 404 también si la cuenta es de otra plataforma.
+ */
+export const channelsSocialDisconnect = async (
+  orgSlug: string,
+  platform: "instagram" | "messenger",
+  accountId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<void> => {
+  return apiFetch<void>(getChannelsSocialDisconnectUrl(orgSlug, platform, accountId), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getChannelsSocialDisconnectMutationKey = () => ["channelsSocialDisconnect"] as const;
+
+export const getChannelsSocialDisconnectMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof channelsSocialDisconnect>>,
+    TError,
+    ChannelsSocialDisconnectMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof channelsSocialDisconnect>>,
+  TError,
+  ChannelsSocialDisconnectMutationVariables,
+  TContext
+> => {
+  const mutationKey = getChannelsSocialDisconnectMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof channelsSocialDisconnect>>,
+    ChannelsSocialDisconnectMutationVariables
+  > = (props) => {
+    const { orgSlug, platform, accountId } = props ?? {};
+
+    return channelsSocialDisconnect(orgSlug, platform, accountId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ChannelsSocialDisconnectMutationResult = NonNullable<
+  Awaited<ReturnType<typeof channelsSocialDisconnect>>
+>;
+
+export type ChannelsSocialDisconnectMutationError = ErrorType<Error>;
+export type ChannelsSocialDisconnectMutationVariables = {
+  orgSlug: string;
+  platform: "instagram" | "messenger";
+  accountId: string;
+};
+
+export const useChannelsSocialDisconnect = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof channelsSocialDisconnect>>,
+      TError,
+      ChannelsSocialDisconnectMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof channelsSocialDisconnect>>,
+  TError,
+  ChannelsSocialDisconnectMutationVariables,
+  TContext
+> => {
+  return useMutation(getChannelsSocialDisconnectMutationOptions(options), queryClient);
+};
+
+export const getChannelsSocialRotateTokenUrl = (
+  orgSlug: string,
+  platform: "instagram" | "messenger",
+  accountId: string,
+) => {
+  return `/api/v1/o/${orgSlug}/channels/${platform}/${accountId}/token/`;
+};
+
+/**
+ * Como en WhatsApp; Meta comprueba la misma página (y la misma cuenta de Instagram). 404 también si la cuenta es de otra plataforma.
+ */
+export const channelsSocialRotateToken = async (
+  orgSlug: string,
+  platform: "instagram" | "messenger",
+  accountId: string,
+  tokenRequest: TokenRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<SocialAccount> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<SocialAccount>(getChannelsSocialRotateTokenUrl(orgSlug, platform, accountId), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(tokenRequest),
+  });
+};
+
+export const getChannelsSocialRotateTokenMutationKey = () => ["channelsSocialRotateToken"] as const;
+
+export const getChannelsSocialRotateTokenMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof channelsSocialRotateToken>>,
+    TError,
+    ChannelsSocialRotateTokenMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof channelsSocialRotateToken>>,
+  TError,
+  ChannelsSocialRotateTokenMutationVariables,
+  TContext
+> => {
+  const mutationKey = getChannelsSocialRotateTokenMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof channelsSocialRotateToken>>,
+    ChannelsSocialRotateTokenMutationVariables
+  > = (props) => {
+    const { orgSlug, platform, accountId, data } = props ?? {};
+
+    return channelsSocialRotateToken(orgSlug, platform, accountId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ChannelsSocialRotateTokenMutationResult = NonNullable<
+  Awaited<ReturnType<typeof channelsSocialRotateToken>>
+>;
+export type ChannelsSocialRotateTokenMutationBody = TokenRequest;
+export type ChannelsSocialRotateTokenMutationError = ErrorType<Error>;
+export type ChannelsSocialRotateTokenMutationVariables = {
+  orgSlug: string;
+  platform: "instagram" | "messenger";
+  accountId: string;
+  data: TokenRequest;
+};
+
+export const useChannelsSocialRotateToken = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof channelsSocialRotateToken>>,
+      TError,
+      ChannelsSocialRotateTokenMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof channelsSocialRotateToken>>,
+  TError,
+  ChannelsSocialRotateTokenMutationVariables,
+  TContext
+> => {
+  return useMutation(getChannelsSocialRotateTokenMutationOptions(options), queryClient);
+};
+
 export const getChannelsSandboxInboundUrl = (orgSlug: string) => {
   return `/api/v1/o/${orgSlug}/channels/sandbox/inbound/`;
 };
@@ -3547,7 +5506,7 @@ export const getChannelsWhatsappConnectUrl = (orgSlug: string) => {
 };
 
 /**
- * Registra un número de WhatsApp (`channels.manage`, MFA reciente): comprueba con Meta el token y guarda la cuenta `PENDING` con el token cifrado. 400 en `phone_number_id`: no se puede registrar (mal formado o repetido: el mismo error); `CHANNEL_CREDENTIALS_REJECTED`; 409 `CHANNEL_NOT_ENABLED`; 503 `CHANNEL_PROVIDER_UNAVAILABLE`; 429 `RATE_LIMITED` (5 peticiones cada 10 minutos por persona, las tres rutas).
+ * Registra un número de WhatsApp (`channels.manage`, MFA reciente): comprueba con Meta el token y guarda la cuenta `PENDING` con el token cifrado. 400 en `phone_number_id`: no se puede registrar (mal formado o repetido: el mismo error); `CHANNEL_CREDENTIALS_REJECTED`; 409 `CHANNEL_NOT_ENABLED`; 503 `CHANNEL_PROVIDER_UNAVAILABLE`; 429 `RATE_LIMITED` (5 peticiones cada 10 minutos por persona, compartido con Messenger e Instagram).
  */
 export const channelsWhatsappConnect = async (
   orgSlug: string,
@@ -5139,7 +7098,7 @@ export const getConversationsListUrl = (orgSlug: string, params?: ConversationsL
 };
 
 /**
- * Las conversaciones dentro del alcance de `conversations.view`, la de mensaje más reciente primero (`last_message_at`, `id`; cursor de dos valores). `box` y `status` se combinan y la página siguiente se pide con los mismos. 400: un filtro repetido o no válido.
+ * Las conversaciones dentro del alcance de `conversations.view`, la de mensaje más reciente primero (`last_message_at`, `id`; cursor de dos valores). `box`, `status` y `unanswered` se combinan y la página siguiente se pide con los mismos. 400: un filtro repetido o no válido.
  */
 export const conversationsList = async (
   orgSlug: string,
@@ -5689,12 +7648,467 @@ export function useConversationAttachmentUrl<
   return withQueryKey(query, queryOptions.queryKey);
 }
 
+export const getConversationsCopilotSuggestUrl = (orgSlug: string, conversationId: string) => {
+  return `/api/v1/o/${orgSlug}/conversations/${conversationId}/copilot/suggest/`;
+};
+
+/**
+ * Pide al copiloto una sugerencia de respuesta (`conversations.view` con su alcance y `ai.use`; 403 `PERMISSION_DENIED` sin uno de los dos). No envía nada: la sugerencia se guarda y se audita (`ai.suggestion.created`). 404: fuera de alcance, de otra organización o inexistente. 409 `AI_DISABLED`, `AI_NOT_CONFIGURED`, `AI_BUDGET_NOT_SET` o `AI_BUDGET_EXHAUSTED`. 502 `PROVIDER_UNAVAILABLE`, `PROVIDER_ERROR`, `CREDENTIALS_REJECTED`, `PROVIDER_BILLING`, `AI_MALFORMED` o `AI_TURN_INVALID`. 504 `AI_DEADLINE`. 429 `RATE_LIMITED`: el tope por persona (uno para sugerir y resumir), con `Retry-After`. 429 `AI_ORG_RATE_LIMITED`: el de la organización (uno para sugerir y resumir; tras el permiso), con `Retry-After`.
+ */
+export const conversationsCopilotSuggest = async (
+  orgSlug: string,
+  conversationId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<CopilotSuggestion> => {
+  return apiFetch<CopilotSuggestion>(getConversationsCopilotSuggestUrl(orgSlug, conversationId), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getConversationsCopilotSuggestMutationKey = () =>
+  ["conversationsCopilotSuggest"] as const;
+
+export const getConversationsCopilotSuggestMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof conversationsCopilotSuggest>>,
+    TError,
+    ConversationsCopilotSuggestMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof conversationsCopilotSuggest>>,
+  TError,
+  ConversationsCopilotSuggestMutationVariables,
+  TContext
+> => {
+  const mutationKey = getConversationsCopilotSuggestMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof conversationsCopilotSuggest>>,
+    ConversationsCopilotSuggestMutationVariables
+  > = (props) => {
+    const { orgSlug, conversationId } = props ?? {};
+
+    return conversationsCopilotSuggest(orgSlug, conversationId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ConversationsCopilotSuggestMutationResult = NonNullable<
+  Awaited<ReturnType<typeof conversationsCopilotSuggest>>
+>;
+
+export type ConversationsCopilotSuggestMutationError = ErrorType<Error>;
+export type ConversationsCopilotSuggestMutationVariables = {
+  orgSlug: string;
+  conversationId: string;
+};
+
+export const useConversationsCopilotSuggest = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof conversationsCopilotSuggest>>,
+      TError,
+      ConversationsCopilotSuggestMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof conversationsCopilotSuggest>>,
+  TError,
+  ConversationsCopilotSuggestMutationVariables,
+  TContext
+> => {
+  return useMutation(getConversationsCopilotSuggestMutationOptions(options), queryClient);
+};
+
+export const getConversationsCopilotSuggestionInsertUrl = (
+  orgSlug: string,
+  conversationId: string,
+  suggestionId: string,
+) => {
+  return `/api/v1/o/${orgSlug}/conversations/${conversationId}/copilot/suggestions/${suggestionId}/insert/`;
+};
+
+/**
+ * Devuelve el texto de una sugerencia para el compositor y audita `ai.suggestion.inserted` en la misma transacción (`conversations.view` con su alcance y `ai.use`; 403 `PERMISSION_DENIED` sin uno de los dos). No envía nada ni llama al modelo. 404: fuera de alcance, de otra organización, conversación o persona, inexistente, un resumen o ya purgada (30 días). 409 `AI_EVIDENCE_EXPIRED`: su evidencia caducó; hay que regenerarla.
+ */
+export const conversationsCopilotSuggestionInsert = async (
+  orgSlug: string,
+  conversationId: string,
+  suggestionId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<CopilotInsert> => {
+  return apiFetch<CopilotInsert>(
+    getConversationsCopilotSuggestionInsertUrl(orgSlug, conversationId, suggestionId),
+    {
+      ...options,
+      method: "POST",
+    },
+  );
+};
+
+export const getConversationsCopilotSuggestionInsertMutationKey = () =>
+  ["conversationsCopilotSuggestionInsert"] as const;
+
+export const getConversationsCopilotSuggestionInsertMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof conversationsCopilotSuggestionInsert>>,
+    TError,
+    ConversationsCopilotSuggestionInsertMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof conversationsCopilotSuggestionInsert>>,
+  TError,
+  ConversationsCopilotSuggestionInsertMutationVariables,
+  TContext
+> => {
+  const mutationKey = getConversationsCopilotSuggestionInsertMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof conversationsCopilotSuggestionInsert>>,
+    ConversationsCopilotSuggestionInsertMutationVariables
+  > = (props) => {
+    const { orgSlug, conversationId, suggestionId } = props ?? {};
+
+    return conversationsCopilotSuggestionInsert(
+      orgSlug,
+      conversationId,
+      suggestionId,
+      requestOptions,
+    );
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ConversationsCopilotSuggestionInsertMutationResult = NonNullable<
+  Awaited<ReturnType<typeof conversationsCopilotSuggestionInsert>>
+>;
+
+export type ConversationsCopilotSuggestionInsertMutationError = ErrorType<Error>;
+export type ConversationsCopilotSuggestionInsertMutationVariables = {
+  orgSlug: string;
+  conversationId: string;
+  suggestionId: string;
+};
+
+export const useConversationsCopilotSuggestionInsert = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof conversationsCopilotSuggestionInsert>>,
+      TError,
+      ConversationsCopilotSuggestionInsertMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof conversationsCopilotSuggestionInsert>>,
+  TError,
+  ConversationsCopilotSuggestionInsertMutationVariables,
+  TContext
+> => {
+  return useMutation(getConversationsCopilotSuggestionInsertMutationOptions(options), queryClient);
+};
+
+export const getConversationsCopilotSummaryUrl = (orgSlug: string, conversationId: string) => {
+  return `/api/v1/o/${orgSlug}/conversations/${conversationId}/copilot/summary/`;
+};
+
+/**
+ * Pide al copiloto un resumen de la conversación para quien atiende (`conversations.view` con su alcance y `ai.use`; 403 `PERMISSION_DENIED` sin uno de los dos), sin herramientas. Se muestra «Generado por IA», con sus cifras, términos y enlaces marcados «sin verificar» (`marks`), y no se inserta en el compositor. No envía nada: se guarda y se audita (`ai.summary.created`). 404: fuera de alcance, de otra organización o inexistente. 409 `AI_DISABLED`, `AI_NOT_CONFIGURED`, `AI_BUDGET_NOT_SET` o `AI_BUDGET_EXHAUSTED`. 502 `PROVIDER_UNAVAILABLE`, `PROVIDER_ERROR`, `CREDENTIALS_REJECTED`, `PROVIDER_BILLING`, `AI_MALFORMED` o `AI_TURN_INVALID`. 504 `AI_DEADLINE`. 429 `RATE_LIMITED`: el tope por persona (uno para sugerir y resumir), con `Retry-After`. 429 `AI_ORG_RATE_LIMITED`: el de la organización (uno para sugerir y resumir; tras el permiso), con `Retry-After`.
+ */
+export const conversationsCopilotSummary = async (
+  orgSlug: string,
+  conversationId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<CopilotSummary> => {
+  return apiFetch<CopilotSummary>(getConversationsCopilotSummaryUrl(orgSlug, conversationId), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getConversationsCopilotSummaryMutationKey = () =>
+  ["conversationsCopilotSummary"] as const;
+
+export const getConversationsCopilotSummaryMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof conversationsCopilotSummary>>,
+    TError,
+    ConversationsCopilotSummaryMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof conversationsCopilotSummary>>,
+  TError,
+  ConversationsCopilotSummaryMutationVariables,
+  TContext
+> => {
+  const mutationKey = getConversationsCopilotSummaryMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof conversationsCopilotSummary>>,
+    ConversationsCopilotSummaryMutationVariables
+  > = (props) => {
+    const { orgSlug, conversationId } = props ?? {};
+
+    return conversationsCopilotSummary(orgSlug, conversationId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ConversationsCopilotSummaryMutationResult = NonNullable<
+  Awaited<ReturnType<typeof conversationsCopilotSummary>>
+>;
+
+export type ConversationsCopilotSummaryMutationError = ErrorType<Error>;
+export type ConversationsCopilotSummaryMutationVariables = {
+  orgSlug: string;
+  conversationId: string;
+};
+
+export const useConversationsCopilotSummary = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof conversationsCopilotSummary>>,
+      TError,
+      ConversationsCopilotSummaryMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof conversationsCopilotSummary>>,
+  TError,
+  ConversationsCopilotSummaryMutationVariables,
+  TContext
+> => {
+  return useMutation(getConversationsCopilotSummaryMutationOptions(options), queryClient);
+};
+
+export const getConversationHumanRequestCreateUrl = (orgSlug: string, conversationId: string) => {
+  return `/api/v1/o/${orgSlug}/conversations/${conversationId}/human-request/`;
+};
+
+/**
+ * Pide que una persona la atienda (`AGENT`); una abierta no cambia. Nada sale al cliente. 409 `CONVERSATION_CLOSED`; 404: no existe o fuera del alcance.
+ */
+export const conversationHumanRequestCreate = async (
+  orgSlug: string,
+  conversationId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<HumanRequestState> => {
+  return apiFetch<HumanRequestState>(
+    getConversationHumanRequestCreateUrl(orgSlug, conversationId),
+    {
+      ...options,
+      method: "POST",
+    },
+  );
+};
+
+export const getConversationHumanRequestCreateMutationKey = () =>
+  ["conversationHumanRequestCreate"] as const;
+
+export const getConversationHumanRequestCreateMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof conversationHumanRequestCreate>>,
+    TError,
+    ConversationHumanRequestCreateMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof conversationHumanRequestCreate>>,
+  TError,
+  ConversationHumanRequestCreateMutationVariables,
+  TContext
+> => {
+  const mutationKey = getConversationHumanRequestCreateMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof conversationHumanRequestCreate>>,
+    ConversationHumanRequestCreateMutationVariables
+  > = (props) => {
+    const { orgSlug, conversationId } = props ?? {};
+
+    return conversationHumanRequestCreate(orgSlug, conversationId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ConversationHumanRequestCreateMutationResult = NonNullable<
+  Awaited<ReturnType<typeof conversationHumanRequestCreate>>
+>;
+
+export type ConversationHumanRequestCreateMutationError = ErrorType<Error>;
+export type ConversationHumanRequestCreateMutationVariables = {
+  orgSlug: string;
+  conversationId: string;
+};
+
+export const useConversationHumanRequestCreate = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof conversationHumanRequestCreate>>,
+      TError,
+      ConversationHumanRequestCreateMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof conversationHumanRequestCreate>>,
+  TError,
+  ConversationHumanRequestCreateMutationVariables,
+  TContext
+> => {
+  return useMutation(getConversationHumanRequestCreateMutationOptions(options), queryClient);
+};
+
+export const getConversationHumanRequestCloseUrl = (orgSlug: string, conversationId: string) => {
+  return `/api/v1/o/${orgSlug}/conversations/${conversationId}/human-request/`;
+};
+
+/**
+ * Cierra la solicitud; sin una abierta no cambia nada. 404: no existe o fuera del alcance.
+ */
+export const conversationHumanRequestClose = async (
+  orgSlug: string,
+  conversationId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<HumanRequestState> => {
+  return apiFetch<HumanRequestState>(getConversationHumanRequestCloseUrl(orgSlug, conversationId), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getConversationHumanRequestCloseMutationKey = () =>
+  ["conversationHumanRequestClose"] as const;
+
+export const getConversationHumanRequestCloseMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof conversationHumanRequestClose>>,
+    TError,
+    ConversationHumanRequestCloseMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof conversationHumanRequestClose>>,
+  TError,
+  ConversationHumanRequestCloseMutationVariables,
+  TContext
+> => {
+  const mutationKey = getConversationHumanRequestCloseMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof conversationHumanRequestClose>>,
+    ConversationHumanRequestCloseMutationVariables
+  > = (props) => {
+    const { orgSlug, conversationId } = props ?? {};
+
+    return conversationHumanRequestClose(orgSlug, conversationId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ConversationHumanRequestCloseMutationResult = NonNullable<
+  Awaited<ReturnType<typeof conversationHumanRequestClose>>
+>;
+
+export type ConversationHumanRequestCloseMutationError = ErrorType<Error>;
+export type ConversationHumanRequestCloseMutationVariables = {
+  orgSlug: string;
+  conversationId: string;
+};
+
+export const useConversationHumanRequestClose = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof conversationHumanRequestClose>>,
+      TError,
+      ConversationHumanRequestCloseMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof conversationHumanRequestClose>>,
+  TError,
+  ConversationHumanRequestCloseMutationVariables,
+  TContext
+> => {
+  return useMutation(getConversationHumanRequestCloseMutationOptions(options), queryClient);
+};
+
 export const getConversationMediaSendUrl = (orgSlug: string, conversationId: string) => {
   return `/api/v1/o/${orgSlug}/conversations/${conversationId}/media/`;
 };
 
 /**
- * Pone en cola una imagen (JPEG, PNG) o un PDF para el cliente, con la política del texto; idempotente por `client_message_id` (202; 200 con el mismo archivo). Pide `messages.send` y `conversations.view`. El archivo pasa por el antivirus antes de guardarse. 409: la política o `CLIENT_MESSAGE_ID_TAKEN`; 411 sin `Content-Length`; 413 `MEDIA_TOO_LARGE`; 415 `MEDIA_TYPE_NOT_ALLOWED` (el tipo real); 422 `MEDIA_INFECTED` o `MEDIA_TOO_COMPLEX` (pasa los topes del antivirus: no se pudo revisar entero); 429 `RATE_LIMITED`; 503 `MEDIA_SCAN_UNAVAILABLE` (sin veredicto: nada se guardó, reintentar).
+ * Pone en cola una imagen (JPEG, PNG) o un PDF para el cliente, con la política del texto; idempotente por `client_message_id` (202; 200 con el mismo archivo). Pide `messages.send` y `conversations.view`. El archivo pasa por el antivirus antes de guardarse. 400 `UNVERIFIED_CONTENT`: el pie de foto lleva la marca `[verificar]`. 409: la política o `CLIENT_MESSAGE_ID_TAKEN`; 411 sin `Content-Length`; 413 `MEDIA_TOO_LARGE`; 415 `MEDIA_TYPE_NOT_ALLOWED` (el tipo real); 422 `MEDIA_INFECTED` o `MEDIA_TOO_COMPLEX` (pasa los topes del antivirus: no se pudo revisar entero); 429 `RATE_LIMITED`; 503 `MEDIA_SCAN_UNAVAILABLE` (sin veredicto: nada se guardó, reintentar).
  */
 export const conversationMediaSend = async (
   orgSlug: string,
@@ -5972,7 +8386,7 @@ export const getConversationMessagesSendUrl = (orgSlug: string, conversationId: 
 };
 
 /**
- * Pone en cola un mensaje al cliente (`QUEUED`; el envío por el canal es de la tarea de salida), idempotente por `client_message_id`: 202 la primera vez y 200 con el mismo mensaje en un reintento igual. Pide `messages.send` y `conversations.view`; no hace falta ver al contacto (el `body` de la respuesta sigue la regla de la lectura). 409: `CONVERSATION_CLOSED`, `CHANNEL_UNAVAILABLE` (canal sin conectar), `CONTACT_BLOCKED`, `WINDOW_CLOSED` (pasó la ventana de atención del canal desde el último mensaje del cliente) o `CLIENT_MESSAGE_ID_TAKEN` (ese id es de otro texto, otra conversación u otra persona).
+ * Pone en cola un mensaje al cliente (`QUEUED`; el envío por el canal es de la tarea de salida), idempotente por `client_message_id`: 202 la primera vez y 200 con el mismo mensaje en un reintento igual. Pide `messages.send` y `conversations.view`; no hace falta ver al contacto (el `body` de la respuesta sigue la regla de la lectura). 400 `UNVERIFIED_CONTENT`: el texto lleva la marca `[verificar]` del copiloto, también disfrazada (letras parecidas, otro ancho, caracteres que no se ven o mayúsculas). 409: `CONVERSATION_CLOSED`, `CHANNEL_UNAVAILABLE` (canal sin conectar), `CONTACT_BLOCKED`, `WINDOW_CLOSED` (pasó la ventana de atención del canal desde el último mensaje del cliente), `CONSENT_REVOKED` (fuera de la ventana, con la etiqueta Human Agent, el cliente se dio de baja en este canal) o `CLIENT_MESSAGE_ID_TAKEN` (ese id es de otro texto, otra conversación u otra persona).
  */
 export const conversationMessagesSend = async (
   orgSlug: string,
@@ -6365,6 +8779,445 @@ export const useConversationNotesCreate = <TError = ErrorType<Error>, TContext =
 > => {
   return useMutation(getConversationNotesCreateMutationOptions(options), queryClient);
 };
+
+export const getConversationQuickRepliesListUrl = (
+  orgSlug: string,
+  conversationId: string,
+  params?: ConversationQuickRepliesListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : String(value));
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/v1/o/${orgSlug}/conversations/${conversationId}/quick-replies/?${stringifiedParams}`
+    : `/api/v1/o/${orgSlug}/conversations/${conversationId}/quick-replies/`;
+};
+
+/**
+ * Las respuestas rápidas que se pueden usar en la conversación: activas, en una categoría activa, por creación (ADR-016); cada una con su categoría para agruparlas. Pide `conversations.view` y `messages.send`; 404: la conversación no existe, es de otra organización o queda fuera del alcance.
+ */
+export const conversationQuickRepliesList = async (
+  orgSlug: string,
+  conversationId: string,
+  params?: ConversationQuickRepliesListParams,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<PaginatedQuickReplyUseList> => {
+  return apiFetch<PaginatedQuickReplyUseList>(
+    getConversationQuickRepliesListUrl(orgSlug, conversationId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getConversationQuickRepliesListQueryKey = (
+  orgSlug: string,
+  conversationId: string,
+  params?: ConversationQuickRepliesListParams,
+) => {
+  return [
+    `/api/v1/o/${orgSlug}/conversations/${conversationId}/quick-replies/`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getConversationQuickRepliesListQueryOptions = <
+  TData = Awaited<ReturnType<typeof conversationQuickRepliesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  conversationId: string,
+  params?: ConversationQuickRepliesListParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof conversationQuickRepliesList>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ??
+    getConversationQuickRepliesListQueryKey(orgSlug, conversationId, params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof conversationQuickRepliesList>>> = ({
+    signal,
+  }) =>
+    conversationQuickRepliesList(orgSlug, conversationId, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled:
+      orgSlug !== null &&
+      orgSlug !== undefined &&
+      conversationId !== null &&
+      conversationId !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof conversationQuickRepliesList>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type ConversationQuickRepliesListQueryResult = NonNullable<
+  Awaited<ReturnType<typeof conversationQuickRepliesList>>
+>;
+export type ConversationQuickRepliesListQueryError = ErrorType<Error>;
+
+export function useConversationQuickRepliesList<
+  TData = Awaited<ReturnType<typeof conversationQuickRepliesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  conversationId: string,
+  params: undefined | ConversationQuickRepliesListParams,
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof conversationQuickRepliesList>>, TError, TData>
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof conversationQuickRepliesList>>,
+          TError,
+          Awaited<ReturnType<typeof conversationQuickRepliesList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useConversationQuickRepliesList<
+  TData = Awaited<ReturnType<typeof conversationQuickRepliesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  conversationId: string,
+  params?: ConversationQuickRepliesListParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof conversationQuickRepliesList>>, TError, TData>
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof conversationQuickRepliesList>>,
+          TError,
+          Awaited<ReturnType<typeof conversationQuickRepliesList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useConversationQuickRepliesList<
+  TData = Awaited<ReturnType<typeof conversationQuickRepliesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  conversationId: string,
+  params?: ConversationQuickRepliesListParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof conversationQuickRepliesList>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function useConversationQuickRepliesList<
+  TData = Awaited<ReturnType<typeof conversationQuickRepliesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  conversationId: string,
+  params?: ConversationQuickRepliesListParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof conversationQuickRepliesList>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getConversationQuickRepliesListQueryOptions(
+    orgSlug,
+    conversationId,
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+export const getConversationQuickRepliesRenderUrl = (
+  orgSlug: string,
+  conversationId: string,
+  quickReplyId: string,
+) => {
+  return `/api/v1/o/${orgSlug}/conversations/${conversationId}/quick-replies/${quickReplyId}/render/`;
+};
+
+/**
+ * El texto de la respuesta con sus variables resueltas para esta conversación, y las que quedaron vacías. Suma un uso. **No envía nada**: el texto se envía, si se quiere, con `POST …/messages/`. Pide `conversations.view` y `messages.send`; 404: la conversación o la respuesta no existen, no se pueden usar o quedan fuera del alcance.
+ */
+export const conversationQuickRepliesRender = async (
+  orgSlug: string,
+  conversationId: string,
+  quickReplyId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<Rendered> => {
+  return apiFetch<Rendered>(
+    getConversationQuickRepliesRenderUrl(orgSlug, conversationId, quickReplyId),
+    {
+      ...options,
+      method: "POST",
+    },
+  );
+};
+
+export const getConversationQuickRepliesRenderMutationKey = () =>
+  ["conversationQuickRepliesRender"] as const;
+
+export const getConversationQuickRepliesRenderMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof conversationQuickRepliesRender>>,
+    TError,
+    ConversationQuickRepliesRenderMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof conversationQuickRepliesRender>>,
+  TError,
+  ConversationQuickRepliesRenderMutationVariables,
+  TContext
+> => {
+  const mutationKey = getConversationQuickRepliesRenderMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof conversationQuickRepliesRender>>,
+    ConversationQuickRepliesRenderMutationVariables
+  > = (props) => {
+    const { orgSlug, conversationId, quickReplyId } = props ?? {};
+
+    return conversationQuickRepliesRender(orgSlug, conversationId, quickReplyId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ConversationQuickRepliesRenderMutationResult = NonNullable<
+  Awaited<ReturnType<typeof conversationQuickRepliesRender>>
+>;
+
+export type ConversationQuickRepliesRenderMutationError = ErrorType<Error>;
+export type ConversationQuickRepliesRenderMutationVariables = {
+  orgSlug: string;
+  conversationId: string;
+  quickReplyId: string;
+};
+
+export const useConversationQuickRepliesRender = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof conversationQuickRepliesRender>>,
+      TError,
+      ConversationQuickRepliesRenderMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof conversationQuickRepliesRender>>,
+  TError,
+  ConversationQuickRepliesRenderMutationVariables,
+  TContext
+> => {
+  return useMutation(getConversationQuickRepliesRenderMutationOptions(options), queryClient);
+};
+
+export const getConversationsUnansweredCountUrl = (
+  orgSlug: string,
+  params?: ConversationsUnansweredCountParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : String(value));
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/v1/o/${orgSlug}/conversations/unanswered/?${stringifiedParams}`
+    : `/api/v1/o/${orgSlug}/conversations/unanswered/`;
+};
+
+/**
+ * Cuántas conversaciones sin responder (`unanswered=true` de la lista) hay dentro del alcance de `conversations.view` y de `box`. Solo el número.
+ */
+export const conversationsUnansweredCount = async (
+  orgSlug: string,
+  params?: ConversationsUnansweredCountParams,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<UnansweredCount> => {
+  return apiFetch<UnansweredCount>(getConversationsUnansweredCountUrl(orgSlug, params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getConversationsUnansweredCountQueryKey = (
+  orgSlug: string,
+  params?: ConversationsUnansweredCountParams,
+) => {
+  return [`/api/v1/o/${orgSlug}/conversations/unanswered/`, ...(params ? [params] : [])] as const;
+};
+
+export const getConversationsUnansweredCountQueryOptions = <
+  TData = Awaited<ReturnType<typeof conversationsUnansweredCount>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: ConversationsUnansweredCountParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof conversationsUnansweredCount>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getConversationsUnansweredCountQueryKey(orgSlug, params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof conversationsUnansweredCount>>> = ({
+    signal,
+  }) => conversationsUnansweredCount(orgSlug, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: orgSlug !== null && orgSlug !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof conversationsUnansweredCount>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type ConversationsUnansweredCountQueryResult = NonNullable<
+  Awaited<ReturnType<typeof conversationsUnansweredCount>>
+>;
+export type ConversationsUnansweredCountQueryError = ErrorType<Error>;
+
+export function useConversationsUnansweredCount<
+  TData = Awaited<ReturnType<typeof conversationsUnansweredCount>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params: undefined | ConversationsUnansweredCountParams,
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof conversationsUnansweredCount>>, TError, TData>
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof conversationsUnansweredCount>>,
+          TError,
+          Awaited<ReturnType<typeof conversationsUnansweredCount>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useConversationsUnansweredCount<
+  TData = Awaited<ReturnType<typeof conversationsUnansweredCount>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: ConversationsUnansweredCountParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof conversationsUnansweredCount>>, TError, TData>
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof conversationsUnansweredCount>>,
+          TError,
+          Awaited<ReturnType<typeof conversationsUnansweredCount>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useConversationsUnansweredCount<
+  TData = Awaited<ReturnType<typeof conversationsUnansweredCount>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: ConversationsUnansweredCountParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof conversationsUnansweredCount>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function useConversationsUnansweredCount<
+  TData = Awaited<ReturnType<typeof conversationsUnansweredCount>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: ConversationsUnansweredCountParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof conversationsUnansweredCount>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getConversationsUnansweredCountQueryOptions(orgSlug, params, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
 
 export const getInventoryImportsCreateUrl = (orgSlug: string) => {
   return `/api/v1/o/${orgSlug}/inventory/imports/`;
@@ -8161,7 +11014,7 @@ export const getInvitationsCreateUrl = (orgSlug: string) => {
 };
 
 /**
- * Deja creada la invitación de una persona, pendiente y con los roles que tendrá al aceptar. Todavía no envía el correo. 400: correo al que no se puede escribir, o `role_ids` vacío, con un rol repetido o que no es de la organización. 403: sin `users.invite` y `users.manage`, o con un rol que el actor no podría asignar. 409: `ALREADY_MEMBER`, `INVITATION_PENDING`, `INVITATION_LIMIT` (50 pendientes) o `LAST_OWNER` (la organización no tiene rol Owner y no admite ningún cambio). 429: 100 invitaciones en 24 h.
+ * Deja creada la invitación de una persona (201), pendiente y con los roles que tendrá al aceptar, y pide su correo, que sale después con el enlace. Si el correo tiene una pendiente, la renueva (200, F2-130e). 400: correo al que no se puede escribir, o `role_ids` vacío, con un rol repetido o que no es de la organización. 403: sin `users.invite` y `users.manage`, o con un rol que el actor no podría asignar (al renovar, también los que tenía). 409: `ALREADY_MEMBER`, `INVITATION_SEND_LIMIT`, `INVITATION_LIMIT` (50 pendientes) o `LAST_OWNER` (la organización no tiene rol Owner y no admite ningún cambio). 429: 100 invitaciones en 24 h; con `Retry-After`, `INVITATION_ADDRESS_LIMIT` o `INVITATION_SEND_TOO_SOON` (ver el reenvío).
  */
 export const invitationsCreate = async (
   orgSlug: string,
@@ -8258,6 +11111,93 @@ export const useInvitationsCreate = <TError = ErrorType<Error>, TContext = unkno
   TContext
 > => {
   return useMutation(getInvitationsCreateMutationOptions(options), queryClient);
+};
+
+export const getInvitationsResendUrl = (orgSlug: string, invitationId: string) => {
+  return `/api/v1/o/${orgSlug}/invitations/${invitationId}/resend/`;
+};
+
+/**
+ * Reenvía una invitación pendiente, caducada o no: la renueva con sus roles y las reglas de
+ * invitar (ADR-020 §1). El enlace anterior deja de valer. 409: `INVALID_TRANSITION`,
+ * `ALREADY_MEMBER`, `INVITATION_SEND_LIMIT` (5 envíos), `INVITATION_ROLE_GONE` o `LAST_OWNER`.
+ * 429 con `Retry-After`: `INVITATION_ADDRESS_LIMIT` (3 envíos a ese correo en 24 h) o
+ * `INVITATION_SEND_TOO_SOON` (15 minutos entre dos).
+ */
+export const invitationsResend = async (
+  orgSlug: string,
+  invitationId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<Invitation> => {
+  return apiFetch<Invitation>(getInvitationsResendUrl(orgSlug, invitationId), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getInvitationsResendMutationKey = () => ["invitationsResend"] as const;
+
+export const getInvitationsResendMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof invitationsResend>>,
+    TError,
+    InvitationsResendMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof invitationsResend>>,
+  TError,
+  InvitationsResendMutationVariables,
+  TContext
+> => {
+  const mutationKey = getInvitationsResendMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof invitationsResend>>,
+    InvitationsResendMutationVariables
+  > = (props) => {
+    const { orgSlug, invitationId } = props ?? {};
+
+    return invitationsResend(orgSlug, invitationId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type InvitationsResendMutationResult = NonNullable<
+  Awaited<ReturnType<typeof invitationsResend>>
+>;
+
+export type InvitationsResendMutationError = ErrorType<Error>;
+export type InvitationsResendMutationVariables = { orgSlug: string; invitationId: string };
+
+export const useInvitationsResend = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof invitationsResend>>,
+      TError,
+      InvitationsResendMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof invitationsResend>>,
+  TError,
+  InvitationsResendMutationVariables,
+  TContext
+> => {
+  return useMutation(getInvitationsResendMutationOptions(options), queryClient);
 };
 
 export const getInvitationsSetStatusUrl = (orgSlug: string, invitationId: string) => {
@@ -11963,7 +14903,7 @@ export const getPriceListsCreateUrl = (orgSlug: string) => {
 };
 
 /**
- * Crea una lista. Es la predeterminada de su moneda si se pide (la anterior deja de serlo) o, sin `is_default`, si es la primera activa con `prices.view`; solo una así puede serlo (400 en `is_default`). 409 `PRICE_LIST_CODE_TAKEN`.
+ * Crea una lista. Es la predeterminada de su moneda si se pide (la anterior deja de serlo) o, sin `is_default`, si es la primera activa con `prices.view`; solo una así puede serlo (400 en `is_default`). 409 `PRICE_LIST_CODE_TAKEN`. `ai_exposable` da 400 en ese campo: va por `…/ai-exposable/`.
  */
 export const priceListsCreate = async (
   orgSlug: string,
@@ -12202,7 +15142,7 @@ export const getPriceListsUpdateUrl = (orgSlug: string, priceListId: string) => 
 };
 
 /**
- * Cambia lo que se envía. `code` o `currency` dan 400 en ese campo: no cambian. `is_default=true` la hace la predeterminada de su moneda (la anterior deja de serlo); debe estar activa y pedir `prices.view` (400 en `is_default`). 409 `PRICE_LIST_IS_DEFAULT`: la predeterminada no se desactiva, no deja de serlo ni cambia de `required_permission`; antes hay que elegir otra.
+ * Cambia lo que se envía. `code` o `currency` dan 400 en ese campo: no cambian. `is_default=true` la hace la predeterminada de su moneda (la anterior deja de serlo); debe estar activa y pedir `prices.view` (400 en `is_default`). 409 `PRICE_LIST_IS_DEFAULT`: la predeterminada no se desactiva, no deja de serlo ni cambia de `required_permission`; antes hay que elegir otra. `ai_exposable` da 400 en ese campo: va por `…/ai-exposable/`.
  */
 export const priceListsUpdate = async (
   orgSlug: string,
@@ -12304,6 +15244,115 @@ export const usePriceListsUpdate = <TError = ErrorType<Error>, TContext = unknow
   TContext
 > => {
   return useMutation(getPriceListsUpdateMutationOptions(options), queryClient);
+};
+
+export const getPriceListsAiExposableUrl = (orgSlug: string, priceListId: string) => {
+  return `/api/v1/o/${orgSlug}/pricing/price-lists/${priceListId}/ai-exposable/`;
+};
+
+/**
+ * Marca o desmarca la lista como citable por la IA (`ai.manage` y segundo factor reciente) y lo audita (`price_list.ai_exposable_changed`, antes y después); igual que estaba, no cambia nada. La interna da 400 en `ai_exposable`. 404: no existe, está borrada o no es de la organización. 429 `RATE_LIMITED`: el tope por persona de las escrituras de IA, con `Retry-After`.
+ */
+export const priceListsAiExposable = async (
+  orgSlug: string,
+  priceListId: string,
+  priceListAiExposableRequest: PriceListAiExposableRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<PriceList> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<PriceList>(getPriceListsAiExposableUrl(orgSlug, priceListId), {
+    ...options,
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(priceListAiExposableRequest),
+  });
+};
+
+export const getPriceListsAiExposableMutationKey = () => ["priceListsAiExposable"] as const;
+
+export const getPriceListsAiExposableMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof priceListsAiExposable>>,
+    TError,
+    PriceListsAiExposableMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof priceListsAiExposable>>,
+  TError,
+  PriceListsAiExposableMutationVariables,
+  TContext
+> => {
+  const mutationKey = getPriceListsAiExposableMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof priceListsAiExposable>>,
+    PriceListsAiExposableMutationVariables
+  > = (props) => {
+    const { orgSlug, priceListId, data } = props ?? {};
+
+    return priceListsAiExposable(orgSlug, priceListId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type PriceListsAiExposableMutationResult = NonNullable<
+  Awaited<ReturnType<typeof priceListsAiExposable>>
+>;
+export type PriceListsAiExposableMutationBody = PriceListAiExposableRequest;
+export type PriceListsAiExposableMutationError = ErrorType<Error>;
+export type PriceListsAiExposableMutationVariables = {
+  orgSlug: string;
+  priceListId: string;
+  data: PriceListAiExposableRequest;
+};
+
+export const usePriceListsAiExposable = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof priceListsAiExposable>>,
+      TError,
+      PriceListsAiExposableMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof priceListsAiExposable>>,
+  TError,
+  PriceListsAiExposableMutationVariables,
+  TContext
+> => {
+  return useMutation(getPriceListsAiExposableMutationOptions(options), queryClient);
 };
 
 export const getPriceListMarginsListUrl = (
@@ -14629,6 +17678,826 @@ export const useVariantsDelete = <TError = ErrorType<Error>, TContext = unknown>
   TContext
 > => {
   return useMutation(getVariantsDeleteMutationOptions(options), queryClient);
+};
+
+export const getQuickRepliesListUrl = (orgSlug: string, params?: QuickRepliesListParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : String(value));
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/v1/o/${orgSlug}/quick-replies/?${stringifiedParams}`
+    : `/api/v1/o/${orgSlug}/quick-replies/`;
+};
+
+/**
+ * Las respuestas rápidas no borradas, activas o no, por creación (ADR-016). Con `quick_replies.manage`.
+ */
+export const quickRepliesList = async (
+  orgSlug: string,
+  params?: QuickRepliesListParams,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<PaginatedQuickReplyList> => {
+  return apiFetch<PaginatedQuickReplyList>(getQuickRepliesListUrl(orgSlug, params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getQuickRepliesListQueryKey = (orgSlug: string, params?: QuickRepliesListParams) => {
+  return [`/api/v1/o/${orgSlug}/quick-replies/`, ...(params ? [params] : [])] as const;
+};
+
+export const getQuickRepliesListQueryOptions = <
+  TData = Awaited<ReturnType<typeof quickRepliesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: QuickRepliesListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof quickRepliesList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getQuickRepliesListQueryKey(orgSlug, params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof quickRepliesList>>> = ({ signal }) =>
+    quickRepliesList(orgSlug, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: orgSlug !== null && orgSlug !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof quickRepliesList>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type QuickRepliesListQueryResult = NonNullable<Awaited<ReturnType<typeof quickRepliesList>>>;
+export type QuickRepliesListQueryError = ErrorType<Error>;
+
+export function useQuickRepliesList<
+  TData = Awaited<ReturnType<typeof quickRepliesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params: undefined | QuickRepliesListParams,
+  options: {
+    query: Partial<UseQueryOptions<Awaited<ReturnType<typeof quickRepliesList>>, TError, TData>> &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof quickRepliesList>>,
+          TError,
+          Awaited<ReturnType<typeof quickRepliesList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useQuickRepliesList<
+  TData = Awaited<ReturnType<typeof quickRepliesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: QuickRepliesListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof quickRepliesList>>, TError, TData>> &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof quickRepliesList>>,
+          TError,
+          Awaited<ReturnType<typeof quickRepliesList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useQuickRepliesList<
+  TData = Awaited<ReturnType<typeof quickRepliesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: QuickRepliesListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof quickRepliesList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function useQuickRepliesList<
+  TData = Awaited<ReturnType<typeof quickRepliesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: QuickRepliesListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof quickRepliesList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getQuickRepliesListQueryOptions(orgSlug, params, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+export const getQuickRepliesCreateUrl = (orgSlug: string) => {
+  return `/api/v1/o/${orgSlug}/quick-replies/`;
+};
+
+/**
+ * Crea una respuesta activa (`quick_replies.manage`), auditada sin el texto (solo su huella). 400 en `category_id`: no es una categoría viva y activa de la organización. 409 `SHORTCUT_TAKEN`: otra activa ya usa el atajo.
+ */
+export const quickRepliesCreate = async (
+  orgSlug: string,
+  quickReplyCreateRequest: QuickReplyCreateRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<QuickReply> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<QuickReply>(getQuickRepliesCreateUrl(orgSlug), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(quickReplyCreateRequest),
+  });
+};
+
+export const getQuickRepliesCreateMutationKey = () => ["quickRepliesCreate"] as const;
+
+export const getQuickRepliesCreateMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof quickRepliesCreate>>,
+    TError,
+    QuickRepliesCreateMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof quickRepliesCreate>>,
+  TError,
+  QuickRepliesCreateMutationVariables,
+  TContext
+> => {
+  const mutationKey = getQuickRepliesCreateMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof quickRepliesCreate>>,
+    QuickRepliesCreateMutationVariables
+  > = (props) => {
+    const { orgSlug, data } = props ?? {};
+
+    return quickRepliesCreate(orgSlug, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type QuickRepliesCreateMutationResult = NonNullable<
+  Awaited<ReturnType<typeof quickRepliesCreate>>
+>;
+export type QuickRepliesCreateMutationBody = QuickReplyCreateRequest;
+export type QuickRepliesCreateMutationError = ErrorType<Error>;
+export type QuickRepliesCreateMutationVariables = {
+  orgSlug: string;
+  data: QuickReplyCreateRequest;
+};
+
+export const useQuickRepliesCreate = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof quickRepliesCreate>>,
+      TError,
+      QuickRepliesCreateMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof quickRepliesCreate>>,
+  TError,
+  QuickRepliesCreateMutationVariables,
+  TContext
+> => {
+  return useMutation(getQuickRepliesCreateMutationOptions(options), queryClient);
+};
+
+export const getQuickRepliesUpdateUrl = (orgSlug: string, quickReplyId: string) => {
+  return `/api/v1/o/${orgSlug}/quick-replies/${quickReplyId}/`;
+};
+
+/**
+ * Cambia lo enviado, también `is_active` (activar o desactivar), si `version` sigue vigente (409 `STALE_VERSION` si no); lo que no cambia no se escribe ni se audita. 409 `SHORTCUT_TAKEN`. 400 en `category_id` o en `is_active`: la respuesta quedaría activa en una categoría desactivada. Con `quick_replies.manage`.
+ */
+export const quickRepliesUpdate = async (
+  orgSlug: string,
+  quickReplyId: string,
+  patchedQuickReplyUpdateRequest: PatchedQuickReplyUpdateRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<QuickReply> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<QuickReply>(getQuickRepliesUpdateUrl(orgSlug, quickReplyId), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(patchedQuickReplyUpdateRequest),
+  });
+};
+
+export const getQuickRepliesUpdateMutationKey = () => ["quickRepliesUpdate"] as const;
+
+export const getQuickRepliesUpdateMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof quickRepliesUpdate>>,
+    TError,
+    QuickRepliesUpdateMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof quickRepliesUpdate>>,
+  TError,
+  QuickRepliesUpdateMutationVariables,
+  TContext
+> => {
+  const mutationKey = getQuickRepliesUpdateMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof quickRepliesUpdate>>,
+    QuickRepliesUpdateMutationVariables
+  > = (props) => {
+    const { orgSlug, quickReplyId, data } = props ?? {};
+
+    return quickRepliesUpdate(orgSlug, quickReplyId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type QuickRepliesUpdateMutationResult = NonNullable<
+  Awaited<ReturnType<typeof quickRepliesUpdate>>
+>;
+export type QuickRepliesUpdateMutationBody = PatchedQuickReplyUpdateRequest;
+export type QuickRepliesUpdateMutationError = ErrorType<Error>;
+export type QuickRepliesUpdateMutationVariables = {
+  orgSlug: string;
+  quickReplyId: string;
+  data: PatchedQuickReplyUpdateRequest;
+};
+
+export const useQuickRepliesUpdate = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof quickRepliesUpdate>>,
+      TError,
+      QuickRepliesUpdateMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof quickRepliesUpdate>>,
+  TError,
+  QuickRepliesUpdateMutationVariables,
+  TContext
+> => {
+  return useMutation(getQuickRepliesUpdateMutationOptions(options), queryClient);
+};
+
+export const getQuickRepliesDeleteUrl = (orgSlug: string, quickReplyId: string) => {
+  return `/api/v1/o/${orgSlug}/quick-replies/${quickReplyId}/`;
+};
+
+/**
+ * Borra la respuesta (borrado lógico, sin `version`): deja de listarse y su atajo queda libre. 404: no es de la organización o ya está borrada. Con `quick_replies.manage`.
+ */
+export const quickRepliesDelete = async (
+  orgSlug: string,
+  quickReplyId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<void> => {
+  return apiFetch<void>(getQuickRepliesDeleteUrl(orgSlug, quickReplyId), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getQuickRepliesDeleteMutationKey = () => ["quickRepliesDelete"] as const;
+
+export const getQuickRepliesDeleteMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof quickRepliesDelete>>,
+    TError,
+    QuickRepliesDeleteMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof quickRepliesDelete>>,
+  TError,
+  QuickRepliesDeleteMutationVariables,
+  TContext
+> => {
+  const mutationKey = getQuickRepliesDeleteMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof quickRepliesDelete>>,
+    QuickRepliesDeleteMutationVariables
+  > = (props) => {
+    const { orgSlug, quickReplyId } = props ?? {};
+
+    return quickRepliesDelete(orgSlug, quickReplyId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type QuickRepliesDeleteMutationResult = NonNullable<
+  Awaited<ReturnType<typeof quickRepliesDelete>>
+>;
+
+export type QuickRepliesDeleteMutationError = ErrorType<Error>;
+export type QuickRepliesDeleteMutationVariables = { orgSlug: string; quickReplyId: string };
+
+export const useQuickRepliesDelete = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof quickRepliesDelete>>,
+      TError,
+      QuickRepliesDeleteMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof quickRepliesDelete>>,
+  TError,
+  QuickRepliesDeleteMutationVariables,
+  TContext
+> => {
+  return useMutation(getQuickRepliesDeleteMutationOptions(options), queryClient);
+};
+
+export const getQuickReplyCategoriesListUrl = (
+  orgSlug: string,
+  params?: QuickReplyCategoriesListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : String(value));
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/v1/o/${orgSlug}/quick-reply-categories/?${stringifiedParams}`
+    : `/api/v1/o/${orgSlug}/quick-reply-categories/`;
+};
+
+/**
+ * Las categorías no borradas, activas o no, por creación (ADR-016); la pantalla las ordena por `sort_order`. Con `quick_replies.manage`.
+ */
+export const quickReplyCategoriesList = async (
+  orgSlug: string,
+  params?: QuickReplyCategoriesListParams,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<PaginatedManagedQuickReplyCategoryList> => {
+  return apiFetch<PaginatedManagedQuickReplyCategoryList>(
+    getQuickReplyCategoriesListUrl(orgSlug, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getQuickReplyCategoriesListQueryKey = (
+  orgSlug: string,
+  params?: QuickReplyCategoriesListParams,
+) => {
+  return [`/api/v1/o/${orgSlug}/quick-reply-categories/`, ...(params ? [params] : [])] as const;
+};
+
+export const getQuickReplyCategoriesListQueryOptions = <
+  TData = Awaited<ReturnType<typeof quickReplyCategoriesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: QuickReplyCategoriesListParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof quickReplyCategoriesList>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getQuickReplyCategoriesListQueryKey(orgSlug, params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof quickReplyCategoriesList>>> = ({
+    signal,
+  }) => quickReplyCategoriesList(orgSlug, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: orgSlug !== null && orgSlug !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof quickReplyCategoriesList>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type QuickReplyCategoriesListQueryResult = NonNullable<
+  Awaited<ReturnType<typeof quickReplyCategoriesList>>
+>;
+export type QuickReplyCategoriesListQueryError = ErrorType<Error>;
+
+export function useQuickReplyCategoriesList<
+  TData = Awaited<ReturnType<typeof quickReplyCategoriesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params: undefined | QuickReplyCategoriesListParams,
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof quickReplyCategoriesList>>, TError, TData>
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof quickReplyCategoriesList>>,
+          TError,
+          Awaited<ReturnType<typeof quickReplyCategoriesList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useQuickReplyCategoriesList<
+  TData = Awaited<ReturnType<typeof quickReplyCategoriesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: QuickReplyCategoriesListParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof quickReplyCategoriesList>>, TError, TData>
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof quickReplyCategoriesList>>,
+          TError,
+          Awaited<ReturnType<typeof quickReplyCategoriesList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useQuickReplyCategoriesList<
+  TData = Awaited<ReturnType<typeof quickReplyCategoriesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: QuickReplyCategoriesListParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof quickReplyCategoriesList>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function useQuickReplyCategoriesList<
+  TData = Awaited<ReturnType<typeof quickReplyCategoriesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: QuickReplyCategoriesListParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof quickReplyCategoriesList>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getQuickReplyCategoriesListQueryOptions(orgSlug, params, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+export const getQuickReplyCategoriesCreateUrl = (orgSlug: string) => {
+  return `/api/v1/o/${orgSlug}/quick-reply-categories/`;
+};
+
+/**
+ * Crea una categoría activa, auditada (`quick_replies.manage`). Sin `sort_order`, va al final. 409 `CATEGORY_NAME_TAKEN`: ya hay una con ese nombre, sin distinguir mayúsculas.
+ */
+export const quickReplyCategoriesCreate = async (
+  orgSlug: string,
+  managedQuickReplyCategoryCreateRequest: ManagedQuickReplyCategoryCreateRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<ManagedQuickReplyCategory> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<ManagedQuickReplyCategory>(getQuickReplyCategoriesCreateUrl(orgSlug), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(managedQuickReplyCategoryCreateRequest),
+  });
+};
+
+export const getQuickReplyCategoriesCreateMutationKey = () =>
+  ["quickReplyCategoriesCreate"] as const;
+
+export const getQuickReplyCategoriesCreateMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof quickReplyCategoriesCreate>>,
+    TError,
+    QuickReplyCategoriesCreateMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof quickReplyCategoriesCreate>>,
+  TError,
+  QuickReplyCategoriesCreateMutationVariables,
+  TContext
+> => {
+  const mutationKey = getQuickReplyCategoriesCreateMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof quickReplyCategoriesCreate>>,
+    QuickReplyCategoriesCreateMutationVariables
+  > = (props) => {
+    const { orgSlug, data } = props ?? {};
+
+    return quickReplyCategoriesCreate(orgSlug, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type QuickReplyCategoriesCreateMutationResult = NonNullable<
+  Awaited<ReturnType<typeof quickReplyCategoriesCreate>>
+>;
+export type QuickReplyCategoriesCreateMutationBody = ManagedQuickReplyCategoryCreateRequest;
+export type QuickReplyCategoriesCreateMutationError = ErrorType<Error>;
+export type QuickReplyCategoriesCreateMutationVariables = {
+  orgSlug: string;
+  data: ManagedQuickReplyCategoryCreateRequest;
+};
+
+export const useQuickReplyCategoriesCreate = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof quickReplyCategoriesCreate>>,
+      TError,
+      QuickReplyCategoriesCreateMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof quickReplyCategoriesCreate>>,
+  TError,
+  QuickReplyCategoriesCreateMutationVariables,
+  TContext
+> => {
+  return useMutation(getQuickReplyCategoriesCreateMutationOptions(options), queryClient);
+};
+
+export const getQuickReplyCategoriesUpdateUrl = (orgSlug: string, categoryId: string) => {
+  return `/api/v1/o/${orgSlug}/quick-reply-categories/${categoryId}/`;
+};
+
+/**
+ * Renombra, reordena (`sort_order`), activa o desactiva, si `version` sigue vigente (409 `STALE_VERSION` si no); lo que no cambia no se escribe ni se audita. 409 `CATEGORY_NAME_TAKEN`; 409 `CATEGORY_IN_USE`: desactivarla con respuestas activas (se mueven o se desactivan antes). Con `quick_replies.manage`.
+ */
+export const quickReplyCategoriesUpdate = async (
+  orgSlug: string,
+  categoryId: string,
+  patchedManagedQuickReplyCategoryUpdateRequest: PatchedManagedQuickReplyCategoryUpdateRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<ManagedQuickReplyCategory> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<ManagedQuickReplyCategory>(
+    getQuickReplyCategoriesUpdateUrl(orgSlug, categoryId),
+    {
+      ...options,
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+      body: JSON.stringify(patchedManagedQuickReplyCategoryUpdateRequest),
+    },
+  );
+};
+
+export const getQuickReplyCategoriesUpdateMutationKey = () =>
+  ["quickReplyCategoriesUpdate"] as const;
+
+export const getQuickReplyCategoriesUpdateMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof quickReplyCategoriesUpdate>>,
+    TError,
+    QuickReplyCategoriesUpdateMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof quickReplyCategoriesUpdate>>,
+  TError,
+  QuickReplyCategoriesUpdateMutationVariables,
+  TContext
+> => {
+  const mutationKey = getQuickReplyCategoriesUpdateMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof quickReplyCategoriesUpdate>>,
+    QuickReplyCategoriesUpdateMutationVariables
+  > = (props) => {
+    const { orgSlug, categoryId, data } = props ?? {};
+
+    return quickReplyCategoriesUpdate(orgSlug, categoryId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type QuickReplyCategoriesUpdateMutationResult = NonNullable<
+  Awaited<ReturnType<typeof quickReplyCategoriesUpdate>>
+>;
+export type QuickReplyCategoriesUpdateMutationBody = PatchedManagedQuickReplyCategoryUpdateRequest;
+export type QuickReplyCategoriesUpdateMutationError = ErrorType<Error>;
+export type QuickReplyCategoriesUpdateMutationVariables = {
+  orgSlug: string;
+  categoryId: string;
+  data: PatchedManagedQuickReplyCategoryUpdateRequest;
+};
+
+export const useQuickReplyCategoriesUpdate = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof quickReplyCategoriesUpdate>>,
+      TError,
+      QuickReplyCategoriesUpdateMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof quickReplyCategoriesUpdate>>,
+  TError,
+  QuickReplyCategoriesUpdateMutationVariables,
+  TContext
+> => {
+  return useMutation(getQuickReplyCategoriesUpdateMutationOptions(options), queryClient);
 };
 
 export const getQuotesListUrl = (orgSlug: string, params?: QuotesListParams) => {

@@ -41,6 +41,8 @@ def test_schema_endpoint_serves_the_contract_without_internal_routes() -> None:
         "/api/v1/auth/mfa/totp/confirm/",
         "/api/v1/auth/session/",
         "/api/v1/auth/test-accounts/",
+        "/api/v1/invitations/preview/",  # F2-130a
+        "/api/v1/invitations/accept/",  # F2-130b
         "/api/v1/me/organizations/",
         "/api/v1/o/{org_slug}/audit/",
         "/api/v1/o/{org_slug}/brands/",
@@ -57,6 +59,7 @@ def test_schema_endpoint_serves_the_contract_without_internal_routes() -> None:
         "/api/v1/o/{org_slug}/opportunities/{opportunity_id}/win/",  # F5-04h
         "/api/v1/o/{org_slug}/opportunities/{opportunity_id}/lose/",
         "/api/v1/o/{org_slug}/conversations/",  # F6-02
+        "/api/v1/o/{org_slug}/conversations/unanswered/",  # F6-09
         "/api/v1/o/{org_slug}/conversations/{conversation_id}/",
         "/api/v1/o/{org_slug}/conversations/{conversation_id}/messages/",
         "/api/v1/o/{org_slug}/conversations/{conversation_id}/notes/",  # F6-05a2
@@ -64,12 +67,36 @@ def test_schema_endpoint_serves_the_contract_without_internal_routes() -> None:
         "/api/v1/o/{org_slug}/conversations/{conversation_id}/attachments/{attachment_id}/url/",
         "/api/v1/o/{org_slug}/conversations/{conversation_id}/media/",  # F7-09b2
         "/api/v1/o/{org_slug}/conversations/{conversation_id}/assign/",
+        "/api/v1/o/{org_slug}/conversations/{conversation_id}/human-request/",  # F8-08n
+        "/api/v1/o/{org_slug}/conversations/{conversation_id}/quick-replies/",  # F6-08a2
+        "/api/v1/o/{org_slug}/conversations/{conversation_id}/quick-replies/{quick_reply_id}/render/",
+        "/api/v1/o/{org_slug}/quick-replies/",  # F6-08a3
+        "/api/v1/o/{org_slug}/quick-replies/{quick_reply_id}/",
+        "/api/v1/o/{org_slug}/quick-reply-categories/",  # F6-08a4
+        "/api/v1/o/{org_slug}/quick-reply-categories/{category_id}/",
+        "/api/v1/o/{org_slug}/ai/budget/",  # F8-05b3
+        "/api/v1/o/{org_slug}/ai/switch/",  # F8-06
+        "/api/v1/o/{org_slug}/ai/switch/off/",
+        "/api/v1/o/{org_slug}/ai/switch/on/",
+        "/api/v1/o/{org_slug}/ai/handoff-reply/",  # F8-08l
+        "/api/v1/o/{org_slug}/ai/provider-accounts/",  # F8-03c
+        "/api/v1/o/{org_slug}/ai/provider-accounts/{account_id}/",
+        "/api/v1/o/{org_slug}/ai/provider-accounts/{account_id}/key/",
+        "/api/v1/o/{org_slug}/ai/provider-accounts/{account_id}/test/",  # F8-03d
+        "/api/v1/o/{org_slug}/ai/provider-accounts/{account_id}/model/",  # F8-05b6
+        "/api/v1/o/{org_slug}/conversations/{conversation_id}/copilot/suggest/",  # F8-08h
+        "/api/v1/o/{org_slug}/conversations/{conversation_id}/copilot/summary/",  # F8-08i
+        "/api/v1/o/{org_slug}/conversations/{conversation_id}/copilot/suggestions/"
+        "{suggestion_id}/insert/",  # F8-08j
         "/api/v1/o/{org_slug}/channels/",  # F7-07a
         "/api/v1/o/{org_slug}/channels/{account_id}/",
         "/api/v1/o/{org_slug}/channels/sandbox/inbound/",
         "/api/v1/o/{org_slug}/channels/whatsapp/",
         "/api/v1/o/{org_slug}/channels/whatsapp/{account_id}/",
         "/api/v1/o/{org_slug}/channels/whatsapp/{account_id}/token/",
+        "/api/v1/o/{org_slug}/channels/{platform}/",
+        "/api/v1/o/{org_slug}/channels/{platform}/{account_id}/",
+        "/api/v1/o/{org_slug}/channels/{platform}/{account_id}/token/",
         "/api/v1/o/{org_slug}/quotes/",  # F5-09d
         "/api/v1/o/{org_slug}/quotes/{quote_id}/",  # F5-09d2
         "/api/v1/o/{org_slug}/quotes/{quote_id}/items/{line_id}/price/",  # F5-09e2
@@ -123,6 +150,7 @@ def test_schema_endpoint_serves_the_contract_without_internal_routes() -> None:
         "/api/v1/o/{org_slug}/inventory/transfers/",  # F3-31
         "/api/v1/o/{org_slug}/invitations/",
         "/api/v1/o/{org_slug}/invitations/{invitation_id}/status/",
+        "/api/v1/o/{org_slug}/invitations/{invitation_id}/resend/",
         "/api/v1/o/{org_slug}/me/",
         "/api/v1/o/{org_slug}/members/",
         "/api/v1/o/{org_slug}/members/{membership_id}/roles/{role_id}/",
@@ -133,6 +161,7 @@ def test_schema_endpoint_serves_the_contract_without_internal_routes() -> None:
         "/api/v1/o/{org_slug}/pricing/price-lists/{price_list_id}/",
         "/api/v1/o/{org_slug}/pricing/price-lists/{price_list_id}/prices/",  # F3-44
         "/api/v1/o/{org_slug}/pricing/price-lists/{price_list_id}/margins/",  # F3-46d
+        "/api/v1/o/{org_slug}/pricing/price-lists/{price_list_id}/ai-exposable/",  # F8-07b
         "/api/v1/o/{org_slug}/pricing/variants/{variant_id}/price-history/",  # F3-44b
         "/api/v1/o/{org_slug}/pricing/variants/{variant_id}/costs/",  # F3-46c
         "/api/v1/o/{org_slug}/pricing/promotions/",  # F3-48d

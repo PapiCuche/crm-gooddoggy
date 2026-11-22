@@ -107,7 +107,9 @@ describe("InvitationCreate", () => {
       "Owner",
     ]);
     for (const one of boxes) expect(one).not.toBeChecked();
-    expect(within(form).getByText(/el correo con el enlace todavía no se envía/)).toBeVisible();
+    expect(
+      within(form).getByText(/Le enviaremos un correo con el enlace para aceptar/),
+    ).toBeVisible();
     expect(new XMLSerializer().serializeToString(document.body)).not.toMatch(/rol-|c-\d/);
     fireEvent.click(box(form, "Caja"));
     fireEvent.click(within(form).getByRole("button", { name: "Cancelar" }));
@@ -151,7 +153,7 @@ describe("InvitationCreate", () => {
       role_ids: ["rol-3", "rol-1"],
     });
     const done = screen.getByText(
-      "Invitación a nueva@cliente.pe registrada. Todavía no se envía ningún correo.",
+      "Invitación a nueva@cliente.pe registrada. En unos minutos le llegará el correo con el enlace.",
     );
     expect(done).toHaveAttribute("role", "status");
     expect(done).not.toHaveClass("sr-only");
@@ -198,6 +200,21 @@ describe("InvitationCreate", () => {
       refusal(409, "INVITATION_PENDING"),
       "email",
       "Ese correo ya tiene una invitación, pendiente o caducada.",
+    ],
+    [
+      refusal(429, "INVITATION_SEND_TOO_SOON"),
+      "email",
+      "Ese correo recibió una invitación hace menos de 15 minutos. Espera un poco y vuelve a intentarlo.",
+    ],
+    [
+      refusal(409, "INVITATION_SEND_LIMIT"),
+      "email",
+      "La invitación de ese correo ya se envió 5 veces, el máximo. Revócala e invita de nuevo.",
+    ],
+    [
+      refusal(429, "INVITATION_ADDRESS_LIMIT"),
+      "email",
+      "Ese correo ya recibió 3 invitaciones en las últimas 24 horas. Inténtalo más tarde.",
     ],
     [
       refusal(400, "VALIDATION_ERROR", { role_ids: [{ code: "invalid" }] }),
@@ -338,5 +355,54 @@ describe("InvitationCreate", () => {
     send(form);
     await waitFor(() => expect(calls(api, "POST")).toHaveLength(1));
     expect(body(calls(api, "POST")[0]).role_ids).toEqual(["rol-1"]); // solo lo que se ve elegido
+  });
+
+  it("invitar otra vez a un correo pendiente lo renueva (200) y lo dice", async () => {
+    const api = mockApi({
+      [LIST]: list(),
+      [ROLES]: three,
+      [CREATE]: { status: 200, body: invitation("vieja@cliente.pe", ["rol-2"]) },
+    });
+    screenOf();
+    const form = await opened();
+    fill(form, "vieja@cliente.pe", "Caja");
+    send(form);
+    const done = await screen.findByText(
+      "vieja@cliente.pe ya tenía una invitación pendiente: la renovamos con estos roles. El enlace anterior ya no vale y en unos minutos le llegará un correo nuevo.",
+    );
+    expect(done).toHaveAttribute("role", "status");
+    expect(calls(api, "POST")).toHaveLength(1);
+    expect(screen.queryByText(/registrada/)).toBeNull();
+  });
+
+  it.each([
+    [
+      "INVITATION_SEND_TOO_SOON",
+      "600",
+      "Ese correo recibió una invitación hace menos de 15 minutos. Desde las 10:10 a. m. podrás invitarlo otra vez.",
+    ],
+    [
+      "INVITATION_ADDRESS_LIMIT",
+      "7200",
+      "Ese correo ya recibió 3 invitaciones en las últimas 24 horas. Desde el 20 nov. 2026, 12:00 p. m. podrás invitarlo otra vez.",
+    ],
+  ])("un 429 %s con Retry-After %s dice desde cuándo", async (code, wait, text) => {
+    vi.useFakeTimers({ toFake: ["Date"] }); // solo el reloj: las 10:00 a. m. en Lima
+    vi.setSystemTime(Date.parse("2026-11-20T15:00:00Z"));
+    try {
+      mockApi({
+        [LIST]: list(),
+        [ROLES]: three,
+        [CREATE]: { ...refusal(429, code), headers: { "Retry-After": wait } },
+      });
+      screenOf();
+      const form = await opened();
+      fill(form, "x@cliente.pe", "Caja");
+      send(form);
+      await waitFor(() => expect(alerts(form)).toEqual([text]));
+      expect(email(form)).toHaveAttribute("aria-invalid", "true");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

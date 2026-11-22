@@ -179,7 +179,7 @@ describe("InvitationRevokeAction", () => {
     });
     renderApp(ui());
     fireEvent.click(confirm(await ask()));
-    const elsewhere = card("tarde").querySelector("button")!;
+    const elsewhere = within(card("tarde")).getByRole("button", { name: /^Revocar/ });
     elsewhere.focus(); // el usuario ya está en otra fila cuando llega la respuesta
     await waitFor(() => expect(shown("lima")).toBe("Aceptada")); // no lo que se pidió
     expect(elsewhere).toHaveFocus(); // y su foco no se toca
@@ -337,7 +337,7 @@ describe("InvitationRevokeAction", () => {
     await waitFor(() =>
       expect(within(group).getByRole("button", { name: "Cancelar" })).toHaveFocus(),
     );
-    const elsewhere = card("tarde").querySelector("button")!;
+    const elsewhere = within(card("tarde")).getByRole("button", { name: /^Revocar/ });
     elsewhere.focus(); // primero, con el usuario en otra fila: su foco no se toca
     rows = [invitation("lima", "REVOKED"), ...all.slice(1)]; // otro la revocó entretanto
     await refresh(view);

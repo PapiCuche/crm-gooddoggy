@@ -8,6 +8,7 @@
 import type { ChannelRef } from "./channelRef";
 import type { ConversationContact } from "./conversationContact";
 import type { ConversationStatusEnum } from "./conversationStatusEnum";
+import type { HumanRequest } from "./humanRequest";
 import type { LastMessageDirectionEnum } from "./lastMessageDirectionEnum";
 import type { NullEnum } from "./nullEnum";
 
@@ -34,5 +35,12 @@ export interface Conversation {
    */
   last_message_preview: string | null;
   last_message_direction: LastMessageDirectionEnum | NullEnum | null;
+  /**
+   * Instagram o Messenger: desde cuándo otra app controla el hilo (`standby`); `null` si no. Mientras tanto nada responde solo (ADR-035 §4).
+   * @nullable
+   */
+  standby_since: string | null;
+  /** Alguien pidió que una persona la atienda; `null` si no. Se cierra cuando una persona responde al cliente o la toma, o a mano. */
+  human_request: HumanRequest | null;
   version: number;
 }

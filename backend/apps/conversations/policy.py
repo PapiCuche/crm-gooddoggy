@@ -7,6 +7,14 @@ ventana se recalcula siempre desde `last_inbound_at` con las `ChannelCapabilitie
 Orden: nota interna, conversación cerrada (`RESOLVED` admite respuestas, D-F6-11), canal no
 conectado, contacto bloqueado, ventana y consentimiento (F7-08b, ADR-010 §2.7: una baja niega lo
 proactivo, nunca la respuesta `CUSTOMER_REPLY` dentro de la ventana). Plantillas: F7-10.
+
+Instagram y Messenger (F7b-05a, ADR-035 §7): ventana de 24 h. Con la ventana cerrada, una
+respuesta de una **persona** (`sender = USER`) sale con la etiqueta Human Agent
+(`HUMAN_AGENT_TAG`) hasta 168 h después del último mensaje del cliente, **solo** si Meta aprobó esa
+función en la app (`human_agent_approved`, de `META_HUMAN_AGENT_APPROVED`, apagado por omisión,
+D-F7b-08). La IA, las automatizaciones y el sistema nunca la usan; un seguimiento tampoco. Una baja
+del canal (o `ANY`) la niega (`CONSENT_REVOKED`, F7b-05d): la regla 7 de ADR-010 exime a la
+respuesta solo **dentro** de la ventana.
 """
 
 import datetime as dt
@@ -18,6 +26,8 @@ from apps.conversations.models import Direction, Status
 SENDING_ACCOUNTS = ("CONNECTED", "DEGRADED")  # estados de `ChannelAccount` que envían
 REPLYABLE = tuple(s for s in Status.values if s != Status.CLOSED)  # `RESOLVED` admite respuestas
 FREE_FORM, BLOCKED = "FREE_FORM", "BLOCKED"  # `mode`; TEMPLATE_REQUIRED llega con F7-10
+HUMAN_AGENT_TAG = "HUMAN_AGENT_TAG"  # `mode`: fuera de la ventana, con la etiqueta (ADR-035 §7)
+PERSON = "USER"  # el único remitente que puede usar la etiqueta Human Agent
 REASONS = (  # el conjunto cerrado de motivos de una decisión que niega
     "INTERNAL_NOTE_NOT_SENDABLE", "CONVERSATION_CLOSED", "CHANNEL_UNAVAILABLE", "CONTACT_BLOCKED",
     "WINDOW_CLOSED", "CONSENT_REVOKED",
@@ -26,7 +36,9 @@ CUSTOMER_REPLY = "CUSTOMER_REPLY"
 # Para qué se escribe (ADR-010 §2) → el propósito de consentimiento que lo cubre. Los demás llegan
 # con quien los envíe (F7-10, automatizaciones): uno desconocido es un `ValueError`.
 PURPOSES = {CUSTOMER_REPLY: "ALL_PROACTIVE", "FOLLOW_UP": "FOLLOW_UP"}
-CONSENT_CHANNELS = {"WHATSAPP": "WHATSAPP"}  # plataforma → canal del consentimiento (otra: ANY)
+CONSENT_CHANNELS = {  # plataforma → canal del consentimiento (otra: ANY); F7b-05b, ADR-035 §5
+    "WHATSAPP": "WHATSAPP", "MESSENGER": "MESSENGER", "INSTAGRAM": "INSTAGRAM",
+}  # fmt: skip
 
 
 class ConversationClosed(Exception):
@@ -62,14 +74,19 @@ CODES = {cls: code for code, cls in DENIALS.items()}
 @dataclass(frozen=True, slots=True)
 class ChannelCapabilities:
     """Lo que cambia de un canal a otro para decidir (ADR-010 §1). `window_hours`: cuántas horas
-    después del último mensaje del cliente se escribe en formato libre; `None`, sin límite."""
+    después del último mensaje del cliente se escribe en formato libre; `None`, sin límite.
+    `human_agent_hours`: hasta cuándo responde una persona con la etiqueta Human Agent si Meta la
+    aprobó; `None`, el canal no la tiene."""
 
     window_hours: int | None
+    human_agent_hours: int | None = None
 
 
 CAPABILITIES: dict[str, ChannelCapabilities] = {
     "WHATSAPP": ChannelCapabilities(window_hours=24),  # la ventana de atención de Meta
     "SANDBOX": ChannelCapabilities(window_hours=None),  # el canal de pruebas no la tiene
+    "MESSENGER": ChannelCapabilities(window_hours=24, human_agent_hours=168),  # [S21] [S20]
+    "INSTAGRAM": ChannelCapabilities(window_hours=24, human_agent_hours=168),  # [S1]
 }
 
 
@@ -84,10 +101,13 @@ class PolicyDecision:
     window_hours: int | None
     evaluated_at: dt.datetime
     purpose: str = CUSTOMER_REPLY
+    tagged: bool = False  # fuera de la ventana, con la etiqueta Human Agent
 
     @property
     def mode(self) -> str:
-        return FREE_FORM if self.allowed else BLOCKED
+        if not self.allowed:
+            return BLOCKED
+        return HUMAN_AGENT_TAG if self.tagged else FREE_FORM
 
     def as_json(self) -> dict[str, object]:
         """La instantánea que se guarda en el mensaje (`messages.policy_decision`)."""
@@ -102,6 +122,25 @@ class PolicyDecision:
         }
 
 
+def taggable(
+    *, platform: str, purpose: str, sender: str, human_agent_approved: bool,
+    last_inbound_at: dt.datetime | None, now: dt.datetime,
+) -> bool:  # fmt: skip
+    """Si la respuesta saldría ahora con la etiqueta Human Agent, salvo una baja: una persona
+    (`PERSON`), con la función aprobada, en un canal que la tiene, con la ventana cerrada y dentro
+    de su plazo. Fuera de eso una baja no cambia la decisión de una respuesta, así que
+    `selectors.messaging_decision` no la consulta (F7b-05d)."""
+    caps = CAPABILITIES.get(platform)
+    if (
+        caps is None or caps.window_hours is None or caps.human_agent_hours is None
+        or last_inbound_at is None or not human_agent_approved or sender != PERSON
+        or purpose != CUSTOMER_REPLY
+    ):  # fmt: skip
+        return False
+    window = last_inbound_at + dt.timedelta(hours=caps.window_hours)
+    return window <= now < last_inbound_at + dt.timedelta(hours=caps.human_agent_hours)
+
+
 def evaluate(
     *,
     conversation_status: str,
@@ -114,10 +153,15 @@ def evaluate(
     direction: str = Direction.OUTBOUND,
     purpose: str = CUSTOMER_REPLY,
     revoked: bool = False,
+    sender: str = "SYSTEM",
+    human_agent_approved: bool = False,
 ) -> PolicyDecision:
     """La decisión para escribir ahora en la conversación. La ventana está abierta mientras
     `now < last_inbound_at + window_hours`: a la hora exacta ya está cerrada. `revoked`: hay una
-    baja que alcanza al canal y al propósito (`contacts.selectors.is_revoked`)."""
+    baja que alcanza al canal y al propósito (`contacts.selectors.is_revoked`); a una respuesta
+    solo la niega fuera de la ventana, con la etiqueta. `sender`: quién
+    escribe (`SenderType`); por omisión, no una persona. `human_agent_approved`: Meta aprobó la
+    etiqueta Human Agent en la app; solo así la usa una persona con la ventana cerrada."""
     if purpose not in PURPOSES:
         raise ValueError("propósito no admitido")
     caps = CAPABILITIES.get(platform)  # `None`: la plataforma no tiene adaptador
@@ -128,6 +172,7 @@ def evaluate(
         else last_inbound_at + dt.timedelta(hours=hours)
     )
     reason: str | None = None
+    tagged = False
     if direction == Direction.INTERNAL:
         reason = "INTERNAL_NOTE_NOT_SENDABLE"
     elif conversation_status not in REPLYABLE:  # cerrada, o un estado que no conocemos
@@ -137,10 +182,20 @@ def evaluate(
     elif contact_blocked:
         reason = "CONTACT_BLOCKED"
     elif hours is not None and (expires is None or now >= expires):
-        reason = "WINDOW_CLOSED"  # sin mensaje del cliente, la ventana nunca se abrió
+        tag = caps.human_agent_hours if caps is not None else None
+        if tag is not None and last_inbound_at is not None and taggable(
+            platform=platform, purpose=purpose, sender=sender,
+            human_agent_approved=human_agent_approved, last_inbound_at=last_inbound_at, now=now,
+        ):  # fmt: skip
+            if revoked:  # fuera de la ventana la baja manda, también con la etiqueta (§2.7)
+                reason = "CONSENT_REVOKED"
+            else:
+                tagged, hours, expires = True, tag, last_inbound_at + dt.timedelta(hours=tag)
+        else:
+            reason = "WINDOW_CLOSED"  # sin mensaje del cliente, la ventana nunca se abrió
     elif revoked and purpose != CUSTOMER_REPLY:  # responder dentro de la ventana no es proactivo
         reason = "CONSENT_REVOKED"
-    return PolicyDecision(reason is None, reason, expires, hours, now, purpose)
+    return PolicyDecision(reason is None, reason, expires, hours, now, purpose, tagged)
 
 
 def require_allowed(decision: PolicyDecision) -> None:

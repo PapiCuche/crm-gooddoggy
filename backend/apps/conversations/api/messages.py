@@ -137,10 +137,15 @@ REASONS = {
     "canal. Podrás responderle cuando vuelva a escribir.",
     "CLIENT_MESSAGE_ID_TAKEN": "Ese id de mensaje ya se usó para otro envío.",
 }
+UNVERIFIED = (
+    "El mensaje lleva la marca [verificar] (la palabra entre corchetes o paréntesis): escribe tú "
+    "el dato correcto antes de enviarlo."
+)
 
 
 def queue(found: Conversation, **wanted: Any) -> tuple[Message, bool]:
-    """`record_outbound` de quien llama, con sus 409 (política o `CLIENT_MESSAGE_ID_TAKEN`)."""
+    """`record_outbound` de quien llama, con sus 409 (política o `CLIENT_MESSAGE_ID_TAKEN`) y el 400
+    `UNVERIFIED_CONTENT` (un mensaje fijo: nunca repite el texto)."""
     tenant = context.current()
     assert tenant is not None  # noqa: S101 — la ruta es de un tenant
     try:
@@ -153,6 +158,8 @@ def queue(found: Conversation, **wanted: Any) -> tuple[Message, bool]:
         raise ApiError(code, 409, REASONS[code]) from None
     except commands.ClientMessageConflict:
         raise ApiError("CLIENT_MESSAGE_ID_TAKEN", 409, REASONS["CLIENT_MESSAGE_ID_TAKEN"]) from None
+    except commands.UnverifiedContent:
+        raise ApiError("UNVERIFIED_CONTENT", 400, UNVERIFIED) from None
     if not created and message.sender_user_id != tenant.user_id:  # el id es de otra persona
         raise ApiError("CLIENT_MESSAGE_ID_TAKEN", 409, REASONS["CLIENT_MESSAGE_ID_TAKEN"])
     return message, created
@@ -180,11 +187,14 @@ def queue(found: Conversation, **wanted: Any) -> tuple[Message, bool]:
         description="Pone en cola un mensaje al cliente (`QUEUED`; el envío por el canal es de la "
         "tarea de salida), idempotente por `client_message_id`: 202 la primera vez y 200 con el "
         "mismo mensaje en un reintento igual. Pide `messages.send` y `conversations.view`; no "
-        "hace falta ver al contacto (el `body` de la respuesta sigue la regla de la lectura). 409: "
+        "hace falta ver al contacto (el `body` de la respuesta sigue la regla de la lectura). 400 "
+        "`UNVERIFIED_CONTENT`: el texto lleva la marca `[verificar]` del copiloto, también "
+        "disfrazada (letras parecidas, otro ancho, caracteres que no se ven o mayúsculas). 409: "
         "`CONVERSATION_CLOSED`, `CHANNEL_UNAVAILABLE` (canal sin conectar), `CONTACT_BLOCKED`, "
         "`WINDOW_CLOSED` (pasó la ventana de atención del canal desde el último mensaje del "
-        "cliente) o `CLIENT_MESSAGE_ID_TAKEN` (ese id es de otro texto, otra conversación u otra "
-        "persona).",
+        "cliente), `CONSENT_REVOKED` (fuera de la ventana, con la etiqueta Human Agent, el cliente "
+        "se dio de baja en este canal) o `CLIENT_MESSAGE_ID_TAKEN` (ese id es de otro texto, otra "
+        "conversación u otra persona).",
     ),
 )
 class MessagesView(generics.ListAPIView):
@@ -239,8 +249,8 @@ class MessagesView(generics.ListAPIView):
 class MessagingPolicySerializer(serializers.Serializer[Any]):
     allowed = serializers.BooleanField()
     mode = serializers.ChoiceField(
-        choices=[(policy.FREE_FORM, policy.FREE_FORM), (policy.BLOCKED, policy.BLOCKED)]
-    )
+        choices=[(m, m) for m in (policy.FREE_FORM, policy.BLOCKED, policy.HUMAN_AGENT_TAG)]
+    )  # `HUMAN_AGENT_TAG`: ventana cerrada, con la etiqueta Human Agent (ADR-035 §7)
     reason = serializers.ChoiceField(
         choices=[(reason, reason) for reason in policy.REASONS],
         allow_null=True,
@@ -274,7 +284,8 @@ class MessagingPolicyView(APIView):
         found = mine.filter(pk=self.kwargs["conversation_id"]).first()
         if found is None or not can(ectx, "messages.send", found):  # el mismo 404 en todo caso
             raise NotFound
-        return Response(MessagingPolicySerializer(selectors.messaging_decision(found)).data)
+        decision = selectors.messaging_decision(found, sender="USER")  # escribe una persona
+        return Response(MessagingPolicySerializer(decision).data)
 
 
 @extend_schema_view(

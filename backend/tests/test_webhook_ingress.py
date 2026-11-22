@@ -264,6 +264,21 @@ def force(migrator: DB, key: str, sql: str) -> None:
     migrator.execute(f"UPDATE webhook_ingress SET {sql} WHERE event_key = %s", [key])  # noqa: S608
 
 
+def fresh_heap(migrator: DB) -> None:
+    """La tabla vaciada con `TRUNCATE`: sin los huecos que dejan los `DELETE` de otras pruebas,
+    cada fila nueva, y cada versión nueva de una fila, va detrás de las anteriores en el disco."""
+    migrator.execute("TRUNCATE webhook_failures, webhook_ingress")
+
+
+def last_everywhere(migrator: DB, key: str) -> None:
+    """La fila, aunque llegó antes, pasa a ser la última en los dos órdenes que puede seguir el
+    `RETURNING` del reclamo, según el plan: el de su selección (`Nested Loop`, `next_attempt_at`) y
+    el del disco (`Hash Join` sobre un `Seq Scan`, `ctid`). Ninguno coincide ya con la llegada."""
+    force(migrator, key, "next_attempt_at = clock_timestamp()")  # vencida, la más reciente
+    first, *_, last = migrator.execute("SELECT event_key FROM webhook_ingress ORDER BY ctid")
+    assert last == (key,) != first
+
+
 def account(org: UUID, **over: Any) -> ChannelAccount:
     return make(org, **over)
 
@@ -282,6 +297,39 @@ def test_a_claim_leases_the_oldest_due_items_once_and_an_expired_lease_comes_bac
     assert [c.id for c in again] == [kept.id] and again[0].attempts == 2
     assert again[0].payload == {"id": "k0"}
     assert row(migrator, "k0")["status"] == "PROCESSING"
+
+
+def test_a_claim_hands_its_items_over_in_arrival_order_whatever_the_plan(migrator: DB) -> None:
+    """TEST-FLAKY-02 (#934): el `UPDATE … RETURNING` del reclamo no sigue el `ORDER BY` de su
+    selección, sino el de su plan. Sin el orden en `claim`, una BAJA iba detrás de su ALTA."""
+    fresh_heap(migrator)
+    for n in range(5):
+        put(f"k{n}")
+    last_everywhere(migrator, "k0")
+    assert [c.payload["id"] for c in ingress.claim(10)] == [f"k{n}" for n in range(5)]
+
+
+def test_retried_items_are_chosen_by_their_next_attempt_but_handed_over_by_arrival(
+    migrator: DB,
+) -> None:
+    """La selección sigue siendo `next_attempt_at, id` (la función no cambia); solo el orden dentro
+    del lote es el de llegada, sean cuales sean sus intentos o su tipo: un ítem viejo que falló va
+    delante de los más nuevos."""
+    fresh_heap(migrator)
+    kinds = {"k0": "status", "k3": "message", "k4": "other"}  # el tipo tampoco ordena
+    for n in range(5):
+        key = f"k{n}"
+        ingress.insert(kinds.get(key, "message"), key, WABA_ID, PHONE_NUMBER_ID, {"id": key})
+    for key in ("k1", "k2"):
+        force(migrator, key, "next_attempt_at = now() - interval '1 minute'")
+    for key, tries in (("k0", 1), ("k3", 3)):
+        force(migrator, key, f"status = 'FAILED', attempts = {tries}")
+    force(migrator, "k4", "next_attempt_at = now() - interval '30 seconds'")
+    force(migrator, "k3", "next_attempt_at = now() - interval '20 seconds'")
+    last_everywhere(migrator, "k0")
+    assert [c.payload["id"] for c in ingress.claim(2)] == ["k1", "k2"]  # vencidos antes
+    rest = ingress.claim(10)
+    assert [(c.payload["id"], c.attempts) for c in rest] == [("k0", 2), ("k3", 4), ("k4", 1)]
 
 
 def test_an_item_whose_lease_expires_after_eight_attempts_is_dead_with_a_failure(
@@ -673,8 +721,8 @@ def test_going_back_to_the_tables_only_removes_the_processing_functions(migrator
     with as_migrator():
         call_command("migrate", "conversations", verbosity=0)
     assert migrator.execute(names, ["resolve_channel_account"]).fetchone() == (
-        7,
-    )  # y el registro de rechazos (F7-11b)
+        9,
+    )  # y el registro de rechazos (F7-11b) y las versiones sociales (F7b-04a)
 
 
 def test_the_purge_never_deletes_a_pending_item_before_the_cap_whatever_the_days_asked(

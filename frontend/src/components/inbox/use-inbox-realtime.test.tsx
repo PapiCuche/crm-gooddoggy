@@ -120,17 +120,48 @@ describe("tiempo real del Inbox (F6-07c)", () => {
     expect(socket().closed).toBe(true);
   });
 
-  it("un mensaje nuevo llega a la lista y al chat sin recargar", async () => {
+  it("un mensaje nuevo llega a la lista y al chat sin recargar, y avisa si se pidió", async () => {
     vi.stubEnv("NEXT_PUBLIC_INBOX_WS", "on");
+    const notified = vi.fn();
+    vi.stubGlobal("Notification", Object.assign(notified, { permission: "granted" }));
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    localStorage.setItem("inbox.notify", "on");
     const { state } = server();
     show();
     await openChat();
     act(() => socket().onopen?.({}));
+    await say({ type: "conversation.updated", conversation_id: "1" });
+    expect(notified).not.toHaveBeenCalled(); // solo un mensaje entrante avisa
     state.preview = "Segundo";
     state.texts.push(message("m2", "Segundo"));
     await say({ type: "message.received", conversation_id: "1", message_id: "m2" });
     expect(await screen.findAllByText("Segundo")).not.toHaveLength(0);
     await waitFor(() => expect(screen.getAllByText("Segundo").length).toBeGreaterThanOrEqual(2));
+    expect(notified).toHaveBeenCalledExactlyOnceWith("Nuevo mensaje", {
+      ...{ tag: "inbox.notify", renotify: true },
+    });
+    localStorage.clear();
+    vi.restoreAllMocks();
+  });
+
+  it("un aviso que el navegador no deja crear no frena la relectura", async () => {
+    vi.stubEnv("NEXT_PUBLIC_INBOX_WS", "on");
+    const illegal = vi.fn(() => {
+      throw new TypeError("Illegal constructor"); // Chrome en Android
+    });
+    vi.stubGlobal("Notification", Object.assign(illegal, { permission: "granted" }));
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    localStorage.setItem("inbox.notify", "on");
+    const { state } = server();
+    show();
+    await openChat();
+    state.preview = "Tercero";
+    state.texts.push(message("m3", "Tercero"));
+    await say({ type: "message.received", conversation_id: "1", message_id: "m3" });
+    await waitFor(() => expect(screen.getAllByText("Tercero").length).toBeGreaterThanOrEqual(2));
+    expect(illegal).toHaveBeenCalledTimes(1);
+    localStorage.clear();
+    vi.restoreAllMocks();
   });
 
   it("conversation.updated relee lista y detalle, no los mensajes", async () => {

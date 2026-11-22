@@ -34,7 +34,7 @@ from rest_framework.views import APIView
 import config.urls
 from apps.access.catalog import BY_CODE, PermissionDef
 from apps.access.models import MembershipRole, Role, RolePermission
-from apps.access.permissions import HasPermission, IsMember, ScopeFilter
+from apps.access.permissions import AnyOf, HasPermission, IsMember, ScopeFilter
 from apps.access.selectors import UnknownPermission
 from apps.access.services import clone_role_templates
 from apps.accounts.models import User
@@ -64,9 +64,13 @@ PLATFORM = frozenset(  # rutas de plataforma del proyecto: otra frontera (ADR-01
     | {"api/v1/auth/mfa/backup-codes/"}  # F2-110
     | {"api/v1/auth/mfa/step-up/"}  # F2-125
     | {"api/v1/auth/test-accounts/"}  # F2-117
+    | {"api/v1/invitations/preview/", "api/v1/invitations/accept/"}  # F2-130a/b: ADR-020 §4
 )
 WEBHOOKS = frozenset({"webhooks/meta/"})  # webhooks públicos firmados (F7-03a): sin sesión ni CSRF
 WEBHOOKS_ROOT = "webhooks/"  # todo lo que hay debajo es un webhook: figura en `WEBHOOKS` o falla
+# F8-06: las únicas rutas con `AnyOf` (basta uno), por ruta y método, con sus códigos exactos.
+KILL = frozenset({"ai.kill_switch", "ai.manage"})
+ANY_OF = {(TENANT + "ai/switch/", "GET"): KILL, (TENANT + "ai/switch/off/", "POST"): KILL}
 MEMBER = frozenset({TENANT + "me/"})  # rutas de tenant abiertas a todo miembro activo (F2-11)
 PREFIX = "api/v1/o/"  # las rutas de tenant, como `TENANT_PATH` en el middleware
 API = "api/"  # todo lo que hay debajo es contrato: o es de tenant o figura en `PLATFORM`
@@ -265,6 +269,12 @@ LISTED = frozenset(
     | {"api/platform/cached/", "api/platform/cached-handler/", "api/platform/own-auth/"}
 )
 TENANT_RE = r"^api/v1/o/(?P<org_slug>[-\w]+)/"
+
+
+def lax(view: Any) -> Any:  # F8-06: basta uno
+    return view.as_view(required_permissions={"GET": AnyOf((VIEW,))})
+
+
 FLAWED: list[tuple[Any, str]] = [  # ruta y motivo que debe dar la auditoría
     (path(TENANT + "undeclared/", Undeclared.as_view()), "sin required_permissions"),
     (path(TENANT + "widgets/<uuid:pk>/partial/", Partial.as_view()), "métodos sin permiso"),
@@ -294,6 +304,8 @@ FLAWED: list[tuple[Any, str]] = [  # ruta y motivo que debe dar la auditoría
         )
     ),
     (path(TENANT + "kw-unfiltered/", WidgetList.as_view(filter_backends=[])), "sin ScopeFilter"),
+    (path(TENANT + "kw-anyof/", lax(Members)), "fuera de ANY_OF"),  # F8-06: no listada
+    (path(TENANT + "kw-anyof-list/", lax(WidgetList)), "AnyOf en una vista genérica"),
     *(  # cada gancho de DRF por separado: ninguno se redefine, tampoco por ruta
         (path(TENANT + f"kw-{hook}/", Members.as_view(**{hook: list})), f"redefine {hook}")
         for hook in (  # escritos aquí, no leídos de GUARDS: quitar uno de la lista se nota
@@ -413,6 +425,7 @@ def insecure(
     platform: frozenset[str],
     member: frozenset[str] = frozenset(),
     webhooks: frozenset[str] = frozenset(),
+    any_of: Mapping[tuple[str, str], frozenset[str]] | None = None,
 ) -> dict[str, str]:
     """Auditoría del URLconf: `{ruta: motivo}` de cada ruta que no puede llegar a `main`.
 
@@ -426,8 +439,10 @@ def insecure(
     `member` son las rutas de tenant que solo exigen ser miembro activo (`IsMember`). `webhooks`
     son las rutas públicas bajo `webhooks/`, que la firma del proveedor (no la sesión) autentica:
     toda ruta de ahí abajo tiene que figurar y ser una vista de Django con `csrf_exempt`.
+    `any_of`: cada `AnyOf` (ruta, método) con sus códigos exactos; nunca en una vista genérica.
     """
-    found = dict.fromkeys(platform | member | webhooks, STALE)
+    any_of = any_of or {}
+    found = dict.fromkeys(platform | member | webhooks | {r for r, _ in any_of}, STALE)
     for route, callback in routes(patterns):
         cls: Any = getattr(callback, "cls", None)
         drf = isinstance(cls, type) and issubclass(cls, APIView)
@@ -476,6 +491,13 @@ def insecure(
             if not isinstance(code, str) or code not in BY_CODE
         ]:
             found[route] = f"permisos fuera del catálogo: {sorted(map(repr, unknown))}"
+        elif lax := {m for m, wanted in declared.items() if isinstance(wanted, AnyOf)}:
+            if issubclass(cls, generics.GenericAPIView):
+                found[route] = "AnyOf en una vista genérica"
+            elif any(any_of.get((route, m)) != frozenset(declared[m]) for m in lax):
+                found[route] = f"AnyOf fuera de ANY_OF: {sorted(lax)}"
+            elif found.get(route) == STALE:
+                del found[route]
         elif not issubclass(cls, generics.GenericAPIView):
             continue
         elif not uses(effective(callback, "filter_backends"), ScopeFilter):
@@ -873,7 +895,12 @@ def test_platform_staff_gets_no_bypass_and_platform_routes_are_excluded_by_route
 
 
 def test_every_tenant_route_declares_its_permissions(api: Any) -> None:
-    assert insecure(config.urls.urlpatterns, PLATFORM, MEMBER, WEBHOOKS) == {}  # el proyecto real
+    real = config.urls.urlpatterns
+    assert insecure(real, PLATFORM, MEMBER, WEBHOOKS, ANY_OF) == {}  # el proyecto real
+    gone = {(TENANT + "ya-no/", "GET"): KILL, (TENANT + "ai/switch/", "GET"): KILL - {"ai.manage"}}
+    assert insecure(real, PLATFORM, MEMBER, WEBHOOKS, gone) == {
+        TENANT + "ya-no/": STALE, TENANT + "ai/switch/": "AnyOf fuera de ANY_OF: ['GET']",
+        TENANT + "ai/switch/off/": "AnyOf fuera de ANY_OF: ['POST']"}  # fmt: skip
     assert insecure(secure, SECURE_PLATFORM, frozenset({TENANT + "self/"})) == {}
     assert TENANT_PATH.match("/api/v1/o/org-a/") and not TENANT_PATH.match("/api/v1/x/org-a/")
 
@@ -885,12 +912,12 @@ def test_audit_flags_every_insecure_route(api: Any) -> None:
     for route, reason in flawed.items():
         assert reason in found[route], route
     legacy = insecure(
-        legacy_urls.urlpatterns, PLATFORM, MEMBER, WEBHOOKS
+        legacy_urls.urlpatterns, PLATFORM, MEMBER, WEBHOOKS, ANY_OF
     )  # vistas de Django en `include()`
     assert len(legacy) == 2 and set(legacy.values()) == {"no es una vista de DRF"}
     gone = TENANT + "ya-no/"  # una exclusión que ya no corresponde a ninguna ruta se retira
     stale = insecure(
-        config.urls.urlpatterns, PLATFORM | {"ya/no/existe/"}, MEMBER | {gone}, WEBHOOKS
+        config.urls.urlpatterns, PLATFORM | {"ya/no/existe/"}, MEMBER | {gone}, WEBHOOKS, ANY_OF
     )
     assert stale == {"ya/no/existe/": STALE, gone: STALE}
 

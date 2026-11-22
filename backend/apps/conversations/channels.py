@@ -43,16 +43,21 @@ class Media:
 @dataclass(frozen=True, slots=True)
 class Claim:
     """Lo que el adaptador necesita de un mensaje reclamado. `credential` va cifrada: el token solo
-    se abre durante la llamada."""
+    se abre durante la llamada. `recipient` es el destinatario en el canal (ADR-035 §6): el teléfono
+    en WhatsApp, el PSID o el IGSID de la identidad de la conversación en Messenger e Instagram;
+    vacío si no lo tiene. Nunca sale en el `repr` (es un dato personal)."""
 
     message_id: UUID
     account_id: UUID
     platform: str
     phone_number_id: str  # el `external_account_id` de la cuenta
-    recipient: str  # el teléfono del contacto en E.164; vacío si no tiene
+    recipient: str = field(repr=False)
     body: str = field(repr=False)
     credential: Credential | None = field(default=None, repr=False)
     media: Media | None = None
+    parent_id: str | None = None  # el `external_parent_id`: la página por la que envía Instagram
+    human_agent: bool = False  # la política decidió `HUMAN_AGENT_TAG` (ADR-035 §7)
+    echo_token: str | None = field(default=None, repr=False)  # `message.metadata` (ADR-035 §6)
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,7 +88,8 @@ class SandboxAdapter:
 
 
 class UnknownPlatform(LookupError):
-    """La plataforma de la cuenta no tiene adaptador (`SANDBOX` y `WHATSAPP`)."""
+    """La plataforma de la cuenta no tiene adaptador (`SANDBOX`, `WHATSAPP`, `MESSENGER` e
+    `INSTAGRAM` lo tienen)."""
 
 
 ADAPTERS: dict[str, ChannelAdapter] = {"SANDBOX": SandboxAdapter()}
@@ -94,6 +100,10 @@ def adapter_for(platform: str) -> ChannelAdapter:
         from apps.conversations.whatsapp import WhatsAppAdapter
 
         return ADAPTERS.setdefault(platform, WhatsAppAdapter())
+    if platform in ("MESSENGER", "INSTAGRAM"):  # una página de Facebook (ADR-035 §6)
+        from apps.conversations.meta_page import PageAdapter
+
+        return ADAPTERS.setdefault(platform, PageAdapter())
     try:
         return ADAPTERS[platform]
     except KeyError:

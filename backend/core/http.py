@@ -1,5 +1,6 @@
 """HTTP saliente anti-SSRF (B9): allowlist https, IP pública validada al conectar y fijada, sin
-redirects ni proxies. Único módulo con urllib3. Diseño: docs/architecture/storage-http.md."""
+redirects ni proxies. Único módulo con urllib3. Diseño: docs/architecture/storage-http.md. Única
+excepción (ADR-041): en el stack local, Graph va al simulador (`_simulated`)."""
 
 import contextvars
 import io
@@ -17,7 +18,7 @@ from urllib.parse import urlsplit
 import urllib3
 from django.conf import settings
 from urllib3.connection import HTTPSConnection
-from urllib3.connectionpool import HTTPSConnectionPool
+from urllib3.connectionpool import HTTPConnectionPool, HTTPSConnectionPool
 
 HTTPError = urllib3.exceptions.HTTPError  # lo que lanza una petición que no llegó a respuesta
 MAX_RESPONSE = 1 << 20  # una respuesta mayor no es de un servicio de la allowlist: se corta
@@ -165,13 +166,29 @@ class _GuardedPool(HTTPSConnectionPool):
         super()._put_conn(conn)
 
 
-_manager = urllib3.PoolManager(
-    timeout=urllib3.Timeout(connect=5.0, read=15.0),
+_LIMITS: dict[str, Any] = {
+    "timeout": urllib3.Timeout(connect=5.0, read=15.0),
     # `other=0`: urllib3 repite un POST ante un error TLS «de otro tipo» (`SSLError`) aunque la
     # petición ya se enviara y el fallo llegara al leer la respuesta: un envío duplicado.
-    retries=urllib3.Retry(total=2, redirect=False, raise_on_redirect=False, other=0),
-)
+    "retries": urllib3.Retry(total=2, redirect=False, raise_on_redirect=False, other=0),
+}
+_manager = urllib3.PoolManager(**_LIMITS)
 _manager.pool_classes_by_scheme = {"https": _GuardedPool}
+# ADR-041: el gestor del simulador local de Graph: solo http, con los mismos tiempos y reintentos.
+_simulator = urllib3.PoolManager(**_LIMITS)
+_simulator.pool_classes_by_scheme = {"http": HTTPConnectionPool}
+
+
+def _simulated(url: str) -> str | None:
+    """ADR-041: solo con `DEBUG` y `META_GRAPH_SIMULATOR_URL` (que solo los settings `local` leen;
+    production, migrate y test no arrancan con ella), una URL de Graph que ya pasó `check_url` va
+    al simulador con la misma ruta y consulta. Cualquier otro destino: `None`, la política de
+    siempre (https, 443, allowlist, IP pública)."""
+    origin = settings.META_GRAPH_SIMULATOR_URL
+    parts = urlsplit(url)
+    if not (settings.DEBUG and origin) or parts.hostname != settings.META_GRAPH_HOST:
+        return None
+    return origin + parts.path + (f"?{parts.query}" if parts.query else "")
 
 
 def never_connected(error: BaseException) -> bool:
@@ -228,16 +245,29 @@ def _check_headers(headers: dict[str, str] | None) -> dict[str, str]:
     return named
 
 
+NO_RETRY = urllib3.Retry(total=0, redirect=False, raise_on_redirect=False)
+MAX_READ_SECONDS = 120.0
+
+
 def request(
     method: str, url: str, *, headers: dict[str, str] | None = None, body: bytes | None = None,
-    json: Any = None,
+    json: Any = None, retry: bool = True, read_seconds: float | None = None,
 ) -> urllib3.BaseHTTPResponse:  # fmt: skip
-    """Sin `**kwargs`: no se pueden quitar timeouts, reintentos ni el bloqueo de redirects."""
+    """Sin `**kwargs`: no se pueden quitar timeouts ni el bloqueo de redirects. `retry=False` solo
+    **quita** los reintentos (y la espera de `Retry-After`): para quien no puede esperar, como una
+    prueba dentro de una petición web (F8-03b). `read_seconds` alarga la espera de lectura (un
+    modelo de IA responde en segundos, F8-05), como mucho hasta `MAX_READ_SECONDS`."""
     check_url(url)
     _check_headers(headers)  # los nombres originales se envían tal cual: ya no hay prohibidos
-    reply = _manager.request(
-        method, url, headers=headers, body=body, json=json, redirect=False, preload_content=False
-    )
+    extra: dict[str, Any] = {} if retry else {"retries": NO_RETRY}
+    if read_seconds is not None:
+        read = min(max(read_seconds, 1.0), MAX_READ_SECONDS)
+        extra["timeout"] = urllib3.Timeout(connect=5.0, read=read)
+    target = _simulated(url)  # después de `check_url`: la URL de Graph cumple la política
+    reply = (_simulator if target else _manager).request(
+        method, target or url, headers=headers, body=body, json=json, redirect=False,
+        preload_content=False, **extra,
+    )  # fmt: skip
     data = reply.read(MAX_RESPONSE + 1)  # nunca más de `MAX_RESPONSE` + 1 bytes en memoria
     reply.release_conn()
     if len(data) > MAX_RESPONSE:

@@ -9,15 +9,18 @@ Nada de este runbook lleva valores reales: ni el proveedor, ni el bucket, ni las
 | Qué                                     | Dónde, en el bucket de backups                     | Cuándo                                 | Se borra                                    |
 | --------------------------------------- | -------------------------------------------------- | -------------------------------------- | ------------------------------------------- |
 | Volcado de la base `crm` (`pg_dump -Fc`) | `db/daily/crm-<AAAAMMDDTHHMMSSZ>.dump.age`         | Cada noche, 03:15 UTC                  | A los 7 días (7 diarios)                    |
-| El mismo volcado, en domingo            | `db/weekly/…`                                      | Domingos                               | A los 28 días (4 semanales)                 |
-| El mismo volcado, el día 1              | `db/monthly/…`                                     | Día 1 de cada mes                      | A los 184 días (6 mensuales)                |
+| El mismo volcado, una vez por semana    | `db/weekly/…`                                      | El domingo o, si esa noche falla, la siguiente noche buena de la semana | A los 28 días (4 semanales)  |
+| El mismo volcado, una vez por mes       | `db/monthly/…`                                     | El día 1 o, si esa noche falla, la siguiente noche buena del mes        | A los 184 días (6 mensuales) |
 | Volcado previo a un despliegue          | `db/predeploy/…`                                   | `backup.sh predeploy` (F1-15)          | A los 7 días                                |
 | Objetos del almacenamiento              | `media/<clave del objeto>.age`, uno por objeto     | Cada noche, solo los nuevos            | Nunca (ver §9)                              |
 
 - Todo va **cifrado con [age](https://age-encryption.org)** antes de salir del servidor, para las claves públicas de `backup-recipients.txt`. El volcado nunca está en claro en el disco.
+- Junto a cada volcado va `crm-<AAAAMMDDTHHMMSSZ>.counts.age`: las filas por tabla, contadas **en la misma instantánea** que el volcado (`pg_export_snapshot` y `pg_dump --snapshot`) y cifradas igual. `restore.sh --expect-counts` las compara con lo restaurado: tienen que coincidir exactamente, aunque se escribiera durante el volcado.
+- El semanal y el mensual van **por periodo**, no por día: la semana empieza el domingo y el mes, el día 1. `backup.sh` guarda en `/var/lib/crm-backup/last-period` la semana y el mes de la última subida nocturna correcta. Si el periodo actual aún no tiene copia, la noche la hace. Una noche que falla no guarda nada, así que la siguiente noche buena del periodo hace la copia. Si falla la semana entera, esa semana queda sin semanal.
 - La retención la aplican las **reglas de ciclo de vida del destino** ([`lifecycle.json`](../../infra/prod/backup/lifecycle.json)), no el servidor. `.github/scripts/test_backup_retention.py` simula dos años de noches y comprueba que se guardan 7, 4 y 6 copias y que solo se borra lo que queda fuera de la política. Del mensual queda a veces una séptima copia unos días, mientras el mes es corto.
 - **No se respaldan:** Redis (la cola), los certificados de Caddy, las imágenes (están en GHCR) ni el frontend (ADR-033 §8.1).
-- **Las KEKs (`SECRETS_KEKS`, ADR-022) no van en el backup.** Sin ellas, los secretos cifrados de la base (segundos factores TOTP, tokens de canales) no se pueden leer. El propietario guarda aparte cada versión de KEK mientras exista un backup cifrado con ella: 6 meses después de rotarla (ADR-033 §6.3).
+- **Las KEKs (`SECRETS_KEKS`, ADR-022) no van en el backup.** Sin ellas, los secretos cifrados de la base (segundos factores TOTP, tokens de canales y claves de los proveedores de IA) no se pueden leer. El propietario guarda aparte cada versión de KEK mientras exista un backup cifrado con ella: 6 meses después de rotarla (ADR-033 §6.3).
+- **Antes de retirar una KEK vieja** de `SECRETS_KEKS`, las tres tareas de re-sellado tienen que haber terminado con `unreadable` en 0: `accounts.reseal_mfa_secrets` (segundos factores), `conversations.reseal_credentials` (tokens de canales) y `ai_gateway.reseal_provider_keys` (claves de los proveedores de IA). Lo que no se pudo volver a cifrar sigue necesitando la KEK vieja: si se retira, se pierde.
 - Los roles tampoco van en el volcado. Al restaurar, `bootstrap-roles.sh` los crea con contraseñas nuevas (ADR-033 §8.1).
 
 ## 2. Claves: quién guarda qué
@@ -96,23 +99,27 @@ systemctl start crm-backup.service                                 # la primera 
 journalctl -u crm-backup.service -n 20                             # debe terminar en "event":"backup.ok"
 ```
 
-`backup.sh` lee el bucket de la aplicación con las `STORAGE_*` de `runtime.env`. Guarda su estado en `/var/lib/crm-backup`: `last-success` (para el aviso), `last-counts.tsv` (filas por tabla del último volcado) y `media-copied.txt` (los objetos ya copiados, porque el servidor no puede listar el destino). Si se pierde ese directorio, la siguiente noche vuelve a subir todos los objetos: el versionado guarda una versión más de cada uno, y la regla `media-versions` la borra a los 30 días.
+El backup nocturno comparte con `deploy.sh` el lock `/var/lib/crm-deploy/lock` (F1-15b): espera hasta una hora a que termine un despliegue y, si el lock sigue (un despliegue cortado), falla con `backup.failed` y `stage=deploy_lock`. Qué hacer con un despliegue cortado: [infra/prod/README.md](../../infra/prod/README.md), «Volver atrás».
+
+`backup.sh` lee el bucket de la aplicación con las `STORAGE_*` de `runtime.env`. Guarda su estado en `/var/lib/crm-backup`: `last-success` (para el aviso), `last-period` (la semana y el mes de la última subida nocturna; si se pierde, la noche siguiente hace un semanal y un mensual de más) y `media-copied.txt` (los objetos ya copiados, porque el servidor no puede listar el destino). Las filas por tabla ya no quedan en claro en el disco: van cifradas junto al volcado. Un `last-counts.tsv` de una versión anterior se puede borrar. Los `<clave>.partial` del bucket (los deja una restauración de objetos que falló) no se copian. Si se pierde ese directorio, la siguiente noche vuelve a subir todos los objetos: el versionado guarda una versión más de cada uno, y la regla `media-versions` la borra a los 30 días.
 
 ## 5. Alertas
 
-- **`backup.failed`**: `backup.sh` falla en cualquier paso. Queda en el journal (`journalctl -u crm-backup.service`) con la etapa (`counts`, `dump`, `upload` o `media`) y, si `SENTRY_DSN` está en `backup.env`, también como evento en Sentry. El log nunca lleva datos, claves de objetos ni credenciales.
+- **`backup.failed`**: `backup.sh` falla en cualquier paso. Queda en el journal (`journalctl -u crm-backup.service`) con la etapa (`deploy_lock`, `dump`, `upload` o `media`; `deploy_lock`: el lock de un despliegue sigue puesto tras una hora) y, si `SENTRY_DSN` está en `backup.env`, también como evento en Sentry. El log nunca lleva datos, claves de objetos ni credenciales.
 - **`backup.missing`**: `check.sh` comprueba cada hora que el último backup nocturno correcto tenga menos de 26 h (ADR-033 §8.4). Avisa por el mismo camino.
 - **Permisos de `backup.env`:** si no es de root y `0600`, `backup.sh` y `check.sh` no lo cargan y avisan con `backup.failed` y `backup.missing` (`reason: config_permissions`). Ese aviso va a Sentry solo si el archivo es de root y nadie más puede escribirlo (p. ej., `0644`): su `SENTRY_DSN` es entonces de fiar. Si otros pueden escribirlo, el aviso queda solo en el journal.
-- **Si el servidor entero cae**, esos dos avisos caen con él. Para eso, `BACKUP_HEARTBEAT_URL`: un servicio externo de monitorización que recibe un ping tras cada backup nocturno correcto y avisa si en 26 h no llega ninguno. Lo elige el propietario.
+- **Si el servidor entero cae**, esos dos avisos caen con él. Para eso, `BACKUP_HEARTBEAT_URL`: un servicio externo de monitorización que recibe un ping tras cada backup nocturno correcto y avisa si en 26 h no llega ninguno. Lo elige el propietario. Su URL lleva el token del servicio: `backup.sh` se la pasa a `curl` por la entrada estándar (`--config -`), nunca en los argumentos, que cualquier usuario ve con `ps`.
 
 Qué hacer ante un aviso: leer `journalctl -u crm-backup.service -n 50`, corregir la causa (disco, credencial, destino caído) y lanzar `systemctl start crm-backup.service`. Un día sin backup no se recupera después: el RPO de ese día pasa a 48 h.
 
 ## 6. Restaurar en un servidor nuevo
 
+**Servidor compartido (ADR-046):** antes de nada, `/etc/crm/host-mode` con `shared` y la red `shared-ingress` (`production-shared-host.md` §1 y §2). Sin ellos, los scripts tratan el servidor como dedicado.
+
 Objetivo: menos de 4 h (RTO). El propietario o su suplente tienen que estar localizables en la primera hora: traen la clave privada, la credencial de lectura y la copia de los secretos (ADR-033 §8.3).
 
 1. Aprovisionar el servidor con el runbook de primer arranque (F1-17): Docker, el repositorio y los archivos de `/etc/crm` restaurados de la copia del propietario, con **las mismas `SECRETS_KEKS`**. Para los roles, contraseñas nuevas en `postgres.env` (root, `0600`), las mismas en `migrate.env` y `runtime.env`.
-2. Arrancar solo PostgreSQL: `docker compose -f /opt/crm/infra/prod/compose.yaml --env-file /etc/crm/release.env up -d --wait postgres`.
+2. Arrancar solo PostgreSQL: `/opt/crm/infra/prod/compose.sh --env-file /etc/crm/release.env up -d --wait postgres`.
 3. Traer al servidor, solo para la restauración, la clave privada y un archivo `restore.env`, que es `backup.env` con la credencial de **lectura**. Ambos en `/dev/shm` (memoria), con modo `0600`.
 4. Restaurar:
 
@@ -125,10 +132,23 @@ Objetivo: menos de 4 h (RTO). El propietario o su suplente tienen que estar loca
    - `--media` devuelve los objetos al bucket de `runtime.env`. Sin él, solo la base. Úsalo si se perdió el bucket de producción. Si solo se perdió el servidor, el bucket sigue intacto (ADR-033 §8.3). Para recuperar solo el bucket, sin tocar la base, usa `--media-only`.
      - Cada objeto se escribe primero como `<clave>.partial` y solo pasa a su nombre si se descargó y descifró entero. Una clave equivocada o un objeto dañado no pisan nada.
      - Los objetos que ya están en el bucket no se tocan. Para sobrescribirlos, `--overwrite-media`.
-   - `--roles-env` es un archivo `KEY=valor` con `CRM_MIGRATOR_PASSWORD` y `CRM_APP_PASSWORD`, de root y `0600` (si no, el script se niega). Las contraseñas pasan a `bootstrap-roles.sh` por el entorno, **nunca por la línea de órdenes**: ni en `sudo`, ni en el historial, ni en `ps`. Si los roles ya existen, se puede omitir.
+   - `--roles-env` es un archivo `KEY=valor` con `CRM_MIGRATOR_PASSWORD` y `CRM_APP_PASSWORD`, de root y `0600` (si no, el script se niega). Las contraseñas pasan a `bootstrap-roles.sh` por el entorno, **nunca por la línea de órdenes**: ni en `sudo`, ni en el historial, ni en `ps`. Si los roles ya existen, se puede omitir. Entonces, si falta la base `crm`, `restore.sh` la crea con los mismos permisos que `bootstrap-roles.sh` (dueño `crm_migrator`, `CONNECT` y `TEMPORARY` para `crm_app`).
    - `backup.env`, `restore.env`, `runtime.env` y la clave privada tienen que ser de root y `0600`. `backup-recipients.txt`, de root y sin escritura para otros. Si no, los scripts no arrancan.
-   - **No restaura encima de una base con tablas.** Para sustituirla, `--replace-existing-data`: para el runtime, borra la base `crm` y la vuelve a crear con `bootstrap-roles.sh` (exige las contraseñas).
+   - **No restaura encima de una base con tablas.** Para sustituirla, `--replace-existing-data`: para el runtime, **renombra** la base `crm` a `crm_replaced_<AAAAMMDDHHMMSS>` y crea otra con `bootstrap-roles.sh` (exige las contraseñas). Para renombrarla, no admite conexiones nuevas, cierra las abiertas y lo intenta hasta 5 veces. Si no lo consigue, `crm` queda como estaba y el aviso no lleva `kept=`. Solo cuando el renombrado terminó, el log dice `restore.replacing kept_as=…`.
+     - La anterior solo se borra después de `restore.ok` (`restore.replaced_dropped`). Si ese borrado falla, la restauración está bien y el aviso es otro, `restore.replaced_not_dropped`: se borra a mano.
+     - `restore.replaced_left` (aviso) lista las `crm_replaced_*` que sigan ahí de restauraciones anteriores.
+     - Mientras tanto, la anterior ocupa su espacio en disco: hay que tener sitio para las dos.
+   - `--expect-counts` compara las filas por tabla restauradas con las del volcado (`<volcado>.counts.age`). Si no coinciden, falla. Los volcados anteriores a F1-16b (#857) no tienen ese archivo: con ellos, sin `--expect-counts`.
 5. El script descifra el volcado en memoria y lo pasa a `pg_restore` en una sola transacción. Después deja las filas por tabla en `/var/lib/crm-backup/restored-counts.tsv`, registra si las migraciones estaban al día (`migrations_at_head`), levanta el backend (el job `migrate` corre antes) y exige `/health/ready` con 200. Termina con `"event":"restore.ok"` y los segundos que tardó.
+   **Si falla con `--replace-existing-data`** y el aviso `restore.failed` lleva `kept=crm_replaced_<…>`, la base anterior sigue entera con ese nombre. Sin `kept=`, el fallo fue antes de renombrarla y `crm` está intacta: no hay que volver a nada. Para volver a la base guardada, con el runtime parado, usa [`rollback-replaced.sql`](../../infra/prod/backup/rollback-replaced.sql). Solo borra `crm` si la base guardada existe; si no, falla sin tocar nada:
+
+   ```bash
+   /opt/crm/infra/prod/compose.sh --env-file /etc/crm/release.env exec -T postgres \
+     psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres -v kept=crm_replaced_<…> < /opt/crm/infra/prod/backup/rollback-replaced.sql
+   /opt/crm/infra/prod/compose.sh --env-file /etc/crm/release.env up -d --wait backend
+   ```
+
+   Las contraseñas de los roles son ya las de `--roles-env`: `migrate.env` y `runtime.env` tienen que llevar esas mismas. Si en cambio la restauración se da por buena a mano, se borra la anterior con `DROP DATABASE crm_replaced_<…>`.
 6. **Borrar la clave privada y `restore.env`**: `shred -u /dev/shm/backup-key.txt /dev/shm/restore.env`. Borrar también `postgres.env` y recrear `postgres` (infra/prod/README.md, «Secretos»).
 7. Desplegar el resto (`deploy.sh`, F1-15), apuntar el registro A y pasar la puerta de salud.
 
@@ -136,18 +156,24 @@ Objetivo: menos de 4 h (RTO). El propietario o su suplente tienen que estar loca
 
 ## 7. El simulacro
 
-**En CI**, en cada cambio de `infra/prod/`: el job `infra-prod backup drill` ejecuta [`drill.sh`](../../infra/prod/backup/drill.sh). Levanta el compose de producción con datos (una organización) y tres archivos, hace el backup a un Garage local con una credencial que solo escribe, comprueba que el aviso `backup.failed` salta y que esa credencial no lee el destino, «pierde el servidor», restaura en un stack nuevo y comprueba:
+**En CI**, en cada cambio de `infra/prod/` y de una migración del backend (`backend/**/migrations/**`): el job `infra-prod backup drill` ejecuta [`drill.sh`](../../infra/prod/backup/drill.sh). Levanta el compose de producción con datos (una organización) y tres archivos, hace el backup a un Garage local con una credencial que solo escribe, comprueba que el aviso `backup.failed` salta y que esa credencial no lee el destino, «pierde el servidor», restaura en un stack nuevo y comprueba:
 
-- las filas por tabla, idénticas a las del origen;
+- las filas por tabla, idénticas a las contadas en la instantánea del volcado, aunque se escribe una fila mientras se vuelca;
 - las migraciones al día y `/health/ready`;
 - los archivos, idénticos byte a byte;
 - que no restaura encima de una base con datos sin `--replace-existing-data`, y que con esa opción sí;
 - que una clave equivocada, unas contraseñas en un archivo `0644` o un `backup.env` `0644` se rechazan sin tocar la base;
 - que un fallo dentro del volcado deja `backup.failed stage=dump` y no mueve `last-success`, y que una marca no numérica da `backup.missing`;
-- que una lista de objetos copiados desordenada (una noche que falló a medias) no rompe la siguiente copia;
+- que una lista de objetos copiados desordenada (una noche que falló a medias) no rompe la siguiente copia, y que un `.partial` no se copia;
+- que una noche fallida no guarda su periodo y la siguiente noche buena hace el semanal y el mensual; y que otra noche del mismo periodo solo hace el diario;
+- que `BACKUP_HEARTBEAT_URL` no aparece en los argumentos de `curl` y que el ping llega;
+- que un `alerted=1` heredado del entorno no silencia `backup.failed` ni `restore.failed`;
+- que un renombrado que falla deja `crm` intacta y un aviso sin `kept=`;
+- que `--replace-existing-data` que falla después de `pg_restore` deja la base anterior como `crm_replaced_<…>`; que `rollback-replaced.sql` se niega con una base guardada que no existe y vuelve a la que sí; y que tras `restore.ok` se borra;
+- que con los roles ya creados, sin `--roles-env` y sin la base `crm`, la restauración crea la base;
 - que `--media-only --overwrite-media` con otra clave deja los objetos idénticos y ningún `.partial`, y que sin `--overwrite-media` no vuelve a subir lo que ya está.
 
-En local, con Docker, `age` y `rclone`: `BACKEND_IMAGE=<imagen del backend del repo> bash infra/prod/backup/drill.sh`. Borra al salir, por nombre, todo lo que crea.
+Las imágenes del simulacro (Garage, Caddy, PostgreSQL y Redis) van fijadas por digest. En local, con Docker, `age` y `rclone`: `BACKEND_IMAGE=<imagen del backend del repo> bash infra/prod/backup/drill.sh`. Borra al salir, por nombre, todo lo que crea.
 
 **En el servidor real**: es obligatorio antes de salir a producción (F1-18, #760), y después cada trimestre y tras cambiar el procedimiento (ADR-033 §8.4).
 
@@ -157,7 +183,7 @@ En local, con Docker, `age` y `rclone`: `BACKEND_IMAGE=<imagen del backend del r
    - `/health/ready` responde;
    - una cuenta con segundo factor entra (demuestra que las KEKs restauradas abren los secretos);
    - un archivo se descarga;
-   - las filas por tabla coinciden con `/var/lib/crm-backup/last-counts.tsv` del servidor de producción (`--expect-counts`). Las tablas en las que se escribió durante el volcado pueden diferir en unas filas.
+   - las filas por tabla coinciden exactamente con las del volcado (`--expect-counts`).
 3. Destruir el servidor del simulacro y su clave privada.
 4. Anotar el resultado en el registro de abajo.
 
@@ -183,4 +209,4 @@ El simulacro local restaura una base casi vacía. El tiempo real depende del tam
   - **Volcados de la base (`db/`):** los datos de la persona siguen en los volcados hasta que caducan: con A o B, hasta unos 214 días el mensual; con C, igual o más. No se editan.
   - **Si se restaura un volcado anterior a una solicitud**, hay que volver a aplicar los borrados registrados desde entonces. El propietario lleva ese registro.
 - **Los objetos restaurados pierden sus metadatos de S3** (el tipo de contenido queda genérico). La aplicación sirve cada archivo con el tipo guardado en la base (`files.mime_type`), así que no cambia lo que ve el usuario.
-- **Las filas por tabla de `last-counts.tsv` se toman justo antes del volcado**, no en la misma instantánea. Con escrituras durante el volcado pueden diferir en unas filas.
+- **Mientras se vuelca, una transacción de solo lectura sigue abierta** (la que exporta la instantánea). En un volcado largo retrasa el `VACUUM` de las filas que se borren durante él, como el propio `pg_dump`.

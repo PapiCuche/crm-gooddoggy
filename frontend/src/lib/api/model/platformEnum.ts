@@ -9,10 +9,14 @@
 /**
  * * `SANDBOX` - Sandbox
  * * `WHATSAPP` - Whatsapp
+ * * `MESSENGER` - Messenger
+ * * `INSTAGRAM` - Instagram
  */
 export type PlatformEnum = (typeof PlatformEnum)[keyof typeof PlatformEnum];
 
 export const PlatformEnum = {
   SANDBOX: "SANDBOX",
   WHATSAPP: "WHATSAPP",
+  MESSENGER: "MESSENGER",
+  INSTAGRAM: "INSTAGRAM",
 } as const;

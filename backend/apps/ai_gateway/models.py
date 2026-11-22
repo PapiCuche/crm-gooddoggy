@@ -1,0 +1,242 @@
+"""Cuentas de proveedor de IA y su clave sellada (F8-03a; ADR-034 §4, ADR-022). Tablas de tenant
+con FORCE RLS y FKs compuestas en la migración. La clave solo existe cifrada en `ai_provider_keys`;
+lo único a la vista es `key_last_four`. Nada se borra: una clave se invalida (cifrado borrado) y la
+cuenta se desactiva. El modelo de la cuenta es uno de la lista permitida (`AI_MODELS`, F8-05b6)."""
+
+from typing import Any
+
+from django.db import models
+from django.db.models.functions import Length
+from django.db.models.lookups import Exact, GreaterThanOrEqual, LessThanOrEqual
+
+from core.db.models import TenantModel, uuid7_primary_key
+
+# Lo que mide un valor de `core.sealed` (ADR-022 §3): de 32 a 4127 bytes y el formato 1 al frente.
+SEALED_MIN, SEALED_MAX, SEALED_FORMAT = 32, 4127, b"\x01"
+KEY_PURPOSE = "ai.provider_key"  # el propósito de `core.sealed`, no un secreto
+# La forma de un id de modelo. La base no conoce la lista permitida: esa la aplica la aplicación, y
+# el gateway no llama con un modelo sin precio (F8-05b6).
+MODEL_SHAPE = r"^[a-z0-9][a-z0-9._-]*$"
+
+
+class Provider(models.TextChoices):
+    ANTHROPIC = "ANTHROPIC"  # OpenAI llega con F8-10 (ADR-034 §3)
+
+
+class AccountStatus(models.TextChoices):
+    ACTIVE = "ACTIVE"
+    DISABLED = "DISABLED"
+
+
+class AIProviderAccount(TenantModel):
+    """La cuenta de la organización en un proveedor: una por proveedor. `provider` no cambia
+    (UPDATE por columna): forma parte del dueño del cifrado de su clave."""
+
+    id = uuid7_primary_key()
+    provider = models.CharField(max_length=16, choices=Provider.choices)
+    status = models.CharField(max_length=16, choices=AccountStatus.choices, default="ACTIVE")
+    model = models.CharField(max_length=64)  # con el que se estima, reserva, llama y cobra
+    key_last_four = models.CharField(max_length=4)
+    configured_by_user_id = models.UUIDField(null=True, blank=True)  # FK a membresías (0001)
+    configured_at = models.DateTimeField()  # quién guardó la clave vigente, y cuándo
+    rotated_at = models.DateTimeField(null=True, blank=True)  # cuándo sustituyó a otra viva
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "ai_provider_accounts"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization_id", "provider"], name="ai_provider_accounts_provider_uq"
+            ),
+            models.UniqueConstraint(  # destino de la FK compuesta de la clave
+                fields=["organization_id", "id", "provider"], name="ai_provider_accounts_key_uq"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(provider__in=Provider.values),
+                name="ai_provider_accounts_provider_ck",
+            ),
+            models.CheckConstraint(  # activa sin revocar; desactivada con la fecha
+                condition=models.Q(status="ACTIVE", revoked_at__isnull=True)
+                | models.Q(status="DISABLED", revoked_at__isnull=False),
+                name="ai_provider_accounts_status_ck",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(key_last_four__regex=r"^.{4}$"),
+                name="ai_provider_accounts_last_four_ck",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(model__regex=MODEL_SHAPE), name="ai_provider_accounts_model_ck"
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return str(self.pk)
+
+
+class AIProviderKey(TenantModel):
+    """La clave de una cuenta, cifrada con `core.sealed` (propósito `ai.provider_key`, dueño
+    `ai_provider_account:<provider>:<account_id>`). Una viva por cuenta. Al rotar o desactivar se
+    **invalida**: `revoked_at` y el cifrado, borrado. Solo cambian `ciphertext`, `key_version` y
+    `revoked_at` (UPDATE por columna)."""
+
+    id = uuid7_primary_key()
+    account_id = models.UUIDField()  # FK compuesta con el proveedor (0001)
+    provider = models.CharField(max_length=16, choices=Provider.choices)
+    ciphertext = models.BinaryField(null=True)
+    key_version = models.PositiveSmallIntegerField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "ai_provider_keys"
+        constraints = [
+            models.UniqueConstraint(  # una viva por cuenta
+                fields=["organization_id", "account_id"],
+                condition=models.Q(revoked_at__isnull=True),
+                name="ai_provider_keys_live_uq",
+            ),
+            models.CheckConstraint(  # viva: cifrada con el formato vigente; invalidada: sin cifrado
+                condition=models.Q(
+                    models.Q(revoked_at__isnull=True, ciphertext__isnull=False)
+                    & models.Q(GreaterThanOrEqual(Length("ciphertext"), SEALED_MIN))
+                    & models.Q(LessThanOrEqual(Length("ciphertext"), SEALED_MAX))
+                    & models.Q(
+                        Exact(
+                            models.Func(
+                                "ciphertext",
+                                1,
+                                1,
+                                function="substring",
+                                output_field=models.BinaryField(),
+                            ),
+                            models.Value(SEALED_FORMAT, output_field=models.BinaryField()),
+                        )
+                    )  # fmt: skip
+                    | models.Q(revoked_at__isnull=False, ciphertext__isnull=True)
+                ),
+                name="ai_provider_keys_ciphertext_ck",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(key_version__gte=1), name="ai_provider_keys_version_ck"
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return str(self.pk)
+
+
+def _usd(null: bool = False, digits: int = 12) -> models.DecimalField[Any, Any]:
+    return models.DecimalField(max_digits=digits, decimal_places=6, null=null)
+
+
+class AIBudget(TenantModel):
+    """Los topes mensual y diario en USD (F8-05, F8-05b2): sin fila o sin tope diario no hay
+    llamadas (falla cerrado). Los fija `apps.ai_gateway.budgets` (F8-05b3): `crm_app` inserta la
+    fila de su organización y cambia solo los dos topes (0005); el diario no pasa del mensual."""
+
+    id = uuid7_primary_key()
+    monthly_usd = _usd()
+    daily_usd = _usd(null=True)  # NULL: sin tope diario, sin llamadas; sin `NaN` (0004)
+
+    class Meta:
+        db_table = "ai_budgets"
+        constraints = [
+            models.UniqueConstraint(fields=["organization_id"], name="ai_budgets_org_uq"),
+            models.CheckConstraint(condition=models.Q(monthly_usd__gt=0), name="ai_budgets_ck"),
+            models.CheckConstraint(condition=models.Q(daily_usd__gt=0),
+                                   name="ai_budgets_daily_ck"),
+            models.CheckConstraint(condition=models.Q(daily_usd__lte=models.F("monthly_usd")),
+                                   name="ai_budgets_daily_le_monthly"),
+        ]  # fmt: skip
+
+
+class AIBudgetUsage(TenantModel):
+    """Lo gastado y lo reservado de un mes (su primer día, en hora de Lima: ADR-043). `crm_app` solo
+    lo lee: lo cambian `ai_budget_reserve` y `ai_budget_settle` (0003). Las marcas de los avisos
+    del mes, solo `ai_budget_reserve`, una vez cada una (0006)."""
+
+    id = uuid7_primary_key()
+    month = models.DateField()
+    spent_usd = _usd(digits=18)  # lo ya pagado se registra aunque pase el tope (0003)
+    reserved_usd = _usd()
+    threshold_alerted_at = models.DateTimeField(null=True)  # `ai.budget.threshold_reached`
+    exceeded_alerted_at = models.DateTimeField(null=True)  # `ai.budget.exceeded`
+
+    class Meta:
+        db_table = "ai_budget_usage"
+        constraints = [
+            models.UniqueConstraint(fields=["organization_id", "month"],
+                                    name="ai_budget_usage_month_uq"),
+            models.CheckConstraint(name="ai_budget_usage_ck", condition=models.Q(
+                month__day=1, spent_usd__gte=0, reserved_usd__gte=0)),
+        ]  # fmt: skip
+
+
+class AIBudgetDailyUsage(TenantModel):
+    """Lo gastado y lo reservado de un día de Lima (ADR-043), como `AIBudgetUsage`: `crm_app` solo
+    lo lee; lo cambian `ai_budget_reserve` y `ai_budget_settle` (0004), siempre tras el mes."""
+
+    id = uuid7_primary_key()
+    day = models.DateField()
+    spent_usd = _usd(digits=18)
+    reserved_usd = _usd()
+
+    class Meta:
+        db_table = "ai_budget_daily_usage"
+        constraints = [
+            models.UniqueConstraint(fields=["organization_id", "day"],
+                                    name="ai_budget_daily_usage_day_uq"),
+            models.CheckConstraint(name="ai_budget_daily_usage_ck", condition=models.Q(
+                spent_usd__gte=0, reserved_usd__gte=0)),
+        ]  # fmt: skip
+
+
+class AIBudgetReservation(TenantModel):
+    """Lo reservado para una llamada, sin nada del prompt, con lo que necesita su fila de
+    `ai_llm_calls` (de solo inserción y particionada por mes, ADR-011): se ajusta una sola vez
+    (disparador en 0002) y entonces se escribe esa fila. Solo por las funciones de 0003."""
+
+    id = uuid7_primary_key()
+    month = models.DateField()  # FK compuesta a su fila de `ai_budget_usage` (0002)
+    day = models.DateField()  # y a la de `ai_budget_daily_usage` (0004)
+    amount_usd = _usd()
+    created_at = models.DateTimeField(auto_now_add=True)
+    settled_at = models.DateTimeField(null=True)
+    purpose = models.CharField(max_length=16)  # CHECK, FK de quien pide y del modelo: 0003
+    requested_by_user_id = models.UUIDField()
+    provider = models.CharField(max_length=16)
+    model = models.CharField(max_length=64)
+    conversation_id = models.UUIDField(null=True)
+
+    class Meta:
+        db_table = "ai_budget_reservations"
+        constraints = [
+            models.UniqueConstraint(fields=["organization_id", "id"], name="ai_budget_res_uq"),
+            models.CheckConstraint(condition=models.Q(amount_usd__gt=0), name="ai_budget_res_ck"),
+        ]
+        indexes = [  # las abiertas, para el barrido de huérfanas (0007)
+            models.Index(
+                fields=["created_at"],
+                condition=models.Q(settled_at__isnull=True),
+                name="ai_budget_res_open_idx",
+            ),
+        ]
+
+
+class AISwitch(TenantModel):
+    """El interruptor de IA de la organización (F8-06; ADR-034 §5): sin fila, o con `enabled`
+    falso, el gateway no llama (`AI_DISABLED`). Apagado por omisión. Lo cambia
+    `apps.ai_gateway.switch` como `crm_app` bajo RLS: inserta la fila de su organización y cambia
+    solo el estado, quién y cuándo (0009); nunca la borra."""
+
+    id = uuid7_primary_key()
+    enabled = models.BooleanField(default=False, db_default=False)
+    changed_by_user_id = models.UUIDField(null=True)  # FK compuesta a las membresías (0009)
+    changed_at = models.DateTimeField()
+
+    class Meta:
+        db_table = "ai_switches"
+        constraints = [
+            models.UniqueConstraint(fields=["organization_id"], name="ai_switches_org_uq"),
+        ]

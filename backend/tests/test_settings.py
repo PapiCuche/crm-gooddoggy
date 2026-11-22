@@ -1,8 +1,10 @@
+import ast
 import base64
 import importlib
 import secrets
 import sys
 from collections.abc import Callable, Iterator
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -33,9 +35,12 @@ BASE_ENV: dict[str, str | None] = {
     "SANDBOX_INBOUND_ENABLED": None,
     "SECRETS_KEKS": "1:" + base64.urlsafe_b64encode(bytes(range(32))).decode(),  # ADR-022 §6
     "META_ENABLED": None,
+    "AI_ENABLED": None,
     "META_APP_SECRETS": None,
     "META_WEBHOOK_VERIFY_TOKEN": None,
     "MFA_ENFORCEMENT": None,
+    "META_GRAPH_SIMULATOR_URL": None,
+    "CHANNEL_HEALTH_INTERVAL_MINUTES": None,
 }
 MAIL_SECRET = secrets.token_hex(16)  # aleatorio por ejecución
 MAIL_ENV = {
@@ -53,7 +58,7 @@ def forget_loaded_settings() -> Iterator[None]:
     """Cada carga deja `base` en `sys.modules` con las variables de su caso (el canal de Meta
     encendido, por ejemplo): quien importe `local` o `test` después heredaría ese estado."""
     yield
-    for name in ("production", "local", "migrate", "base"):
+    for name in ("production", "local", "migrate", "test", "base"):
         sys.modules.pop(f"config.settings.{name}", None)
 
 
@@ -162,6 +167,14 @@ def test_production_refuses_the_sandbox_inbound_and_has_it_off(
         assert settings.SANDBOX_INBOUND_ENABLED is False  # type: ignore[attr-defined]
     assert load_local(monkeypatch).SANDBOX_INBOUND_ENABLED is True
     assert load_local(monkeypatch, SANDBOX_INBOUND_ENABLED="false").SANDBOX_INBOUND_ENABLED is False
+
+
+@pytest.mark.parametrize(("value", "on"), [(None, False), ("false", False), ("true", True)])
+def test_ai_is_off_unless_turned_on(monkeypatch: Any, value: Any, on: bool) -> None:
+    """F8-06 (ADR-034 §5): apagado por omisión; un valor que no es booleano no arranca."""
+    assert load_production(monkeypatch, AI_ENABLED=value).AI_ENABLED is on  # type: ignore[attr-defined]
+    with pytest.raises(ImproperlyConfigured):
+        load_production(monkeypatch, AI_ENABLED="ture")
 
 
 @pytest.mark.parametrize("value", ["strict", "Enforce", "", "off"])
@@ -402,6 +415,9 @@ def test_the_whatsapp_channel_is_off_by_default_and_then_requires_nothing(
     settings = loader(monkeypatch)
     assert settings.META_ENABLED is False and settings.META_APP_SECRETS == []
     assert "graph.facebook.com" not in settings.HTTP_ALLOWED_HOSTS
+    assert (
+        settings.HTTP_ALLOWED_HOSTS.count("api.anthropic.com") == 1
+    )  # F8-03b: el host fijo de la IA
     stray = loader(monkeypatch, META_APP_SECRETS="x", META_ENABLED="false")
     assert stray.META_ENABLED is False  # un valor suelto con el canal apagado no se valida
 
@@ -417,7 +433,11 @@ def test_the_whatsapp_channel_on_loads_with_valid_settings_and_allows_the_graph_
     assert settings.META_GRAPH_VERSION == "v23.0"
     assert settings.HTTP_ALLOWED_HOSTS.count("graph.facebook.com") == 1
     added = loader(monkeypatch, **META_ENV, HTTP_ALLOWED_HOSTS="api.example.com")
-    assert added.HTTP_ALLOWED_HOSTS == ["api.example.com", "graph.facebook.com"]
+    assert added.HTTP_ALLOWED_HOSTS == [
+        "api.example.com",
+        "graph.facebook.com",
+        "api.anthropic.com",
+    ]
 
 
 BAD_META: dict[str, dict[str, str | None]] = {
@@ -459,6 +479,20 @@ def test_the_migrations_job_never_needs_the_whatsapp_settings(
     assert settings.DATABASES["default"]["USER"] == "crm_migrator"  # type: ignore[attr-defined]
 
 
+@pytest.mark.parametrize("value", ["0", "00", "-1"])
+def test_the_channel_health_interval_is_at_least_one_minute_or_nothing_starts(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    """F7b-06j: con 0, «página suscrita» no valdría nunca y cada pasada lo comprobaría todo."""
+    assert load_production(monkeypatch).CHANNEL_HEALTH_INTERVAL_MINUTES == 15  # type: ignore[attr-defined]
+    one = load_local(monkeypatch, CHANNEL_HEALTH_INTERVAL_MINUTES="1")
+    assert one.CHANNEL_HEALTH_INTERVAL_MINUTES == 1
+    with pytest.raises(ImproperlyConfigured, match="CHANNEL_HEALTH_INTERVAL_MINUTES"):
+        load_production(monkeypatch, CHANNEL_HEALTH_INTERVAL_MINUTES=value)
+    with pytest.raises(ImproperlyConfigured, match="CHANNEL_HEALTH_INTERVAL_MINUTES"):
+        load_local(monkeypatch, CHANNEL_HEALTH_INTERVAL_MINUTES=value)
+
+
 def test_the_channel_limit_window_is_shorter_than_what_the_login_purge_keeps() -> None:
     """La purga de los contadores de acceso borra lo que lleva más de su ventana de calma sin
     moverse; los contadores `chn:` (F7-02e) viven en esa tabla y su ventana tiene que caber."""
@@ -466,6 +500,60 @@ def test_the_channel_limit_window_is_shorter_than_what_the_login_purge_keeps() -
 
     kept = max(window for _, window, _, _ in base.LOGIN_THROTTLE.values())
     assert base.CHANNEL_CHECK_THROTTLE[1] < kept and base.MEDIA_UPLOAD_THROTTLE[1] < kept
+    assert base.AI_ACCOUNT_THROTTLE[1] < kept  # los contadores `aik:` (F8-03d)
+    assert base.AI_COPILOT_THROTTLE[1] < kept  # y los `aic:` (F8-08h)
+    assert base.AI_COPILOT_ORG_THROTTLE[1] < kept  # y los `aio:` (F8-08m)
+
+
+@pytest.mark.parametrize("throttle", [(0, 600), (61, 600), (10, 59), (10, 841), (10, 3600)])
+def test_production_refuses_an_ai_account_limit_it_cannot_enforce(
+    throttle: tuple[int, int],
+) -> None:
+    """La prueba de conexión de IA no se repite en bucle contra el proveedor (F8-03d)."""
+    from config import env
+    from config.settings import base
+
+    env.check_ai_throttle(base.AI_ACCOUNT_THROTTLE)
+    with pytest.raises(ImproperlyConfigured, match="AI_ACCOUNT_THROTTLE"):
+        env.check_ai_throttle(throttle)
+
+
+@pytest.mark.parametrize("throttle", [(0, 600), (61, 600), (20, 59), (20, 841), (20, 3600)])
+def test_production_refuses_a_copilot_limit_it_cannot_enforce(
+    monkeypatch: pytest.MonkeyPatch, throttle: tuple[int, int]
+) -> None:
+    """Una persona no gasta sola el presupuesto de la organización (F8-08h)."""
+    from config import env
+    from config.settings import base
+
+    checked: list[tuple[int, int]] = []
+    monkeypatch.setattr(env, "check_ai_copilot_throttle", checked.append)
+    load_production(monkeypatch)
+    assert checked == [base.AI_COPILOT_THROTTLE]  # production lo comprueba al arrancar
+    monkeypatch.undo()
+    env.check_ai_copilot_throttle(base.AI_COPILOT_THROTTLE)
+    with pytest.raises(ImproperlyConfigured, match="AI_COPILOT_THROTTLE"):
+        env.check_ai_copilot_throttle(throttle)
+
+
+@pytest.mark.parametrize("throttle", [(0, 600), (19, 600), (601, 600), (120, 59), (120, 841)])
+def test_production_refuses_an_organization_copilot_limit_it_cannot_enforce(
+    monkeypatch: pytest.MonkeyPatch, throttle: tuple[int, int]
+) -> None:
+    """Una organización no agota el servidor ni el proveedor (F8-08m); nunca por debajo del tope
+    de una persona."""
+    from config import env
+    from config.settings import base
+
+    checked: list[tuple[tuple[int, int], tuple[int, int]]] = []
+    monkeypatch.setattr(env, "check_ai_copilot_org_throttle", lambda *rules: checked.append(rules))
+    load_production(monkeypatch)
+    assert checked == [(base.AI_COPILOT_ORG_THROTTLE, base.AI_COPILOT_THROTTLE)]  # al arrancar
+    monkeypatch.undo()
+    env.check_ai_copilot_org_throttle(base.AI_COPILOT_ORG_THROTTLE, base.AI_COPILOT_THROTTLE)
+    env.check_ai_copilot_org_throttle((20, 600), (20, 600))  # el mismo que el de una persona
+    with pytest.raises(ImproperlyConfigured, match="AI_COPILOT_ORG_THROTTLE"):
+        env.check_ai_copilot_org_throttle(throttle, base.AI_COPILOT_THROTTLE)
 
 
 @pytest.mark.parametrize("throttle", [(0, 600), (61, 600), (5, 59), (5, 841), (5, 3600)])
@@ -490,3 +578,128 @@ def test_the_whatsapp_channel_on_needs_a_send_limit_and_a_broker_for_it(
 
     with pytest.raises(ImproperlyConfigured, match="CHANNEL_SEND_LIMIT"):
         env.check_meta([META_SECRET], META_VERIFY, "v23.0", (5, 600), send, broker)
+
+
+SIMULATOR = "http://meta-sim:8090"
+MIGRATE_ENV: dict[str, str | None] = {
+    "DATABASE_URL": None, "DATABASE_MIGRATOR_URL": "postgres://crm_migrator:x@db:5432/crm",
+    "DJANGO_SECRET_KEY": None,
+}  # fmt: skip
+
+
+def load_test(monkeypatch: pytest.MonkeyPatch, **env: str | None) -> Any:
+    for key, value in env.items():
+        if value is None:
+            monkeypatch.delenv(key, raising=False)
+        else:
+            monkeypatch.setenv(key, value)
+    for name in ("config.settings.test", "config.settings.base"):
+        sys.modules.pop(name, None)
+    return importlib.import_module("config.settings.test")
+
+
+@pytest.mark.parametrize("value", [SIMULATOR, ""])
+@pytest.mark.parametrize(
+    "loader",
+    [load_production, lambda m, **e: load_migrate(m, **MIGRATE_ENV, **e), load_test],
+    ids=["production", "migrate", "test"],
+)
+def test_only_the_local_settings_start_with_the_graph_simulator(
+    monkeypatch: pytest.MonkeyPatch, loader: Callable[..., Any], value: str
+) -> None:
+    """ADR-041: production, el job de migraciones y las pruebas no arrancan con la variable puesta,
+    aunque venga vacía; sin ella, su valor es vacío (`core.http` no la usa)."""
+    with pytest.raises(ImproperlyConfigured, match="META_GRAPH_SIMULATOR_URL") as raised:
+        loader(monkeypatch, META_GRAPH_SIMULATOR_URL=value)
+    assert SIMULATOR not in str(raised.value)
+    assert loader(monkeypatch, META_GRAPH_SIMULATOR_URL=None).META_GRAPH_SIMULATOR_URL == ""
+    assert load_local(monkeypatch, META_GRAPH_SIMULATOR_URL=value).META_GRAPH_SIMULATOR_URL == value
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "https://meta-sim:8090", "http://meta-sim", "http://meta-sim:8090/", "http://meta-sim:0",
+        "http://meta-sim:8090/v23.0", "http://user:pw@meta-sim:8090", "http://META-SIM:8090",
+        "http://meta-sim:8090?x=1", "http://meta-sim:99999", "ftp://meta-sim:8090",
+        "http://user@meta-sim:8090", "http://meta-sim:8090#x",
+    ],
+)  # fmt: skip
+def test_the_local_settings_refuse_a_simulator_that_is_not_a_bare_http_origin(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    with pytest.raises(ImproperlyConfigured, match="META_GRAPH_SIMULATOR_URL"):
+        load_local(monkeypatch, META_GRAPH_SIMULATOR_URL=value)
+
+
+def _imports_local(path: Path, root: Path) -> bool:
+    """¿El módulo importa `config.settings.local`? Con `ast`: `import`, `from … import` (también
+    relativo y entre paréntesis) e `import_module`/`__import__` con el nombre literal."""
+    package = ".".join(path.relative_to(root).with_suffix("").parts[:-1])
+    for node in ast.walk(ast.parse(path.read_text())):
+        if isinstance(node, ast.Import):
+            names = [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            parts = package.split(".")
+            base = ".".join(parts[: len(parts) - node.level + 1]) if node.level else ""
+            module = ".".join(p for p in (base, node.module or "") if p)
+            names = [module, *(f"{module}.{alias.name}" for alias in node.names)]
+        elif isinstance(node, ast.Call) and _called(node) in ("import_module", "__import__"):
+            names = [str(a.value) for a in node.args[:1] if isinstance(a, ast.Constant)]
+        else:
+            continue
+        if any(n == LOCAL or n.startswith(f"{LOCAL}.") for n in names):
+            return True
+    return False
+
+
+LOCAL = "config.settings.local"
+
+
+def _called(node: ast.Call) -> str:
+    return str(getattr(node.func, "attr", None) or getattr(node.func, "id", ""))
+
+
+@pytest.mark.parametrize(
+    ("where", "code"),
+    [
+        ("config/settings/x.py", "from .local import *"),
+        ("config/settings/x.py", "from . import local"),
+        ("config/x.py", "from .settings import local"),
+        ("apps/x/y.py", "from config.settings import (\n    base,\n    local,\n)"),
+        ("core/x.py", "import config.settings.local as s"),
+        ("core/x.py", "importlib.import_module('config.settings.local')"),
+        ("core/x.py", "__import__('config.settings.local')"),
+    ],
+)
+def test_the_import_check_sees_every_form(tmp_path: Path, where: str, code: str) -> None:
+    path = tmp_path / where
+    path.parent.mkdir(parents=True)
+    path.write_text(code + "\n")
+    assert _imports_local(path, tmp_path)
+    path.write_text(code.replace("local", "base") + "\n")
+    assert not _imports_local(path, tmp_path)
+
+
+def test_only_the_local_settings_read_the_simulator_and_nothing_imports_them() -> None:
+    """ADR-041: en `config/settings/` solo `base` (vacío, sin leer el entorno) y `local` nombran
+    la variable; `env.simulator` solo en `local`; el código de la aplicación nunca importa
+    `config.settings.local` (solo por su nombre, en `DJANGO_SETTINGS_MODULE`)."""
+    root = Path(__file__).resolve().parents[1]
+    base_lines = [
+        line.strip() for line in (root / "config/settings/base.py").read_text().splitlines()
+        if "META_GRAPH_SIMULATOR_URL" in line and not line.strip().startswith("#")
+    ]  # fmt: skip
+    assert base_lines == ['META_GRAPH_SIMULATOR_URL = ""']
+    named = sorted(
+        path.name for path in (root / "config/settings").glob("*.py")
+        if "META_GRAPH_SIMULATOR_URL" in path.read_text()
+    )  # fmt: skip
+    assert named == ["base.py", "local.py"]
+    sources = [
+        path for folder in ("config", "core", "apps") for path in (root / folder).rglob("*.py")
+    ]
+    assert [str(p.relative_to(root)) for p in sources if "env.simulator(" in p.read_text()] == [
+        "config/settings/local.py"
+    ]
+    assert [str(p.relative_to(root)) for p in sources if _imports_local(p, root)] == []

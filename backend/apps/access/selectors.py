@@ -18,7 +18,7 @@ from uuid import UUID
 from django.apps import apps
 from django.contrib.postgres.expressions import ArraySubquery
 from django.core.exceptions import PermissionDenied
-from django.db.models import F, Model, OuterRef, QuerySet
+from django.db.models import Exists, F, Model, OuterRef, QuerySet
 
 from apps.access.catalog import BY_CODE, PermissionDef, Scope
 from apps.access.models import Role, RolePermission
@@ -72,9 +72,16 @@ def definition(code: str) -> PermissionDef:
 
 def execution_context(ctx: TenantContext) -> ExecutionContext:
     """Dos consultas, sea cual sea el número de roles. Sin membresía activa: `AccessDenied`."""
-    alias = require_scope(ctx)
     if ctx.actor_type != ActorType.USER or ctx.user_id is None:
         raise AccessDenied(Denied.MEMBERSHIP)
+    return member_context(ctx, ctx.user_id)
+
+
+def member_context(ctx: TenantContext, user_id: UUID) -> ExecutionContext:
+    """Los permisos efectivos de `user_id` en la organización de `ctx`, leídos ahora, sea quien sea
+    el actor de `ctx`: los de quien invitó, al aceptar su invitación (ADR-020 §2). Para
+    `access.services`; nunca autoriza al actor de `ctx`."""
+    alias = require_scope(ctx)
     memberships = apps.get_model("organizations", "OrganizationMembership")._default_manager
     # Los equipos van en la misma consulta que la membresía: cuentan todos aquellos a los que
     # pertenece, también si el equipo o la pertenencia están inactivos.
@@ -82,7 +89,7 @@ def execution_context(ctx: TenantContext) -> ExecutionContext:
     teams = ArraySubquery(belongs.filter(membership_id=OuterRef("pk")).values("team_id"))
     row = (
         memberships.using(alias)
-        .filter(user_id=ctx.user_id)
+        .filter(user_id=user_id)
         .annotate(teams=teams)
         .values_list("pk", "status", "user__is_active", "teams", "default_branch_id")
         .first()
@@ -132,6 +139,23 @@ def member_holds(ectx: ExecutionContext, user_id: UUID, code: str) -> bool:
         scope__isnull=not permission.supports_scope,
     )
     return grants.exists()
+
+
+def holders(ctx: TenantContext, code: str) -> list[tuple[UUID, str]]:
+    """Id y correo de los miembros activos (membresía y cuenta) de la organización de `ctx` que
+    tienen `code` por alguno de sus roles, con cualquier alcance. Para avisar a alguien (F8-12b):
+    no autoriza nada ni dice qué filas alcanza cada uno."""
+    alias = require_scope(ctx)
+    permission = definition(code)
+    grants = RolePermission.objects.using(alias).filter(
+        permission_id=code,
+        role__assignments__membership_id=OuterRef("pk"),
+        scope__isnull=not permission.supports_scope,
+    )
+    rows = apps.get_model("organizations", "OrganizationMembership")._default_manager.using(alias)
+    active = rows.filter(organization_id=ctx.organization_id, status=ACTIVE, user__is_active=True)
+    found = active.filter(Exists(grants)).order_by("user_id")
+    return list(found.values_list("user_id", "user__email"))
 
 
 def can(ectx: ExecutionContext, code: str, obj: Model | None = None) -> bool:

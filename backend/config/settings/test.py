@@ -9,8 +9,11 @@ os.environ.setdefault("DATABASE_URL", "postgres://crm_app:change-me-local-app@lo
 from config import env  # noqa: E402
 from config.settings.base import *  # noqa: E402,F403
 
+env.refuse_local_only()  # ADR-041: las pruebas lo fijan con `override_settings`, nunca del entorno
+
 ALLOWED_HOSTS = ["testserver"]
 SANDBOX_INBOUND_ENABLED = True  # F1-14: los tests de producción la apagan
+AI_ENABLED = True  # F8-06: los tests del kill switch lo apagan; el de cada organización, apagado
 CSRF_TRUSTED_ORIGINS = ["http://testserver"]  # también el origen del WebSocket (F6-07a)
 INSTALLED_APPS = [*INSTALLED_APPS, "tests.tenancy_app"]  # noqa: F405 — solo tests (RLS)
 # Migraciones de la BD de test: como crm_migrator (tests/conftest.py). Los tests corren como

@@ -89,6 +89,8 @@ ADMIN_REST = (
     "pipelines.manage",  # F5-02
     "conversations.assign",  # F6-01: el Inbox
     "channels.manage",
+    "quick_replies.manage",  # F6-08a1
+    "ai.kill_switch",  # F8-06 (ADR-034 §10): sensible, también en el Supervisor
 )
 SCOPED_REST = (
     "contacts.view",
@@ -414,8 +416,10 @@ def test_assign_requires_covering_every_grant_of_the_role(
     give(rbac.a, rbac.m_luis, ADMIN)  # luis cubre todo lo del rol admin
     roles, before = rbac.roles, state(migrator)
     to_eva = {"membership_id": rbac.m_eva}
-    for code, reason in (("admin", Denied.SENSITIVE), ("owner", Denied.ESCALATION)):
-        kwargs = {**to_eva, "role_id": roles[code].pk}  # admin lleva sensibles; luis no es Owner
+    for code, reason in (("admin", Denied.SENSITIVE), ("supervisor", Denied.SENSITIVE),
+                         ("owner", Denied.ESCALATION)):  # fmt: skip
+        # admin y supervisor (`ai.kill_switch`, F8-06) llevan sensibles; luis no es Owner
+        kwargs = {**to_eva, "role_id": roles[code].pk}
         assert denied(rbac.a, rbac.luis, assign_role, **kwargs) is reason
     for foreign in (
         {**to_eva, "role_id": uuid4()},
@@ -425,15 +429,15 @@ def test_assign_requires_covering_every_grant_of_the_role(
             assign_role(tenant, **foreign)  # de otra organización o inexistente: no existe
     assert state(migrator) == before
     with acting(rbac.a, rbac.luis) as tenant:
-        assign_role(tenant, **to_eva, role_id=roles["supervisor"].pk)  # lo cubre y no es sensible
-        assign_role(tenant, **to_eva, role_id=roles["supervisor"].pk)  # repetir: nada
+        assign_role(tenant, **to_eva, role_id=roles["seller"].pk)  # lo cubre y no es sensible
+        assign_role(tenant, **to_eva, role_id=roles["seller"].pk)  # repetir: nada
     with acting(rbac.a, rbac.ana) as tenant:
         assign_role(tenant, **to_eva, role_id=roles["admin"].pk)
         assign_role(tenant, membership_id=rbac.m_luis, role_id=roles["owner"].pk)  # otro Owner
     assert state(migrator) == (before[0], before[1] + 3, before[2] + 3)
-    role = {"role": [None, str(roles["supervisor"].pk)]}
+    role = {"role": [None, str(roles["seller"].pk)]}
     first: tuple[Any, ...] = ("membership.role_assigned", "membership", rbac.m_eva, role)
-    assert audit(migrator)[0] == (*first, {"role": "supervisor"}, rbac.luis.pk)
+    assert audit(migrator)[0] == (*first, {"role": "seller"}, rbac.luis.pk)
 
 
 def test_remove_requires_covering_every_grant_too(

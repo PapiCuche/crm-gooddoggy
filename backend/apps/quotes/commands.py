@@ -45,7 +45,7 @@ from core.outbox import emit
 from core.sequences import allocate
 from core.tenancy.context import TenantContext
 from core.tenancy.scope import require_scope
-from core.text import line
+from core.text import line, shows_all
 
 ITEMS_MAX, NOTE_MAX, REASON_MAX = 50, 2000, 500
 TAX_RATE = Decimal("0.1800")  # IGV (D-PRC-1: los precios lo llevan incluido)
@@ -126,6 +126,8 @@ def _text(value: Any, what: str, limit: int) -> str:
     text = "\n".join(line(part, limit) for part in value.splitlines()).strip()
     if len(text) > limit:
         raise ValueError(f"{what}: hasta {limit} caracteres")
+    if not shows_all(text):  # el tope de lo oculto es del valor, no solo de cada línea
+        raise ValueError(f"{what}: solo texto imprimible")
     return text
 
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useInfiniteQuery } from "@tanstack/react-query";
-import { RefreshCw } from "lucide-react";
+import { Hand, RefreshCw } from "lucide-react";
 import { useFormatter, useTranslations } from "next-intl";
 
 import { useTenant } from "@/components/app-shell/tenant-context";
@@ -18,6 +18,7 @@ import type { ApiError } from "@/lib/http";
 import { cn } from "@/lib/utils";
 
 import { Assignee } from "./assignment";
+import { ChannelMark, useUnanswered } from "./attention";
 import { Plain } from "./plain";
 
 export const BOXES = ["all", "mine", "unassigned"] as const;
@@ -26,7 +27,11 @@ export const STATUSES = [
   ...["WAITING_INTERNAL", "RESOLVED", "CLOSED"],
 ] as const;
 const SHORT = { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" } as const;
-export type Filters = { box: (typeof BOXES)[number]; status: (typeof STATUSES)[number] };
+export type Filters = {
+  box: (typeof BOXES)[number];
+  status: (typeof STATUSES)[number];
+  unanswered: boolean; // solo las abiertas cuyo último mensaje es del cliente (F6-09)
+};
 
 // La lista de conversaciones (F6-03): las que devuelve `GET …/conversations/` (F6-02b), la de
 // mensaje más reciente primero, con la bandeja y el estado como filtros. Quién ve qué lo decide
@@ -50,7 +55,9 @@ export function ConversationList({
   const params: ConversationsListParams = {
     ...(filters.box === "all" ? {} : { box: filters.box }),
     ...(filters.status ? { status: filters.status } : {}),
+    ...(filters.unanswered ? { unanswered: true } : {}),
   };
+  const waiting = useUnanswered(filters.box);
   // Cada filtro es su propia lista; los filtros viajan también con «Cargar más».
   const list = useInfiniteQuery<PaginatedConversationList, ApiError>({
     queryKey: [...getConversationsListQueryKey(slug, params), "pages"],
@@ -86,7 +93,9 @@ export function ConversationList({
   } else if (rows.length === 0) {
     body = (
       <p className="text-muted">
-        {filters.box === "all" && !filters.status ? t("empty") : t("emptyFiltered")}
+        {filters.box === "all" && !filters.status && !filters.unanswered
+          ? t("empty")
+          : t("emptyFiltered")}
       </p>
     );
   } else {
@@ -119,6 +128,22 @@ export function ConversationList({
               {t(`filters.boxes.${box}`)}
             </Button>
           ))}
+          <Button
+            variant={filters.unanswered ? "accent" : "ghost"}
+            className="border-border min-h-11 border sm:min-h-9"
+            aria-pressed={filters.unanswered}
+            onClick={() => onFilters({ ...filters, unanswered: !filters.unanswered })}
+          >
+            {t("unanswered.filter")}
+            {waiting === undefined ? null : (
+              <>
+                <span aria-hidden className="bg-danger text-surface rounded-full px-2 text-xs">
+                  {waiting}
+                </span>
+                <span className="sr-only">, {t("unanswered.count", { count: waiting })}</span>
+              </>
+            )}
+          </Button>
         </div>
         <Choice
           label={t("filters.status")}
@@ -213,11 +238,20 @@ function Row({
         <span className="text-muted line-clamp-2 text-sm">{preview}</span>
         <span className="text-muted flex flex-wrap gap-x-2 text-xs">
           <span className="font-mono">{row.number}</span>
-          <Plain>{row.channel.name}</Plain>
+          <span className="inline-flex items-center gap-1">
+            <ChannelMark platform={row.channel.platform} />
+            <Plain>{row.channel.name}</Plain>
+          </span>
           <span>{t(`status.${row.status}`)}</span>
           <span>
             <Assignee who={row} />
           </span>
+          {row.human_request ? (
+            <span className="text-foreground inline-flex items-center gap-1 font-semibold">
+              <Hand aria-hidden className="size-3" />
+              {t("humanRequest.badge")}
+            </span>
+          ) : null}
         </span>
       </button>
     </li>

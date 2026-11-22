@@ -42,10 +42,17 @@ x-runtime: &runtime
     APP_ORIGIN: http://localhost:${PROXY_HOST_PORT:-8080}
     # Accesos de prueba (ADR-026): slug de la organización de pruebas; vacío = desactivado.
     DJANGO_TEST_ACCOUNTS_ORGANIZATION: ${DJANGO_TEST_ACCOUNTS_ORGANIZATION:-}
+    # IA (ADR-034 §5, F8-06): el interruptor global, apagado por omisión.
+    AI_ENABLED: ${AI_ENABLED:-false}
     # Canal de WhatsApp (ADR-029, Proposed): apagado por omisión; apagado no exige nada.
     META_ENABLED: ${META_ENABLED:-false}
     META_APP_SECRETS: ${META_APP_SECRETS:-}
     META_WEBHOOK_VERIFY_TOKEN: ${META_WEBHOOK_VERIFY_TOKEN:-}
+    META_HUMAN_AGENT_APPROVED: ${META_HUMAN_AGENT_APPROVED:-false}
+    META_APP_ID: ${META_APP_ID:-}
+    # ADR-041: solo este stack (settings `local`). Con `http://meta-sim:8090`, Graph va al
+    # simulador del perfil `meta-sim`; vacía, a Meta como siempre.
+    META_GRAPH_SIMULATOR_URL: ${META_GRAPH_SIMULATOR_URL:-}
     # F7-15 (ADR-008): el antivirus de los medios. Sin él, nada se abre (los reintentos acaban en
     # `ERROR`) y ningún archivo se envía (F7-15b: la subida responde 503); no se espera a que esté
     # sano para arrancar: el escaneo reintenta y la persona reintenta el envío. F7-15c: por el
@@ -161,7 +168,7 @@ services:
     build:
       context: ../../frontend
       args:
-        NEXT_PUBLIC_INBOX_WS: ${INBOX_WS:-off} # F6-07e: `on` abre el WebSocket del Inbox (se fija al construir)
+        NEXT_PUBLIC_INBOX_WS: ${INBOX_WS:-on} # F6-07e/F6-09: `off` no abre el WebSocket (se fija al construir)
         CRM_BUILD_PROFILE: development # F1-14: el stack local conserva /demo; la imagen de producción, no
     image: crm-frontend:local
     restart: unless-stopped
@@ -227,6 +234,29 @@ services:
     environment: { CLAMAV_NO_CLAMD: "true" }
     networks: [av-egress]
     volumes: [clamavdata:/var/lib/clamav]
+
+  # F7b-06c (ADR-041): la Graph API falsa de `backend/tests/meta_sim`, que ninguna imagen copia; se
+  # monta de solo lectura. Solo con `--profile meta-sim`; nunca en el compose de producción.
+  meta-sim:
+    image: python:3.14.7-slim@sha256:51dafde81dbdb6ebde285137a295cf18a47ca95234fe388a343719cb97305b3d
+    profiles: [meta-sim]
+    restart: unless-stopped
+    command: ["python", "-m", "tests.meta_sim.server", "--host", "0.0.0.0", "--port", "8090"]
+    working_dir: /sim
+    environment: { PYTHONDONTWRITEBYTECODE: "1" }
+    user: "65534:65534"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    volumes:
+      - ../../backend/tests/meta_sim:/sim/tests/meta_sim:ro
+    ports:
+      - "127.0.0.1:${META_SIM_HOST_PORT:-8090}:8090" # `GET /_sim/state` desde el equipo
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8090/_sim/state', timeout=3)"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   mailpit:
     image: axllent/mailpit:v1.31.3

@@ -243,6 +243,38 @@ describe("LoginForm", () => {
   });
 });
 
+describe("LoginForm con onEntered", () => {
+  const STEP = "POST /api/v1/auth/login/mfa/";
+  it.each([
+    ["con la sesión ya abierta", { [SESSION]: { status: 200, body: { user } } }],
+    [
+      "al entrar con la contraseña",
+      { [SESSION]: anonymous, [LOGIN]: { status: 200, body: { user } } },
+    ],
+    [
+      "al entrar con el código",
+      {
+        [SESSION]: anonymous,
+        [LOGIN]: { status: 202, body: { mfa_required: true } },
+        [STEP]: { status: 200, body: { user } },
+      },
+    ],
+  ])("%s la llama en lugar de navegar", async (_, routes) => {
+    mockApi(routes);
+    const entered = vi.fn();
+    const { client } = renderApp(<LoginForm next="/o" onEntered={entered} />);
+    client.setQueryData(["leído sin sesión"], true);
+    if (LOGIN in routes) fill("ana@acme.pe", "clave");
+    if (STEP in routes) {
+      fireEvent.change(await screen.findByLabelText("Código"), { target: { value: "123456" } });
+      fireEvent.click(screen.getByRole("button", { name: "Verificar y entrar" }));
+    }
+    await waitFor(() => expect(entered).toHaveBeenCalledWith("ana@acme.pe"));
+    if (LOGIN in routes) expect(client.getQueryData(["leído sin sesión"])).toBeUndefined();
+    expect(router.replace).not.toHaveBeenCalled();
+  });
+});
+
 describe("safeNext", () => {
   it.each(["/o", "/o/acme", "/o/acme/clientes?vista=2", "/o/acme#notas", "/loginx", "/o//x"])(
     "acepta %s",
@@ -283,6 +315,9 @@ describe("safeNext", () => {
     "/restablecer#" + "a".repeat(43),
     "/o/../Restablecer?x=1#" + "a".repeat(43),
     "/recuperar",
+    // Ni la de una invitación, con un enlace ajeno en el fragmento.
+    "/invitacion#" + "a".repeat(43),
+    "/o/../%69nvitacion",
     "/%72establecer#" + "a".repeat(43), // Next abre la misma página con una letra codificada
     "/%6Cogin?next=/o",
     "/o/../login",

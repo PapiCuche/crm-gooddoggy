@@ -164,3 +164,81 @@ printf 'X5O!P%%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*' 
 ```
 
 El camino completo (EICAR queda `INFECTED`, se audita y nunca se descarga; clamd caído reintenta y acaba en `ERROR`) lo cubren `backend/tests/test_media_scan.py` y `backend/tests/test_antivirus.py`, este último también contra un clamd real en CI.
+
+## 8. Instagram, Messenger y WhatsApp contra el simulador de Meta (F7b-06c)
+
+Para probar conectar, recibir y responder sin cuentas de Meta ([ADR-041](../adr/ADR-041-local-meta-graph-simulator.md)). El servicio `meta-sim` sirve la Graph API falsa de `backend/tests/meta_sim` (fuera de toda imagen) y el backend le manda las llamadas a Graph **solo** con los settings `local`. Todos los valores son ficticios: **nunca pegues un token real** en un stack con el simulador encendido, y **no lo enciendas contra una base que ya tenga cuentas reales** de una página o de WhatsApp: sus tokens irían por http al simulador, que guarda en memoria las cabeceras de WhatsApp. No pongas `META_GRAPH_SIMULATOR_URL` sin el perfil `meta-sim`: el nombre `meta-sim` lo resolvería el resolvedor de tu red (con sus dominios de búsqueda).
+
+**1. Configuración.** En `infra/env/.env`, los valores de ejemplo del bloque «Simulador local de Meta» de `.env.example`:
+
+```bash
+META_ENABLED=true
+META_APP_SECRETS=metasimdevappsecretnotreal0000
+META_WEBHOOK_VERIFY_TOKEN=meta-sim-dev-verify-token-not-real
+META_APP_ID=100000000000301
+META_GRAPH_SIMULATOR_URL=http://meta-sim:8090
+```
+
+**2. Arranque.** Con el perfil `meta-sim` (sin él, el servicio no arranca y Graph sale a Meta como siempre):
+
+```bash
+COMPOSE_PROFILES=meta-sim make up
+curl -s http://127.0.0.1:8090/_sim/state   # {"subscribed": {}, "page_sent": [], "whatsapp_sent": []}
+```
+
+Si el puerto 8090 está ocupado, define `META_SIM_HOST_PORT`. Para apagarlo, quita `META_GRAPH_SIMULATOR_URL` del `.env` y vuelve a `make up`.
+
+**3. Conectar una cuenta.** Los datos que acepta el simulador:
+
+| Campo | Valor |
+|---|---|
+| Página (Messenger, y la de Instagram) | `100000000000101` |
+| Cuenta de Instagram | `100000000000102` |
+| Token | `meta-sim-test-access-token-not-real` |
+| WhatsApp: WABA y `phone_number_id` | `100000000000001` y `100000000000002` |
+
+Las tres cuentas se conectan desde **Canales** («Conectar WhatsApp», «Conectar Messenger», «Conectar Instagram», con el segundo factor del Owner). También desde el shell del backend, con un Owner de la organización (p. ej. la de pruebas de §4):
+
+```bash
+docker compose -f infra/docker/compose.yaml --env-file infra/env/.env exec -T backend python manage.py shell -c "
+from apps.accounts.models import User
+from apps.conversations import accounts
+from apps.organizations.models import Organization
+from core.tenancy.context import ActorType, TenantContext
+from core.tenancy.scope import tenant_scope
+org, owner = Organization.objects.get(slug='pruebas'), User.objects.get(email='owner@pruebas.gooddoggy.test')
+with tenant_scope(TenantContext(org.pk, 'meta-sim', owner.pk, ActorType.USER, owner.pk)) as ctx:
+    print(accounts.connect_social(ctx, platform='INSTAGRAM', name='Instagram simulado', page_id='100000000000101',
+          instagram_account_id='100000000000102', access_token='meta-sim-test-access-token-not-real')[0].status)
+"
+```
+
+Esperado: `PENDING`, y `/_sim/state` muestra la página suscrita.
+
+**4. Recibir un mensaje.** Un webhook firmado con el secreto de ejemplo, por el proxy:
+
+```bash
+cd backend && uv run python -m tests.meta_sim.send_webhook instagram "Hola" --url http://localhost:8080/webhooks/meta/
+# instagram: HTTP 200      (también: page, whatsapp; --customer <id> cambia el cliente)
+```
+
+Cada envío lleva un `mid` nuevo y la hora actual (abre la ventana de 24 h). En unos segundos el mensaje está en el Inbox, la cuenta pasa a **Conectada** y el contacto de Instagram se llama «Cliente Simulado» (el perfil del simulador). Sin `uv` en el equipo, el mismo comando desde el contenedor: `… exec meta-sim python -m tests.meta_sim.send_webhook instagram "Hola" --url http://backend:8000/webhooks/meta/`.
+
+**5. Responder.** Desde el chat del Inbox. El mensaje queda **Enviado** y `/_sim/state` lo muestra en `page_sent` (`whatsapp_sent` para WhatsApp).
+
+**6. Errores de Meta.** El resultado de las próximas llamadas, uno por llamada (los nombres de `ERRORS` en `page_graph.py` y `graph.py`):
+
+```bash
+curl -s -X POST http://127.0.0.1:8090/_sim/then -d '{"page": ["window_closed"]}'
+```
+
+**7. Página sin suscribir (F7b-06g).** Con el `META_APP_ID` del paso 1 (el id de la app del simulador), con `SIM_TOKEN` igual al token de ejemplo de la tabla de arriba, quita la suscripción de la página y espera la siguiente comprobación de salud (cada `CHANNEL_HEALTH_INTERVAL_MINUTES`, 15 por omisión) o rota el token desde `/canales`:
+
+```bash
+curl -s -X DELETE -H "Authorization: Bearer $SIM_TOKEN" \
+  http://127.0.0.1:8090/v23.0/100000000000101/subscribed_apps
+```
+
+La tarjeta pasa a **Con problemas**, con el motivo «La página no tiene suscrita la app del CRM…» y ese paso del checklist en rojo. Para recuperarla, vuelve a conectar otra cuenta de la misma página (suscribe la app) o, en el simulador, `POST` a la misma ruta con `?subscribed_fields=messages`; en la siguiente comprobación vuelve a **Conectada**.
+
+**Límites.** Los medios entrantes no se descargan: la descarga sigue con la política normal, y el simulador no conoce ningún medio (la consulta falla). Si un día devolviera una URL, el backend intentaría bajarla del `lookaside.fbsbx.com` **real** con el token ficticio, y Meta lo rechazaría; ninguna otra llamada sale a Meta. El simulador guarda todo en memoria: reiniciarlo lo vacía, y las cuentas ya conectadas siguen funcionando porque siempre acepta los mismos ids y el mismo token.

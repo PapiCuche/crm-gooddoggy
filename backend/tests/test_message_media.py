@@ -977,8 +977,17 @@ OFF = r"session_replication_role|(ENABLE|DISABLE)\s+(ALWAYS\s+|REPLICA\s+)?TRIGG
 DROPS = {
     "apps/conversations/migrations/0005_whatsapp_account.py",
     "apps/conversations/migrations/0021_message_attachments.py",
+    "apps/conversations/migrations/0040_social_channels.py",  # F7b-04a
+    "apps/conversations/migrations/0042_social_ingress.py",  # F7b-04b
     "apps/pricing/migrations/0004_promotions_frozen.py",
+    "apps/pricing/migrations/0009_ai_exposable_guard.py",  # F8-07f: solo al deshacerla
+    "apps/pricing/migrations/0010_price_list_visibility_guard.py",  # F8-07g: ídem
+    "apps/pricing/migrations/0011_price_writes_guard.py",  # F8-07h: ídem
     "apps/quotes/migrations/0002_approvals_and_discount_policies.py",
+    "apps/ai_gateway/migrations/0002_budget_and_calls.py",  # F8-05: solo al deshacerla
+    "apps/ai_gateway/migrations/0004_daily_budget.py",  # F8-05b2: solo al deshacerla
+    "apps/ai_gateway/migrations/0006_budget_alerts.py",  # F8-05b4: solo al deshacerla
+    "apps/organizations/migrations/0013_invitation_sends_guard.py",  # F2-130g: ídem
 }
 
 

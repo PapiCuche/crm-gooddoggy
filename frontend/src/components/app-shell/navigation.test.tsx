@@ -283,6 +283,48 @@ describe("navegación del shell", () => {
     expect(document.title).toBe("Canales · Acme SAC · Good Doggy CRM");
   });
 
+  it("«Respuestas rápidas» pide `quick_replies.manage` y va tras «Canales»", async () => {
+    route.pathname = "/o/acme/respuestas-rapidas";
+    const view = (code: string) => ({ code, scopes: [] });
+    expect((await links([view("messages.send")])).flat()).not.toContain(
+      "/o/acme/respuestas-rapidas",
+    );
+    cleanup();
+    expect(await links([view("channels.manage"), view("quick_replies.manage")])).toEqual([
+      ["/o/acme", null],
+      ["/o/acme/canales", null],
+      ["/o/acme/respuestas-rapidas", "page"],
+    ]);
+  });
+
+  // Basta uno: `ai.kill_switch` solo apaga (el Supervisor), `ai.manage` gestiona todo.
+  it.each(["ai.manage", "ai.kill_switch"])(
+    "«Inteligencia artificial» sale con `%s` solo y va antes de «Auditoría»",
+    async (code) => {
+      route.pathname = "/o/acme/ia";
+      const view = (code: string) => ({ code, scopes: [] });
+      expect((await links([view("ai.use"), view("audit.view")])).flat()).not.toContain(
+        "/o/acme/ia",
+      );
+      cleanup();
+      expect(await links([view("audit.view"), view(code)])).toEqual([
+        ["/o/acme", null],
+        ["/o/acme/ia", "page"],
+        ["/o/acme/auditoria", null],
+      ]);
+      expect(document.title).toBe("Inteligencia artificial · Acme SAC · Good Doggy CRM");
+    },
+  );
+
+  it("el texto de traspaso (`/ia/traspaso`) también es de «Inteligencia artificial»", async () => {
+    route.pathname = "/o/acme/ia/traspaso";
+    expect(await links([{ code: "ai.manage", scopes: [] }])).toEqual([
+      ["/o/acme", null],
+      ["/o/acme/ia", "true"],
+    ]);
+    expect(document.title).toBe("Inteligencia artificial · Acme SAC · Good Doggy CRM");
+  });
+
   it("«Precios» sale con cualquiera de los permisos de lectura o `prices.manage`, tras «Inventario»", async () => {
     route.pathname = "/o/acme/precios/listas";
     const without = ["prices.bulk_update", "product_cost.view", "inventory.view"];

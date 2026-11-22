@@ -9,12 +9,24 @@ homónimos, ADR-028): el segundo proceso espera, encuentra el del primero y lo r
 fusiona. El nombre del perfil no se usa para buscar. Nada de aquí registra un teléfono ni un texto.
 
 Un texto (ya saneado) que es exactamente una palabra de baja o de alta de la organización
-(`contacts.keywords`, F7-08b) revoca lo proactivo de WhatsApp o levanta una baja de palabra, con el
-mensaje como evidencia, y si cambió algo encola una confirmación fija: en la transacción del mensaje
-y solo la primera vez que llega. Una imagen, un audio, un video o un sticker con un id válido
+(`contacts.keywords`, F7-08b) revoca lo proactivo del canal de la cuenta (`policy.CONSENT_CHANNELS`)
+o levanta una baja de palabra, con el mensaje como evidencia, y si cambió algo encola una
+confirmación fija con el nombre del canal: en la transacción del mensaje y solo la primera vez que
+llega. Vale igual en Instagram y Messenger (F7b-05b, ADR-035 §5); en `standby` la baja queda, pero
+no se responde. Una imagen, un audio, un video o un sticker con un id válido
 (`media.found`) es un mensaje de su tipo (F7-09a2b; el sticker, `IMAGE`) con la frase fija como
 cuerpo, y su adjunto nace con él en `record_inbound` (un webhook repetido no lo vuelve a crear); sin
 id válido sigue siendo `UNSUPPORTED`.
+
+Instagram y Messenger (F7b-04b, ADR-035 §5): sin teléfono. El cliente es su identidad en la cuenta
+(PSID o IGSID): la primera vez nace un contacto con un nombre fijo y su `contact_identities`, bajo
+`pg_advisory_xact_lock` de (cuenta, id) y con `ON CONFLICT DO NOTHING` y relectura; **nunca** se
+fusiona con otro contacto (D-F7b-05). El texto se sanea igual; un adjunto, una mención o un mensaje
+no soportado es `UNSUPPORTED` con una frase fija; la respuesta a una historia lleva la suya. Los
+ecos, los leídos y las entregas esperan a F7b-05; reacciones, borrados y lo demás se cuentan.
+
+El contacto nuevo de Instagram emite `contact_identity.created`: su nombre llega después
+(`profiles`, F7b-04c, D-F7b-06).
 """
 
 import datetime as dt
@@ -23,23 +35,28 @@ from typing import Any
 
 from django.conf import settings
 from django.db import connections
+from django.db.models import QuerySet
 from django.utils import timezone
 
 from apps.contacts import keywords
 from apps.contacts.commands import create_contact
-from apps.contacts.consents import lift_keyword_stop, revoke_consent
-from apps.contacts.models import ConsentSource, Contact
-from apps.conversations import commands, media
+from apps.contacts.consents import keyword_stop, lift_keyword_stop
+from apps.contacts.models import Contact
+from apps.conversations import commands, ingest_alerts, media, policy
 from apps.conversations.models import (
     BODY_MAX,
     ChannelAccount,
+    ContactIdentity,
     Conversation,
     Message,
     MessageType,
 )
+from apps.conversations.profiles import SOCIAL_NAMES
 from core.observability.logging import get_logger
+from core.outbox import emit
 from core.tenancy.context import TenantContext
 from core.tenancy.scope import require_scope
+from core.text import shows_all, unhide
 
 logger = get_logger(__name__)
 ZWJ = "‍"
@@ -52,11 +69,23 @@ LABELS = {  # lo que ve el chat de lo que aún no se entiende: una frase fija, n
     "interactive": "Respuesta interactiva recibida", "button": "Respuesta interactiva recibida",
 }  # fmt: skip
 GENERIC = "Mensaje no soportado"
-CONFIRMATIONS = {  # D-F7-05: texto fijo en español (a confirmar por el propietario)
-    keywords.OPT_OUT: "Listo: ya no te enviaremos mensajes por iniciativa nuestra por WhatsApp. "
-    "Si nos escribes, te seguiremos respondiendo.",
-    keywords.OPT_IN: "Listo: volverás a recibir nuestros mensajes por WhatsApp.",
-}
+SOCIAL_LABELS = {  # `attachments[].type` de Instagram y Messenger [S7] [S18]
+    "image": "Imagen recibida", "audio": "Audio recibido", "video": "Video recibido",
+    "file": "Archivo recibido", "share": "Publicación compartida",
+    "ig_post": "Publicación compartida", "ig_reel": "Reel compartido",
+    "story_mention": "Te mencionó en una historia", "fallback": "Enlace compartido",
+}  # fmt: skip
+STORY_REPLY = "Respondió a tu historia"
+CONFIRMATIONS = {  # D-F7-05: texto fijo en español (a confirmar por el propietario), por canal
+    platform: {
+        keywords.OPT_OUT: f"Listo: ya no te enviaremos mensajes por iniciativa nuestra por {name}. "
+        "Si nos escribes, te seguiremos respondiendo.",
+        keywords.OPT_IN: f"Listo: volverás a recibir nuestros mensajes por {name}.",
+    }
+    for platform, name in (
+        ("WHATSAPP", "WhatsApp"), ("MESSENGER", "Messenger"), ("INSTAGRAM", "Instagram")
+    )
+}  # fmt: skip
 
 
 class Throttled(Exception):  # noqa: N818 — el tope de contactos nuevos por minuto
@@ -80,7 +109,13 @@ def clean_text(raw: str) -> str:
     """El texto de un cliente listo para `record_inbound`: sin controles (salvo el salto de línea y
     el tabulador), sin caracteres de formato invisibles ni controles de dirección (se conservan
     ZWNJ, ZWJ, LRM, RLM y ALM), sin Tags U+E0000–E007F (un canal de inyección de instrucciones
-    para la IA), sin sustitutos ni `\\u0000`, con `\\n` por `\\r\\n`, y recortado a `BODY_MAX`."""
+    para la IA), sin sustitutos ni `\\u0000`, con `\\n` por `\\r\\n`, recortado a `BODY_MAX`
+    y sin lo que no se ve fuera de su sitio (`core.text.unhide`, F8-11: selectores sin base,
+    marcas en cadena, uniones sueltas). Nunca lanza: lo que se guarda es lo que leerá la IA."""
+    return unhide(_scrub(raw))
+
+
+def _scrub(raw: str) -> str:
     text = raw.replace("\r\n", "\n").replace("\r", "\n")
     kept = [
         c for c in text
@@ -94,10 +129,11 @@ def visible(text: str) -> bool:
 
 
 def profile_name(raw: Any) -> str:
-    """El nombre del perfil, saneado, en una línea y de hasta 100 caracteres (o vacío)."""
+    """El nombre del perfil, saneado, en una línea y de hasta 100 caracteres (o vacío). Sin
+    `unhide`: un nombre con datos ocultos lo rechaza después `core.text.name` (F2-131)."""
     if not isinstance(raw, str):
         return ""
-    return _cut(" ".join(clean_text(raw).split()), NAME_MAX).strip()
+    return _cut(" ".join(_scrub(raw).split()), NAME_MAX).strip()
 
 
 def normalize_phone(wa_id: Any) -> str | None:
@@ -193,7 +229,7 @@ def receive(ctx: TenantContext, account: ChannelAccount, message: dict[str, Any]
     body, message_type, attachment = None, MessageType.UNSUPPORTED, media.found(kind, message)
     if kind == "text":
         body = clean_text(message["text"]["body"])
-    if body is not None and visible(body):
+    if body is not None and visible(body) and shows_all(body):  # si no, un texto fijo
         message_type = MessageType.TEXT
     else:
         body = LABELS.get(str(kind), GENERIC) if kind != "text" else GENERIC
@@ -216,29 +252,133 @@ def receive(ctx: TenantContext, account: ChannelAccount, message: dict[str, Any]
                 ctx, display_name=phone, primary_phone_e164=phone,
                 source=Contact.Source.INBOUND_MESSAGE,
             )  # fmt: skip
+    at = instant(message.get("timestamp"))
     saved, created = commands.record_inbound(
         ctx, contact_id=contact.pk, channel_account_id=account.pk, external_message_id=external,
-        body=body, message_type=message_type, provider_at=instant(message.get("timestamp")),
-        attachment=attachment,
+        body=body, message_type=message_type, provider_at=at, attachment=attachment,
     )  # fmt: skip
+    if created:
+        ingest_alerts.provider_time(at)  # el desfase de nuestro reloj (F7b-05g): solo cifras
     if created and message_type == MessageType.TEXT:
-        _keyword(ctx, contact.pk, saved)
+        _keyword(ctx, contact.pk, saved, account.platform, saved.body, at)
     return None
 
 
-def _keyword(ctx: TenantContext, contact_id: Any, saved: Message) -> None:
-    """La baja o el alta, si el texto entero es una palabra; solo un cambio real confirma."""
-    action = keywords.action_for(ctx, saved.body)
+def _keyword(
+    ctx: TenantContext, contact_id: Any, saved: Message, platform: str, said: str,
+    at: dt.datetime | None, *, confirm: bool = True,
+) -> None:  # fmt: skip
+    """La baja o el alta del canal de la cuenta, si el texto del cliente (`said`) es entero una
+    palabra; solo un cambio real confirma, y solo con `confirm` (un hilo en `standby` no). Con la
+    hora cruda del proveedor (`at`), no la del mensaje, que va acotada a «ahora» para la ventana:
+    una palabra más vieja que la última no la revierte (F7b-05d). F7b-05f: sin una hora que valga
+    (`at` es `None`), `consents` no cuenta un alta (decisión del propietario, #937) y una baja
+    revoca igual."""
+    action = keywords.action_for(ctx, said)
     if action is None:
         return
-    where = {"contact_id": contact_id, "channel": "WHATSAPP", "purpose": "ALL_PROACTIVE"}
+    channel = policy.CONSENT_CHANNELS[platform]  # la misma con la que la política la consulta
+    where = {"contact_id": contact_id, "channel": channel, "purpose": "ALL_PROACTIVE"}
     proof = {"message_id": str(saved.pk)}
     if action == keywords.OPT_OUT:
-        _, changed = revoke_consent(ctx, **where, source=ConsentSource.KEYWORD_STOP, evidence=proof)
-    else:  # solo levanta una baja hecha con una palabra; si no, ni evento ni confirmación
-        changed = lift_keyword_stop(ctx, **where, evidence=proof)
+        changed = keyword_stop(ctx, **where, said_at=at, evidence=proof)
+    else:  # levanta una baja hecha con una palabra, o concede sin fila (F7b-05e); nada más
+        changed = lift_keyword_stop(ctx, **where, said_at=at, evidence=proof)
     logger.info("meta.webhook.consent_keyword", action=action, changed=changed)  # sin quién
-    if changed:
+    if changed and confirm:  # la política la niega fuera de la ventana: nunca con etiqueta
         commands.queue_confirmation(
-            ctx, conversation_id=saved.conversation_id, body=CONFIRMATIONS[action]
+            ctx, conversation_id=saved.conversation_id, body=CONFIRMATIONS[platform][action]
         )
+
+
+def instant_ms(raw: Any) -> dt.datetime | None:
+    """El `timestamp` de Instagram o Messenger (un entero, en milisegundos o en segundos)."""
+    if not isinstance(raw, int) or isinstance(raw, bool):
+        return None
+    seconds = raw // 1000 if raw >= 10**11 else raw
+    return instant(str(seconds))
+
+
+def _social_body(message: dict[str, Any]) -> tuple[str, str]:
+    text = message.get("text")
+    body = clean_text(text) if isinstance(text, str) else ""
+    reply = message.get("reply_to")
+    if visible(body):  # el texto manda, aunque traiga un adjunto
+        story = isinstance(reply, dict) and isinstance(reply.get("story"), dict)
+        said = unhide(_cut(f"{STORY_REPLY}: {body}" if story else body, BODY_MAX))
+        if visible(said) and shows_all(said):  # el corte no deja nada suelto; si no, un texto fijo
+            return said, MessageType.TEXT
+    found = message.get("attachments")
+    first = found[0] if isinstance(found, list) and found and isinstance(found[0], dict) else {}
+    return SOCIAL_LABELS.get(str(first.get("type")), GENERIC), MessageType.UNSUPPORTED
+
+
+def _identity(ctx: TenantContext, account: ChannelAccount, customer: str) -> ContactIdentity:
+    """La identidad del cliente en la cuenta, o un contacto nuevo con su identidad (nunca otro
+    contacto existente: ni por nombre ni por otra red). `Throttled` con el tope de la cuenta."""
+    alias = require_scope(ctx)
+    mine: QuerySet[ContactIdentity] = ContactIdentity.objects.using(alias).filter(
+        channel_account_id=account.pk, external_id=customer
+    )
+    if (found := mine.first()) is not None:
+        return found
+    _lock(alias, f"social:{account.pk}:{customer}")
+    if (found := mine.first()) is not None:
+        return found  # la creó otro proceso mientras esperábamos
+    _lock(alias, f"wa-cap:{account.pk}")
+    if _capped(alias, account.pk):
+        raise Throttled
+    contact = create_contact(
+        ctx, display_name=SOCIAL_NAMES[account.platform], source=Contact.Source.INBOUND_MESSAGE
+    )
+    ContactIdentity.objects.using(alias).bulk_create(
+        [ContactIdentity(  # `bulk_create` no pasa por `save`: la organización, del contexto
+            organization_id=ctx.organization_id, contact_id=contact.pk,
+            channel_account_id=account.pk, platform=account.platform, external_id=customer,
+        )],
+        ignore_conflicts=True,
+    )  # fmt: skip
+    found = mine.get()  # la relectura: la que quedó, sea esta u otra
+    if account.platform == "INSTAGRAM" and found.contact_id == contact.pk:  # D-F7b-06: solo ids
+        emit(ctx, "contact_identity.created", aggregate_type="contact_identity",
+             aggregate_id=found.pk)  # fmt: skip
+    return found
+
+
+def receive_social(
+    ctx: TenantContext, account: ChannelAccount, kind: str, event: dict[str, Any]
+) -> str | None:
+    """Registra un evento ya enrutado de Instagram o Messenger. `None` si quedó registrado (o ya lo
+    estaba), o el motivo por el que se ignora. `Throttled` como `receive`."""
+    message = event.get("message")
+    if kind == "status":
+        return "STATUS_LATER"  # no llega: la ruta los pasa a `delivery.social` (F7b-05c)
+    if kind != "message" or not isinstance(message, dict):
+        return "REACTION" if "reaction" in event else "UNKNOWN_EVENT"
+    if message.get("is_echo") is True:  # no llega: la ruta los pasa a `delivery.social`
+        return "ECHO"
+    if message.get("is_deleted") is True:  # lo ya registrado no se borra: se cuenta
+        logger.info("meta.webhook.deleted", channel_account_id=str(account.pk))
+        return "DELETED"
+    body, message_type = _social_body(message)
+    identity = _identity(ctx, account, event["sender"]["id"])
+    standby = event.get("standby") is True  # otra app controla el hilo: nunca se responde
+    at = instant_ms(event.get("timestamp"))  # en segundos: dos del mismo segundo empatan
+    saved, created = commands.record_inbound(
+        ctx, contact_id=identity.contact_id, channel_account_id=account.pk,
+        external_message_id=message["mid"], body=body, message_type=message_type,
+        provider_at=at, contact_identity_id=identity.pk, standby=standby,
+    )  # fmt: skip
+    if standby:
+        logger.info("meta.webhook.standby", channel_account_id=str(account.pk))
+    if created:
+        ingest_alerts.provider_time(at)
+    if created and message_type == MessageType.TEXT:  # el texto del cliente, sin la frase fija
+        said = clean_text(message["text"])  # de la respuesta a una historia
+        held = standby or (  # el estado guardado: un reintento tardío no lo deshace
+            Conversation.objects.using(require_scope(ctx))
+            .filter(pk=saved.conversation_id, standby_since__isnull=False)
+            .exists()
+        )
+        _keyword(ctx, identity.contact_id, saved, account.platform, said, at, confirm=not held)
+    return None

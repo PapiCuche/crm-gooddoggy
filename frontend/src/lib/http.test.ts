@@ -168,4 +168,15 @@ describe("apiFetch", () => {
     fetchMock.mockResolvedValueOnce(broken(aborted));
     await expect(apiFetch("/api/v1/x/")).rejects.toBe(aborted);
   });
+
+  it("dice el código de una respuesta correcta a quien lo pide, y no se lo pasa a `fetch`", async () => {
+    const onStatus = vi.fn();
+    fetchMock.mockResolvedValueOnce(json(201, { id: "a" }));
+    await expect(apiFetch("/api/v1/x/", { onStatus })).resolves.toEqual({ id: "a" });
+    expect(onStatus).toHaveBeenCalledWith(201);
+    expect(sent().init).not.toHaveProperty("onStatus");
+    fetchMock.mockResolvedValueOnce(json(409, { code: "INVITATION_SEND_LIMIT" }));
+    await failure(apiFetch("/api/v1/x/", { onStatus })); // un error no es una respuesta correcta
+    expect(onStatus).toHaveBeenCalledTimes(1);
+  });
 });

@@ -3,9 +3,15 @@ Tablas tenant-owned con FORCE RLS y FKs compuestas en la migración. Nada se bor
 marca borrada, una conversación se cierra o se archiva, el historial de asignaciones es inmutable
 y un mensaje no se reescribe salvo el estado de entrega, que solo avanza."""
 
+import datetime as dt
+
+from django.conf import settings
+from django.contrib.postgres.constraints import ExclusionConstraint
+from django.contrib.postgres.fields import RangeOperators
 from django.db import models
-from django.db.models.functions import Length, Now
+from django.db.models.functions import Coalesce, Length, Lower, Now
 from django.db.models.lookups import LessThanOrEqual
+from django.utils import timezone
 
 from core.db.models import TenantModel, uuid7_primary_key
 
@@ -17,9 +23,21 @@ SENDERS = ("USER", "AI_AGENT", "SYSTEM")  # los que pueden escribir una nota int
 
 class Platform(models.TextChoices):
     SANDBOX = "SANDBOX"  # el canal de pruebas
-    WHATSAPP = (
-        "WHATSAPP"  # la Cloud API oficial de Meta (ADR-029); Instagram… llegan con su adapter
-    )
+    WHATSAPP = "WHATSAPP"  # la Cloud API oficial de Meta (ADR-029)
+    MESSENGER = "MESSENGER"  # una página de Facebook (ADR-035 §3)
+    INSTAGRAM = "INSTAGRAM"  # una cuenta profesional de Instagram vinculada a su página
+
+
+SOCIAL = (Platform.MESSENGER, Platform.INSTAGRAM)  # identidad por cuenta, sin teléfono (ADR-035)
+PAGE_SUBSCRIPTIONS = ("SUBSCRIBED", "NOT_SUBSCRIBED", "UNKNOWN")  # F7b-06h, `page_subscription`
+SUBSCRIPTION_MAX_TURNS = 4  # F7b-06i: los intervalos de salud que vale un «página suscrita»
+# F7b-06i: el desfase de reloj tolerado al leer `last_healthcheck_at` (la web, o la base en
+# `channel_accounts_health_due`, `0052`); más allá, es futura. Desde F7b-06j lo escribe la hora de
+# la base, así que el margen cubre el reloj de la web, las filas escritas antes por un worker y un
+# salto atrás del reloj de la base.
+HEALTH_CLOCK_SKEW = dt.timedelta(minutes=5)
+PAGE_OWNER = "channel_accounts_page_owner_ex"  # la página de Messenger o la de Instagram
+EXTERNAL_ID = r"^[A-Za-z0-9._-]{1,100}$"  # el PSID o el IGSID: un id opaco de Meta, sin espacios
 
 
 AccountStatus: type[models.TextChoices] = models.TextChoices(  # type: ignore[assignment]
@@ -28,26 +46,30 @@ AccountStatus: type[models.TextChoices] = models.TextChoices(  # type: ignore[as
 
 
 # Por qué una cuenta real no está bien (ADR-029 §2): un código de un conjunto cerrado, nunca el
-# texto de un error de Meta.
+# texto de un error de Meta. `PAGE_NOT_SUBSCRIBED` (F7b-06g, ADR-035 §10): la app del CRM no está
+# entre las apps suscritas de la página de Messenger o Instagram.
 STATUS_DETAILS = (
     "TOKEN_INVALID", "WEBHOOK_NOT_SEEN", "QUALITY_LOW", "LIMIT_REACHED", "DISCONNECTED_BY_ADMIN",
-    "PROVIDER_ERROR",
+    "PROVIDER_ERROR", "MESSAGES_ACCESS_OFF", "PAGE_NOT_SUBSCRIBED",
 )  # fmt: skip
 QUALITY_RATINGS = ("GREEN", "YELLOW", "RED", "UNKNOWN")  # a confirmar con la documentación de Meta
 LIMIT_TIERS = (  # a confirmar con la documentación de Meta
     "TIER_50", "TIER_250", "TIER_1K", "TIER_10K", "TIER_100K", "TIER_UNLIMITED", "TIER_NOT_SET",
 )  # fmt: skip
 META_ID = r"^[0-9]{5,30}$"  # `phone_number_id` y WABA: dígitos (a confirmar)
+ECHO_HEX = r"^[0-9a-f]{32}$"  # `secrets.token_hex(16)`: 128 bits (ADR-035 §6)
 
 
 # Por qué un mensaje saliente quedó `FAILED` (F7-06a; ADR-029 §8): un conjunto cerrado de códigos
 # propios, nunca el título ni el texto del error del proveedor. Los de la política y el despachador
 # y los que salen de la tabla de errores de Meta (`delivery.CODES`). `CONSENT_REVOKED`: F7-08b.
+# `MESSAGES_ACCESS_OFF` (F7b-05a, ADR-035 §6): el titular de Instagram apagó el acceso a mensajes.
 FAILURE_CODES = (
     "CONVERSATION_CLOSED", "CHANNEL_UNAVAILABLE", "CONTACT_BLOCKED", "WINDOW_CLOSED",
     "CONSENT_REVOKED", "ADAPTER_REJECTED", "RETRIES_EXHAUSTED", "TOKEN_INVALID",
     "RECIPIENT_UNREACHABLE", "PROVIDER_REJECTED", "PROVIDER_UNKNOWN", "RATE_LIMITED",
     "QUALITY_BLOCKED", "TEMPLATE_UNAVAILABLE", "PROVIDER_ERROR", "MEDIA_NOT_SCANNED",
+    "MESSAGES_ACCESS_OFF",
 )  # fmt: skip
 
 
@@ -64,6 +86,16 @@ class AttentionMode(models.TextChoices):
     HUMAN = "HUMAN"
     AI_ASSISTED = "AI_ASSISTED"  # los valores de IA existen; sus invariantes llegan con la Fase 8
     AI_AUTONOMOUS = "AI_AUTONOMOUS"
+
+
+class HumanRequest(models.TextChoices):
+    """Por qué se pidió que una persona atienda (F8-08n): lo que detectó el copiloto (ADR-034 §8:
+    el cliente pidió una persona, está molesto o lo pidió el modelo) o lo pidió quien atiende."""
+
+    ASKED_FOR_PERSON = "ASKED_FOR_PERSON"
+    UPSET = "UPSET"
+    MODEL = "MODEL"
+    AGENT = "AGENT"
 
 
 class Direction(models.TextChoices):
@@ -138,6 +170,10 @@ class ChannelAccount(TenantModel):
     quality_rating = models.CharField(max_length=10, null=True, blank=True)  # noqa: DJ001
     messaging_limit_tier = models.CharField(max_length=16, null=True, blank=True)  # noqa: DJ001
     last_healthcheck_at = models.DateTimeField(null=True, blank=True)
+    # F7b-06h: lo último que Meta dijo de la app del CRM en la página (`None`, no se sabe) y el
+    # último intento de comprobación que no terminó (la cola de `channel_accounts_health_due`).
+    page_subscribed = models.BooleanField(null=True, blank=True)
+    health_attempt_at = models.DateTimeField(null=True, blank=True)
     created_by_user_id = models.UUIDField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -156,6 +192,15 @@ class ChannelAccount(TenantModel):
                 condition=models.Q(deleted_at__isnull=True),
                 name="channel_accounts_external_uq",
             ),
+            ExclusionConstraint(  # F7b-06e (ADR-035 §3): una página, de una sola organización
+                name=PAGE_OWNER,  # sea cual sea la plataforma; en la misma, Messenger e Instagram
+                index_type="gist",
+                expressions=[
+                    (Coalesce("external_parent_id", "external_account_id"), RangeOperators.EQUAL),
+                    ("organization_id", RangeOperators.NOT_EQUAL),
+                ],
+                condition=models.Q(deleted_at__isnull=True, platform__in=SOCIAL),
+            ),
             one_of("platform", Platform, "channel_accounts_platform_ck"),
             one_of("status", AccountStatus, "channel_accounts_status_ck"),
             models.CheckConstraint(
@@ -173,6 +218,29 @@ class ChannelAccount(TenantModel):
                     & models.Q(external_parent_id__regex=META_ID)
                 ),
                 name="channel_accounts_whatsapp_ck",
+            ),
+            models.CheckConstraint(  # una página: sin padre ni la salud propia de WhatsApp
+                condition=~models.Q(platform="MESSENGER")
+                | (
+                    models.Q(external_account_id__regex=META_ID)
+                    & models.Q(external_parent_id__isnull=True)
+                    & models.Q(quality_rating__isnull=True, messaging_limit_tier__isnull=True)
+                ),
+                name="channel_accounts_messenger_ck",
+            ),
+            models.CheckConstraint(  # una cuenta de Instagram: su página vinculada es el padre
+                condition=~models.Q(platform="INSTAGRAM")
+                | (
+                    models.Q(external_account_id__regex=META_ID)
+                    & models.Q(external_parent_id__isnull=False)
+                    & models.Q(external_parent_id__regex=META_ID)
+                    & models.Q(quality_rating__isnull=True, messaging_limit_tier__isnull=True)
+                ),
+                name="channel_accounts_instagram_ck",
+            ),
+            models.UniqueConstraint(  # destino de la FK de las identidades: la misma plataforma
+                fields=["organization_id", "id", "platform"],
+                name="channel_accounts_org_platform_uq",
             ),
             models.CheckConstraint(  # el Sandbox no tiene WABA, credencial ni salud
                 condition=~models.Q(platform="SANDBOX")
@@ -207,10 +275,39 @@ class ChannelAccount(TenantModel):
                 | models.Q(messaging_limit_tier__in=LIMIT_TIERS),
                 name="channel_accounts_tier_ck",
             ),
+            models.CheckConstraint(  # F7b-06h: solo una página tiene apps suscritas
+                condition=models.Q(page_subscribed__isnull=True)
+                | models.Q(platform__in=["MESSENGER", "INSTAGRAM"]),
+                name="channel_accounts_page_subscribed_ck",
+            ),
         ]
 
     def __str__(self) -> str:
         return str(self.pk)
+
+    @property
+    def page_subscription(self) -> str | None:
+        """Lo que la pantalla puede afirmar de la suscripción de la página (F7b-06h), un código
+        cerrado: `SUBSCRIBED` solo si la última respuesta de Meta lo dijo, no es más vieja que
+        `subscription_max_age()` ni futura (más allá de `HEALTH_CLOCK_SKEW`), y la cuenta se sigue
+        comprobando; `UNKNOWN` si no se sabe (sin `META_APP_ID`, un rechazo que no cambia nada,
+        `ERROR`, una respuesta vieja); `None` fuera de Messenger e Instagram."""
+        if self.platform not in SOCIAL:
+            return None
+        if self.status_detail == "PAGE_NOT_SUBSCRIBED":
+            return "NOT_SUBSCRIBED"
+        checked = self.status in ("PENDING", "CONNECTED", "DEGRADED")
+        at, now = self.last_healthcheck_at, timezone.now()
+        fresh = at is not None and now - subscription_max_age() <= at <= now + HEALTH_CLOCK_SKEW
+        return "SUBSCRIBED" if checked and fresh and self.page_subscribed is True else "UNKNOWN"
+
+
+def subscription_max_age() -> dt.timedelta:
+    """Hasta cuándo vale el último «página suscrita» de Meta (F7b-06i): cuatro intervalos de la
+    comprobación de salud (una hora por omisión). Una cuenta que Meta no contesta (un corte o un
+    límite de tasa largo) conserva su última respuesta; pasada esta edad la pantalla ya no la
+    afirma, y una hora futura tampoco vale."""
+    return dt.timedelta(minutes=SUBSCRIPTION_MAX_TURNS * settings.CHANNEL_HEALTH_INTERVAL_MINUTES)
 
 
 # Lo que mide un valor de `core.sealed` (ADR-022 §3): de 32 a 4127 bytes y el formato 1 al frente.
@@ -283,6 +380,55 @@ class Credential(TenantModel):
         return str(self.pk)
 
 
+class ContactIdentity(TenantModel):
+    """El id de un contacto en una cuenta de Instagram o Messenger (ADR-035 §5; 02 §E.5): el IGSID
+    o el PSID, únicos por cuenta de canal y nunca globales. Sin teléfono y nunca se fusiona: dos
+    redes son dos contactos hasta que una persona los vincule (D-F7b-05). Inmutable: `crm_app` solo
+    lee e inserta. La plataforma es la de la cuenta (FK compuesta en la migración)."""
+
+    id = uuid7_primary_key()
+    contact = models.ForeignKey(
+        "contacts.Contact", models.PROTECT, related_name="+", db_constraint=False, db_index=False
+    )
+    channel_account = models.ForeignKey(
+        ChannelAccount, models.PROTECT, related_name="+", db_constraint=False, db_index=False
+    )
+    platform = models.CharField(max_length=16, choices=Platform.choices)
+    external_id = models.CharField(max_length=100)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "contact_identities"
+        indexes = [
+            models.Index(
+                fields=["organization_id", "contact"], name="contact_identities_contact_idx"
+            )
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization_id", "id"], name="contact_identities_org_id_uq"
+            ),
+            models.UniqueConstraint(  # destino de la FK de la conversación: su contacto y cuenta
+                fields=["organization_id", "id", "contact", "channel_account"],
+                name="contact_identities_thread_uq",
+            ),
+            models.UniqueConstraint(  # el PSID es por página y el IGSID por cuenta [S1] [S27]
+                fields=["organization_id", "channel_account", "external_id"],
+                name="contact_identities_external_uq",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(platform__in=SOCIAL), name="contact_identities_platform_ck"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(external_id__regex=EXTERNAL_ID),
+                name="contact_identities_external_ck",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return str(self.pk)
+
+
 class Conversation(TenantModel):
     """Un hilo de un contacto en una cuenta de canal. Tres ejes (§I): `status`, quién atiende
     (equipo y persona a la vez, ADR-007) y `attention_mode`. La asignación solo la escribirá
@@ -299,6 +445,12 @@ class Conversation(TenantModel):
     channel_account = models.ForeignKey(
         ChannelAccount, models.PROTECT, related_name="+", db_constraint=False, db_index=False
     )
+    # A quién responder en Instagram o Messenger (ADR-035 §5): obligatoria en esas cuentas
+    # (disparador) y del mismo contacto y cuenta que el hilo (FK compuesta, migración 0040).
+    contact_identity = models.ForeignKey(
+        ContactIdentity, models.PROTECT, null=True, blank=True, related_name="+",
+        db_constraint=False, db_index=False,
+    )  # fmt: skip
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
     attention_mode = models.CharField(
         max_length=16, choices=AttentionMode.choices, default=AttentionMode.HUMAN
@@ -331,6 +483,16 @@ class Conversation(TenantModel):
     )
     resolved_at = models.DateTimeField(null=True, blank=True)
     closed_at = models.DateTimeField(null=True, blank=True)
+    # Instagram o Messenger (ADR-035 §4): desde cuándo otra app controla el hilo (`standby`). La
+    # fija un entrante en `standby` y la limpia uno normal, el más reciente según el canal.
+    standby_since = models.DateTimeField(null=True, blank=True)
+    # F8-08n: alguien pidió que una persona la atienda (quién, cuándo y por qué); se borra cuando
+    # una persona responde al cliente o la toma, o a mano. El historial, en la auditoría.
+    human_requested_at = models.DateTimeField(null=True, blank=True)
+    human_request_reason = models.CharField(  # noqa: DJ001
+        max_length=20, choices=HumanRequest.choices, null=True, blank=True
+    )
+    human_requested_by_user_id = models.UUIDField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     version = models.PositiveIntegerField(default=1)
@@ -356,6 +518,17 @@ class Conversation(TenantModel):
             models.Index(  # la lista del Inbox: lo más reciente primero (F6-02)
                 fields=["organization_id", "-last_message_at", "-id"],
                 name="conversations_org_recent_idx",
+            ),
+            models.Index(  # «Sin responder» (F6-09): CONCURRENTLY en la migración 0037
+                fields=["organization_id", "-last_message_at", "-id"],
+                condition=models.Q(last_message_direction="INBOUND")
+                & ~models.Q(status__in=["RESOLVED", "CLOSED"]),
+                name="conversations_unanswered_idx",
+            ),
+            models.Index(  # las cuentas con hilos en `standby` (F7b-06b): CONCURRENTLY en la 0048
+                fields=["organization_id", "channel_account"],
+                condition=models.Q(standby_since__isnull=False) & ~models.Q(status="CLOSED"),
+                name="conversations_standby_idx",
             ),
         ]
         constraints = [
@@ -402,6 +575,20 @@ class Conversation(TenantModel):
                     last_message_direction__in=["INBOUND", "OUTBOUND"],
                 ),
                 name="conversations_preview_ck",
+            ),
+            models.CheckConstraint(  # F8-08n: la solicitud va entera (quién, cuándo, por qué) o no
+                condition=models.Q(
+                    human_requested_at__isnull=True,
+                    human_request_reason__isnull=True,
+                    human_requested_by_user_id__isnull=True,
+                )
+                | models.Q(
+                    human_requested_at__isnull=False,
+                    human_requested_by_user_id__isnull=False,
+                    human_request_reason__isnull=False,  # un NULL pasaría el `IN` de un CHECK
+                    human_request_reason__in=HumanRequest.values,
+                ),
+                name="conversations_human_request_ck",
             ),
         ]
 
@@ -450,6 +637,9 @@ class Message(TenantModel):
     # instantánea de `PolicyDecision.as_json()` (permitido, modo, motivo y horas), nunca texto.
     policy_decision = models.JSONField(null=True, blank=True)
     file_id = models.UUIDField(null=True, blank=True)  # el medio saliente: FK compuesta (0027)
+    # F7b-05c (ADR-035 §6): la ficha aleatoria (128 bits, `secrets`) que un envío de Instagram o
+    # Messenger lleva en `message.metadata`; su eco la devuelve. Nunca el id ni datos del mensaje.
+    echo_token = models.CharField(max_length=32, null=True, blank=True)  # noqa: DJ001
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -483,6 +673,16 @@ class Message(TenantModel):
                 fields=["organization_id", "client_message_id"],
                 condition=models.Q(client_message_id__isnull=False),
                 name="messages_client_uq",
+            ),
+            models.UniqueConstraint(  # F7b-05c: la ficha del eco, única por cuenta (0046)
+                fields=["organization_id", "channel_account", "echo_token"],
+                condition=models.Q(echo_token__isnull=False),
+                name="messages_echo_token_uq",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(echo_token__isnull=True)
+                | models.Q(direction="OUTBOUND", echo_token__regex=ECHO_HEX),
+                name="messages_echo_token_ck",
             ),
             one_of("direction", Direction, "messages_direction_ck"),
             one_of("sender_type", SenderType, "messages_sender_ck"),
@@ -676,6 +876,96 @@ class ConversationAssignment(TenantModel):
         return str(self.pk)
 
 
+SHORTCUT = r"^[a-z0-9_-]{1,32}$"  # el atajo sin la `/`: `delivery`, `garantia_12m`
+
+
+def _soft(table: str) -> list[models.BaseConstraint]:
+    """Lo común de las dos tablas de respuestas rápidas: destino de FKs compuestas, una borrada
+    no está activa y la versión empieza en 1."""
+    return [
+        models.UniqueConstraint(fields=["organization_id", "id"], name=f"{table}_org_id_uq"),
+        models.CheckConstraint(
+            condition=models.Q(deleted_at__isnull=True) | models.Q(is_active=False),
+            name=f"{table}_deleted_ck",
+        ),
+        models.CheckConstraint(condition=models.Q(version__gte=1), name=f"{table}_version_ck"),
+    ]
+
+
+class QuickReplyCategory(TenantModel):
+    """Categoría de respuestas rápidas (02 §E.6): Ventas, Delivery… Se borra lógicamente. El
+    nombre es único, sin distinguir mayúsculas, entre las vivas."""
+
+    id = uuid7_primary_key()
+    name = models.CharField(max_length=100)
+    sort_order = models.IntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+    created_by_user_id = models.UUIDField(null=True, blank=True)
+    updated_by_user_id = models.UUIDField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    deleted_at = models.DateTimeField(null=True, blank=True)
+    deleted_by_user_id = models.UUIDField(null=True, blank=True)
+    version = models.PositiveIntegerField(default=1)
+
+    class Meta:
+        db_table = "quick_reply_categories"
+        constraints = [
+            *_soft("qr_categories"),
+            models.UniqueConstraint(
+                "organization_id",
+                Lower("name"),
+                condition=models.Q(deleted_at__isnull=True),
+                name="qr_categories_name_uq",
+            ),  # fmt: skip
+        ]
+
+
+class QuickReply(TenantModel):
+    """Respuesta rápida de la organización (02 §E.6, §20), visible para toda ella (ORG): solo
+    texto, con las variables de la lista cerrada de `apps.conversations.quick_replies`. El atajo
+    es único entre las activas y vivas. Se borra lógicamente."""
+
+    id = uuid7_primary_key()
+    shortcut = models.CharField(max_length=32)
+    title = models.CharField(max_length=100)
+    category = models.ForeignKey(
+        QuickReplyCategory, models.PROTECT, related_name="+", db_constraint=False, db_index=False
+    )
+    body = models.TextField()
+    is_active = models.BooleanField(default=True)
+    usage_count = models.PositiveIntegerField(default=0)
+    created_by_user_id = models.UUIDField(null=True, blank=True)
+    updated_by_user_id = models.UUIDField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    deleted_at = models.DateTimeField(null=True, blank=True)
+    deleted_by_user_id = models.UUIDField(null=True, blank=True)
+    version = models.PositiveIntegerField(default=1)
+
+    class Meta:
+        db_table = "quick_replies"
+        indexes = [
+            models.Index(fields=["organization_id", "category"], name="quick_replies_category_idx")
+        ]
+        constraints = [
+            *_soft("quick_replies"),
+            models.UniqueConstraint(
+                fields=["organization_id", "shortcut"],
+                condition=models.Q(is_active=True, deleted_at__isnull=True),
+                name="quick_replies_shortcut_uq",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(shortcut__regex=SHORTCUT), name="quick_replies_shortcut_ck"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(body__regex=r"\S")
+                & models.Q(LessThanOrEqual(Length("body"), BODY_MAX)),
+                name="quick_replies_body_ck",
+            ),
+        ]
+
+
 INGRESS_STATUSES = ("RECEIVED", "PROCESSING", "PROCESSED", "IGNORED", "FAILED", "DEAD")
 INGRESS_MAX_ATTEMPTS = 8  # tras 8 intentos un ítem queda `DEAD` (ADR-029 §3)
 
@@ -692,8 +982,11 @@ class WebhookIngress(models.Model):
     provider = models.CharField(max_length=16)
     event_key = models.CharField(max_length=700)
     kind = models.CharField(max_length=16)
-    waba_id = models.CharField(max_length=30)
+    waba_id = models.CharField(max_length=30, null=True)  # noqa: DJ001 — solo WhatsApp
     phone_number_id = models.CharField(max_length=30, null=True)  # noqa: DJ001
+    # F7b-04a (ADR-035 §4): la plataforma y, en Instagram y Messenger, el `entry.id` que enruta.
+    platform = models.CharField(max_length=16, db_default="WHATSAPP")
+    routing_id = models.CharField(max_length=30, null=True)  # noqa: DJ001
     status = models.CharField(max_length=16, db_default="RECEIVED")
     payload = models.JSONField(null=True)
     payload_hash = models.CharField(max_length=64)
@@ -725,6 +1018,18 @@ class WebhookIngress(models.Model):
                     payload_hash__regex=r"^[0-9a-f]{64}$", attempts__lte=INGRESS_MAX_ATTEMPTS
                 ),
                 name="webhook_ingress_shape_ck",
+            ),
+            models.CheckConstraint(  # WhatsApp enruta por número y WABA; los demás, por cuenta
+                condition=models.Q(
+                    platform="WHATSAPP", waba_id__isnull=False, routing_id__isnull=True
+                )
+                | models.Q(
+                    platform__in=SOCIAL,
+                    waba_id__isnull=True,
+                    phone_number_id__isnull=True,
+                    routing_id__isnull=False,
+                ),
+                name="webhook_ingress_route_ck",
             ),
         ]
         indexes = [

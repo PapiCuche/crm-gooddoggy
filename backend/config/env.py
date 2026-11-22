@@ -21,6 +21,9 @@ _ORIGIN = re.compile(
 )
 # `versión:clave`. 43 caracteres de base64 para URL son 32 bytes; el relleno `=` es opcional.
 _KEY = re.compile(r"([1-9][0-9]{0,4}):([A-Za-z0-9_-]{43})=?")
+# ADR-041: variables que solo aceptan los settings `local`, y la forma del simulador de Graph.
+LOCAL_ONLY = ("META_GRAPH_SIMULATOR_URL",)
+_SIMULATOR = re.compile(r"http://[a-z0-9][a-z0-9.-]{0,252}:([1-9][0-9]{0,4})")
 
 
 def required(name: str) -> str:
@@ -94,6 +97,24 @@ def origin(name: str) -> str:
     return value
 
 
+def refuse_local_only() -> None:
+    """ADR-041: production, migrate y test no arrancan con una variable de `LOCAL_ONLY`, aunque
+    venga vacía. Solo se nombra la variable."""
+    found = [name for name in LOCAL_ONLY if name in os.environ]
+    if found:
+        raise ImproperlyConfigured("Variables solo del stack local: " + ", ".join(found))
+
+
+def simulator(name: str) -> str:
+    """ADR-041: el origen del simulador local, `http://<host>:<puerto>` en minúsculas y sin ruta,
+    consulta ni credenciales; o vacío."""
+    value = os.environ.get(name, "").strip()
+    found = _SIMULATOR.fullmatch(value)
+    if value and not (found and int(found.group(1)) <= 65535):
+        raise ImproperlyConfigured(f"{name} debe ser http://<host>:<puerto>, sin ruta")
+    return value
+
+
 def csv_list(name: str) -> list[str]:
     return [item.strip() for item in os.environ.get(name, "").split(",") if item.strip()]
 
@@ -155,6 +176,34 @@ def check_meta(
     if not 1 <= send_limit[0] <= 60 or not 1 <= send_limit[1] <= 60 or not broker:
         raise ImproperlyConfigured(
             "CHANNEL_SEND_LIMIT (1 a 60 envíos, ventana de 1 a 60 s) y CELERY_BROKER_URL"
+        )
+
+
+def check_ai_throttle(throttle: tuple[int, int]) -> None:
+    """El tope de escrituras de las rutas de cuentas del proveedor de IA (F8-03d, F8-03e): sin él,
+    la prueba de conexión se repetiría en bucle contra el proveedor. Ventana menor que la calma de
+    la purga del acceso."""
+    limit, window = throttle
+    if not (1 <= limit <= 60 and 60 <= window <= 840):
+        raise ImproperlyConfigured("AI_ACCOUNT_THROTTLE: 1 a 60 peticiones, ventana de 60 a 840 s")
+
+
+def check_ai_copilot_throttle(throttle: tuple[int, int]) -> None:
+    """El tope por persona de las sugerencias del copiloto (F8-08h): sin él, una persona gastaría
+    el presupuesto de todos. Ventana menor que la calma de la purga del acceso."""
+    limit, window = throttle
+    if not (1 <= limit <= 60 and 60 <= window <= 840):
+        raise ImproperlyConfigured("AI_COPILOT_THROTTLE: 1 a 60 peticiones, ventana de 60 a 840 s")
+
+
+def check_ai_copilot_org_throttle(throttle: tuple[int, int], person: tuple[int, int]) -> None:
+    """El tope por organización del copiloto (F8-08m): sin él, una organización agotaría el
+    servidor y el proveedor; nunca por debajo del de una persona, y su ventana, menor que la calma
+    de la purga del acceso."""
+    limit, window = throttle
+    if not (person[0] <= limit <= 600 and 60 <= window <= 840):
+        raise ImproperlyConfigured(
+            "AI_COPILOT_ORG_THROTTLE: del tope por persona a 600 peticiones, ventana de 60 a 840 s"
         )
 
 

@@ -11,6 +11,8 @@ from config import env  # noqa: E402
 from config.settings.base import *  # noqa: E402,F403
 
 DEBUG = True
+# ADR-041: solo aquí. Con ella, `core.http` manda las llamadas a Graph al simulador del stack.
+META_GRAPH_SIMULATOR_URL = env.simulator("META_GRAPH_SIMULATOR_URL")
 SANDBOX_INBOUND_ENABLED = env.boolean("SANDBOX_INBOUND_ENABLED", True)  # F1-14
 # Compose (F1-10): sondas internas por nombre de servicio (p. ej. `backend`).
 ALLOWED_HOSTS = ["localhost", "127.0.0.1", *env.csv_list("DJANGO_ALLOWED_HOSTS")]

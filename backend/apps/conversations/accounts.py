@@ -1,4 +1,5 @@
-"""Cuentas de WhatsApp: conectar, rotar el token y desconectar (F7-02c; ADR-029 §2, ADR-022).
+"""Cuentas de WhatsApp: conectar, rotar el token y desconectar (F7-02c; ADR-029 §2, ADR-022). Y
+una página de Messenger o una cuenta de Instagram (F7b-04a y F7b-06a, ADR-035 §3), igual.
 
 Los únicos escritores de la conexión de una cuenta real; solo la API y las tareas los importan. El
 token de acceso lo guarda `apps.conversations.credentials` (cifrado, atado a la cuenta); aquí se
@@ -13,14 +14,23 @@ import re
 from typing import Any
 from uuid import UUID
 
-from django.db import IntegrityError, transaction
+from django.db import IntegrityError, connections, transaction
 from django.db.models import QuerySet
+from django.db.models.functions import Now
 from django.utils import timezone
 
 from apps.access.selectors import AccessDenied, Denied, execution_context, has_permission
 from apps.audit.services import Entity, record
 from apps.conversations import credentials, graph
-from apps.conversations.models import META_ID, TOKEN_FORMAT, ChannelAccount, Credential, Platform
+from apps.conversations.models import (
+    META_ID,
+    PAGE_OWNER,
+    SOCIAL,
+    TOKEN_FORMAT,
+    ChannelAccount,
+    Credential,
+    Platform,
+)
 from core.ids import new_id
 from core.outbox import emit
 from core.tenancy.context import TenantContext
@@ -28,6 +38,7 @@ from core.tenancy.scope import require_scope
 
 NAME_MAX = 100
 NUMBER_REFUSED = "No se puede registrar ese número."  # el mismo texto, sea cual sea el motivo
+ACCOUNT_REFUSED = "No se puede registrar esa cuenta."  # lo mismo para una página o una cuenta
 ACCOUNT_FIELDS = ["credential_id", "last_healthcheck_at", "quality_rating", "messaging_limit_tier"]
 
 
@@ -42,9 +53,25 @@ def _allowed(ctx: TenantContext) -> None:
         raise AccessDenied(Denied.PERMISSION)
 
 
+def _db_now(alias: str) -> Any:
+    """La hora de PostgreSQL (F7b-06j): `last_healthcheck_at` se escribe con ella, la misma con la
+    que `channel_accounts_health_due` decide a quién le toca. El reloj del worker no cuenta."""
+    with connections[alias].cursor() as cursor:
+        cursor.execute("SELECT statement_timestamp()")
+        return cursor.fetchone()[0]
+
+
 def _id(value: Any, what: str) -> str:
     if not isinstance(value, str) or not re.fullmatch(META_ID, value):
         raise BadNumber(NUMBER_REFUSED) if what == "número" else ValueError(f"{what}: no válido")
+    return value
+
+
+def _name(value: Any) -> str:
+    if not isinstance(value, str) or not value.strip() or len(value) > NAME_MAX:
+        raise ValueError("nombre: de 1 a 100 caracteres de una línea")
+    if not value.isprintable():  # una sola línea, sin controles
+        raise ValueError("nombre: de 1 a 100 caracteres de una línea")
     return value
 
 
@@ -54,8 +81,49 @@ def _token(value: Any) -> str:
     return value
 
 
-def _live() -> QuerySet[ChannelAccount]:
-    return ChannelAccount.objects.filter(platform=Platform.WHATSAPP, deleted_at__isnull=True)
+REAL = (Platform.WHATSAPP, *SOCIAL)  # las cuentas que Meta puede poner en `ERROR` (ADR-035 §3)
+
+
+def _live(platform: str = Platform.WHATSAPP) -> QuerySet[ChannelAccount]:
+    return ChannelAccount.objects.filter(platform=platform, deleted_at__isnull=True)
+
+
+def _check(token: str, account: ChannelAccount) -> dict[str, Any]:
+    """Que Meta acepte `token` para la misma cuenta: el número en su WABA o, en Messenger e
+    Instagram, la misma página (y en Instagram, la misma cuenta vinculada: ADR-035 §3) con un rol
+    en ella: conectar la suscribe y rotar lee sus apps suscritas, que también pide el rol."""
+    if account.platform == Platform.WHATSAPP:
+        return graph.phone_number(
+            token, account.external_parent_id or "", account.external_account_id
+        )
+    instagram = account.platform == Platform.INSTAGRAM
+    page = account.external_parent_id if instagram else account.external_account_id
+    graph.page(token, page or "", account.external_account_id if instagram else None)
+    subscribed = graph.subscription(token, page or "")  # F7b-06e: y un rol en la página
+    return {"quality_rating": None, "messaging_limit_tier": None, "subscribed": subscribed}
+
+
+UNSUBSCRIBED = "PAGE_NOT_SUBSCRIBED"
+# F7b-06g (ADR-035 §10): (estado, detalle) de una cuenta social según su página tenga suscrita la
+# app del CRM o no. Solo estos pares cambian: `ERROR`, `TOKEN_INVALID`, `MESSAGES_ACCESS_OFF` y lo
+# demás siguen igual. Sin suscripción la cuenta aún envía (`DEGRADED`), pero no recibe.
+Pair = tuple[str, str | None]
+LOST: dict[Pair, Pair] = {
+    ("CONNECTED", None): ("DEGRADED", UNSUBSCRIBED),
+    ("PENDING", "WEBHOOK_NOT_SEEN"): ("PENDING", UNSUBSCRIBED),
+}
+BACK: dict[Pair, Pair] = {
+    ("DEGRADED", UNSUBSCRIBED): ("CONNECTED", None),
+    ("PENDING", UNSUBSCRIBED): ("PENDING", "WEBHOOK_NOT_SEEN"),
+}
+
+
+def _follow(account: ChannelAccount, subscribed: bool | None) -> None:
+    """Aplica a la cuenta (ya bloqueada) lo que Meta dice de la suscripción de su página. `None`
+    (no se sabe) y WhatsApp no cambian nada."""
+    if account.platform in SOCIAL and subscribed is not None:
+        key = (account.status, account.status_detail)
+        account.status, account.status_detail = (BACK if subscribed else LOST).get(key, key)
 
 
 def _announce(
@@ -68,7 +136,7 @@ def _announce(
     """Auditoría y outbox del hecho: solo ids y estados, nunca el token ni su cifrado."""
     ids = {"credential_id": credential_id} if credential_id else {}
     entity = Entity("channel_account", account.pk, account.name)
-    record(ctx, action, entity, changes, {"platform": "WHATSAPP", **ids})
+    record(ctx, action, entity, changes, {"platform": account.platform, **ids})
     emit(ctx, action, aggregate_type="channel_account", aggregate_id=account.pk, payload=ids)
 
 
@@ -81,18 +149,13 @@ def connect_whatsapp(
     `graph.GraphRejected`, `graph.GraphUnavailable`, `graph.ChannelNotEnabled`, `AccessDenied`."""
     alias = require_scope(ctx)
     number, waba, token = _id(phone_number_id, "número"), _id(waba_id, "WABA"), _token(access_token)
-    if (
-        not isinstance(name, str)
-        or not name.strip()
-        or len(name) > NAME_MAX
-        or not name.isprintable()
-    ):
-        raise ValueError("nombre: de 1 a 100 caracteres de una línea")
+    _name(name)
     _allowed(ctx)
     seen = graph.phone_number(token, waba, number)  # sin tocar la base: antes de guardar nada
-    account_id, now = new_id(), timezone.now()
+    account_id = new_id()
     try:
         with transaction.atomic(using=alias):
+            now = _db_now(alias)
             credential = credentials.store(ctx, account_id, token)
             account = ChannelAccount.objects.using(alias).create(
                 id=account_id, platform=Platform.WHATSAPP, name=name, external_account_id=number,
@@ -111,27 +174,86 @@ def connect_whatsapp(
     return account, credential
 
 
+def connect_social(
+    ctx: TenantContext, *, platform: str, name: str, page_id: str, access_token: str,
+    instagram_account_id: str | None = None,
+) -> tuple[ChannelAccount, Credential]:  # fmt: skip
+    """Registra una página de Messenger o la cuenta de Instagram vinculada a una página (ADR-035
+    §3), en un paso: valida los formatos, comprueba con Meta que el token gestiona la página (y que
+    su cuenta de Instagram es la dada), suscribe la app a la página y guarda la cuenta `PENDING` con
+    su credencial cifrada. La cuenta registrada (la página o la de Instagram) mal formada o ya
+    registrada en cualquier organización, o su página ya conectada en otra organización con
+    cualquiera de las dos plataformas (F7b-06e), es el mismo `BadNumber`; el resto, como
+    `connect_whatsapp`.
+    """
+    alias = require_scope(ctx)
+    if platform not in (Platform.MESSENGER, Platform.INSTAGRAM):
+        raise ValueError("plataforma: MESSENGER o INSTAGRAM")
+    instagram = platform == Platform.INSTAGRAM
+    if instagram != (instagram_account_id is not None):
+        raise ValueError("la cuenta de Instagram va solo con INSTAGRAM")
+    external = instagram_account_id if instagram else page_id
+    if not isinstance(external, str) or not re.fullmatch(META_ID, external):
+        raise BadNumber(ACCOUNT_REFUSED)
+    page, token = _id(page_id, "página"), _token(access_token)
+    _name(name)
+    _allowed(ctx)
+    seen = graph.page(token, page, instagram_account_id)  # antes de guardar nada
+    # Antes de la unicidad, que decide la base al guardar: suscribir la misma app a una página ya
+    # suscrita no cambia nada en Meta, así que una conexión rechazada después no deja nada nuevo.
+    graph.subscribe(token, page)
+    account_id = new_id()
+    try:
+        with transaction.atomic(using=alias):
+            # De una en una por página (la de Facebook en las dos plataformas), ya sin llamadas a
+            # Meta: dos organizaciones que la guardan a la vez se esperarían la una a la otra en la
+            # `EXCLUDE` (un deadlock, un 500); así, la segunda ve la primera y recibe `BadNumber`.
+            # Dos páginas cuyo hash coincide solo se esperan un momento.
+            with connections[alias].cursor() as cursor:
+                key = f"channel_page:{page}"
+                cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", [key])
+            credential = credentials.store(ctx, account_id, token)
+            account = ChannelAccount.objects.using(alias).create(
+                id=account_id, platform=platform, name=name, external_account_id=external,
+                external_parent_id=page if instagram else None,
+                display_identifier="" if instagram else seen["name"],  # el @usuario: F7b-04c
+                status="PENDING", status_detail="WEBHOOK_NOT_SEEN",
+                last_healthcheck_at=_db_now(alias), credential_id=credential.pk,
+                created_by_user_id=ctx.user_id,
+            )  # fmt: skip
+            _announce(ctx, "channel_account.connected", account, None, str(credential.pk))
+    except IntegrityError as error:  # el error de PostgreSQL (con la RLS, sin valores) no sale
+        taken = getattr(getattr(error.__cause__, "diag", None), "constraint_name", "")
+        if taken not in ("channel_accounts_external_uq", PAGE_OWNER):
+            raise
+        raise BadNumber(ACCOUNT_REFUSED) from None
+    return account, credential
+
+
 def rotate_token(
-    ctx: TenantContext, *, channel_account_id: UUID, access_token: str
-) -> tuple[ChannelAccount, Credential]:
+    ctx: TenantContext, *, channel_account_id: UUID, access_token: str,
+    platform: str = Platform.WHATSAPP,
+) -> tuple[ChannelAccount, Credential]:  # fmt: skip
     """Cambia el token de una cuenta: el nuevo se comprueba con Meta contra el mismo número y el
     mismo WABA, sustituye al anterior (que se invalida y pierde su cifrado) y limpia
     `TOKEN_INVALID`. Una cuenta `ERROR` por `TOKEN_INVALID` no se comprueba nunca, así que sería un
     callejón sin salida: como Meta acaba de verificar el token nuevo contra su mismo número y WABA
     (lo mismo que la comprobación de salud), vuelve a `CONNECTED`, o a `DEGRADED` si la calidad es
-    baja (la base prohíbe volver a `PENDING`). Otro estado no cambia.
-    `DoesNotExist` si no es una cuenta viva de WhatsApp de esta organización."""
+    baja (la base prohíbe volver a `PENDING`). Otro estado no cambia. En Messenger e Instagram
+    (F7b-06a) se comprueba la misma página con `graph.page` y no hay calidad ni nivel.
+    `DoesNotExist` si no es una cuenta viva de `platform` de esta organización."""
     alias = require_scope(ctx)
     token = _token(access_token)
     _allowed(ctx)
-    account = _live().using(alias).get(pk=channel_account_id)
-    seen = graph.phone_number(token, account.external_parent_id or "", account.external_account_id)
+    account = _live(platform).using(alias).get(pk=channel_account_id)
+    seen = _check(token, account)
     with transaction.atomic(using=alias):
-        account = _live().using(alias).select_for_update(no_key=True).get(pk=channel_account_id)
-        old = account.credential_id
+        found = _live(platform).using(alias).select_for_update(no_key=True).annotate(db_now=Now())
+        account = found.get(pk=channel_account_id)
+        old, status, detail = account.credential_id, account.status, account.status_detail
         credentials.revoke(ctx, old)  # antes de guardar la nueva: una viva por cuenta
         credential = credentials.store(ctx, account.pk, token, rotated=True)
-        account.credential_id, account.last_healthcheck_at = credential.pk, timezone.now()
+        account.credential_id, account.last_healthcheck_at = credential.pk, account.db_now
         account.quality_rating = seen["quality_rating"]
         account.messaging_limit_tier = seen["messaging_limit_tier"]
         changed: dict[str, Any] = {"credential_id": [str(old) if old else None, str(credential.pk)]}
@@ -141,22 +263,32 @@ def rotate_token(
                 low = seen["quality_rating"] in ("YELLOW", "RED")
                 account.status = "DEGRADED" if low else "CONNECTED"
                 account.status_detail = "QUALITY_LOW" if low else None
-                changed["status"] = ["ERROR", account.status]
+        if account.platform in SOCIAL:  # F7b-06g/h: lo que Meta acaba de decir de la página
+            account.page_subscribed = seen["subscribed"]
+            _follow(account, seen["subscribed"])
+        if account.status != status:
+            changed["status"] = [status, account.status]
+        if account.status_detail != detail:  # también uno que se limpia (F7b-06h)
+            changed["status_detail"] = [detail, account.status_detail]
         account.version += 1
-        fields = [*ACCOUNT_FIELDS, "status", "status_detail", "version", "updated_at"]
+        fields = [*ACCOUNT_FIELDS, "status", "status_detail", "page_subscribed", "version",
+                  "updated_at"]  # fmt: skip
         account.save(using=alias, update_fields=fields)
         _announce(ctx, "channel_account.credentials_rotated", account, changed, str(credential.pk))
     return account, credential
 
 
-def disconnect(ctx: TenantContext, *, channel_account_id: UUID) -> None:
+def disconnect(
+    ctx: TenantContext, *, channel_account_id: UUID, platform: str = Platform.WHATSAPP
+) -> None:
     """Desconecta la cuenta: queda borrada (`DISCONNECTED`, `DISCONNECTED_BY_ADMIN`), su credencial
-    se invalida y su número se libera. `DoesNotExist` si no es una cuenta viva de WhatsApp de esta
-    organización."""
+    se invalida y su número (o su página) se libera. `DoesNotExist` si no es una cuenta viva de
+    `platform` de esta organización."""
     alias = require_scope(ctx)
     _allowed(ctx)
     with transaction.atomic(using=alias):
-        account = _live().using(alias).select_for_update(no_key=True).get(pk=channel_account_id)
+        found = _live(platform).using(alias).select_for_update(no_key=True)
+        account = found.get(pk=channel_account_id)
         old = account.status
         credentials.revoke(ctx, account.credential_id)
         account.status, account.status_detail = "DISCONNECTED", "DISCONNECTED_BY_ADMIN"
@@ -183,7 +315,8 @@ def _demote(
     sin permiso de persona): `to` con su `detail`, auditado y con evento, solo con ids."""
     alias = require_scope(ctx)
     with transaction.atomic(using=alias):
-        found = _live().using(alias).select_for_update(no_key=True)
+        real = ChannelAccount.objects.filter(platform__in=REAL, deleted_at__isnull=True)
+        found = real.using(alias).select_for_update(no_key=True)
         found = found.filter(pk=account_id, status__in=only)
         if credential_id is not None:  # el resultado es de ESA credencial: ¿se rotó mientras tanto?
             found = found.filter(credential_id=credential_id)
@@ -208,6 +341,15 @@ def mark_token_invalid(
                    action="channel_account.token_invalid", credential_id=credential_id)  # fmt: skip
 
 
+def mark_messages_access_off(ctx: TenantContext, *, channel_account_id: UUID) -> bool:
+    """El titular de Instagram apagó «Allow access to messages» (ADR-035 §3, `200`/`2534041`): la
+    cuenta pasa a `ERROR` (`MESSAGES_ACCESS_OFF`) y deja de enviar hasta que se reconecte. `False`
+    si ya estaba `ERROR` o `DISCONNECTED`, o ya no está viva."""
+    only = ("PENDING", "CONNECTED", "DEGRADED")
+    return _demote(ctx, channel_account_id, only=only, to="ERROR", detail="MESSAGES_ACCESS_OFF",
+                   action="channel_account.messages_access_off")  # fmt: skip
+
+
 def mark_degraded(ctx: TenantContext, *, channel_account_id: UUID) -> bool:
     """Meta rechazó un envío por la calidad del número (ADR-029 §8): `CONNECTED` pasa a `DEGRADED`
     (`QUALITY_LOW`), con aviso. `False` si no estaba `CONNECTED`."""
@@ -216,23 +358,68 @@ def mark_degraded(ctx: TenantContext, *, channel_account_id: UUID) -> bool:
                    action="channel_account.degraded")  # fmt: skip
 
 
+CHECKED = ("PENDING", "CONNECTED", "DEGRADED")  # las que se comprueban (ADR-029 §12)
+
+
 def health_target(
     ctx: TenantContext, *, channel_account_id: UUID
-) -> tuple[str, str, Credential] | None:
+) -> tuple[str, str, str, Credential] | None:
     """Lo que la comprobación de salud necesita de una cuenta viva `PENDING`, `CONNECTED` o
-    `DEGRADED`: su WABA, su número y su credencial viva (la fila cifrada: el token se abre solo
-    durante la llamada a Meta). `None` si ya no se comprueba o no tiene credencial."""
+    `DEGRADED`: su plataforma, su WABA (o su página en Messenger e Instagram, F7b-06g), su número
+    (o su cuenta) y su credencial viva (la fila cifrada: el token se abre solo durante la llamada a
+    Meta). `None` si ya no se comprueba o no tiene credencial."""
     alias = require_scope(ctx)
-    account = _live().using(alias).filter(
-        pk=channel_account_id, status__in=("PENDING", "CONNECTED", "DEGRADED")
-    ).first()  # fmt: skip
+    real = ChannelAccount.objects.filter(platform__in=REAL, deleted_at__isnull=True)
+    account = real.using(alias).filter(pk=channel_account_id, status__in=CHECKED).first()
     live = Credential.objects.using(alias).filter(
         pk=account.credential_id if account else None, owner_id=channel_account_id,
         revoked_at__isnull=True,
     )  # fmt: skip
     if account is None or (credential := live.first()) is None:
         return None
-    return account.external_parent_id or "", account.external_account_id, credential
+    page = account.external_account_id if account.platform == Platform.MESSENGER else None
+    parent = page or account.external_parent_id or ""
+    return account.platform, parent, account.external_account_id, credential
+
+
+def apply_subscription(
+    ctx: TenantContext, *, channel_account_id: UUID, credential_id: UUID, subscribed: bool | None
+) -> bool:
+    """Una comprobación de una cuenta de Messenger o Instagram (F7b-06g, ADR-035 §10): guarda la
+    hora y, si la página perdió o recuperó la suscripción de la app, el estado (`_follow`), auditado
+    con ids y códigos. Solo si `credential_id` sigue siendo la credencial de la cuenta (no se rotó
+    mientras tanto). `False` si ya no se comprueba."""
+    alias = require_scope(ctx)
+    with transaction.atomic(using=alias):
+        real = ChannelAccount.objects.filter(platform__in=SOCIAL, deleted_at__isnull=True)
+        found = real.using(alias).select_for_update(no_key=True).annotate(db_now=Now()).filter(
+            pk=channel_account_id, status__in=CHECKED, credential_id=credential_id
+        )  # fmt: skip
+        if (account := found.first()) is None:
+            return False
+        before = (account.status, account.status_detail)
+        _follow(account, subscribed)
+        account.last_healthcheck_at, account.page_subscribed = account.db_now, subscribed
+        fields = ["last_healthcheck_at", "page_subscribed", "updated_at"]
+        now = (account.status, account.status_detail)
+        if now != before:
+            account.version += 1
+            fields += ["status", "status_detail", "version"]
+        account.save(using=alias, update_fields=fields)
+        if now != before:
+            changes = {"status": [before[0], now[0]], "status_detail": [before[1], now[1]]}
+            _announce(ctx, "channel_account.health", account, changes, None)
+        return True
+
+
+def note_attempt(ctx: TenantContext, *, channel_account_id: UUID) -> None:
+    """Un intento de comprobación que no terminó (F7b-06h): guarda solo su hora, para que la cuenta
+    espere su turno como las demás. Ni el estado, ni la última comprobación, ni la versión, ni la
+    auditoría: no se supo nada nuevo de la cuenta. La hora es la de la base, la misma con la que
+    `channel_accounts_health_due` decide (un intento «futuro» cuenta como ninguno)."""
+    alias = require_scope(ctx)
+    found = ChannelAccount.objects.using(alias).filter(pk=channel_account_id)
+    found.update(health_attempt_at=Now())
 
 
 def apply_health(ctx: TenantContext, *, channel_account_id: UUID, quality: str, tier: str) -> bool:
@@ -243,7 +430,7 @@ def apply_health(ctx: TenantContext, *, channel_account_id: UUID, quality: str, 
     `False` si la cuenta ya no se comprueba (desconectada, en `ERROR`, borrada)."""
     alias = require_scope(ctx)
     with transaction.atomic(using=alias):
-        found = _live().using(alias).select_for_update(no_key=True)
+        found = _live().using(alias).select_for_update(no_key=True).annotate(db_now=Now())
         account = found.filter(
             pk=channel_account_id, status__in=("PENDING", "CONNECTED", "DEGRADED")
         ).first()  # fmt: skip
@@ -263,7 +450,7 @@ def apply_health(ctx: TenantContext, *, channel_account_id: UUID, quality: str, 
         account.quality_rating, account.messaging_limit_tier = quality, tier
         changes = {key: [was, getattr(account, key)] for key, was in before.items()
                    if getattr(account, key) != was}  # fmt: skip
-        account.last_healthcheck_at = timezone.now()
+        account.last_healthcheck_at = account.db_now  # la hora de la base, leída con el bloqueo
         fields = ["status", "status_detail", "quality_rating", "messaging_limit_tier"]
         if changes:
             account.version += 1

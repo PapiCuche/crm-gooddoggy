@@ -1,5 +1,6 @@
-"""Tope de peticiones de cada persona a las rutas de cuentas de WhatsApp (F7-02e): conectar y
-rotar preguntan a Meta cada vez, así que nadie puede hacerlo sin límite.
+"""Tope de peticiones de cada persona a las rutas de cuentas de WhatsApp (F7-02e), Messenger e
+Instagram (F7b-06a): conectar y rotar preguntan a Meta cada vez, así que nadie puede hacerlo sin
+límite.
 
 Es un middleware **fuera** del scope de tenant: una ruta de tenant que acaba en error deshace su
 transacción (`TenantResolutionMiddleware`), y con ella el contador, justo el caso que se quiere
@@ -9,7 +10,7 @@ miembro, aunque no gestione canales, agotara el tope de la organización.
 
 Ventana fija en la tabla de contadores de acceso (`login_throttles`, de plataforma, compartida
 entre instancias), en una sola sentencia que bloquea la fila. Cuenta antes de mirar nada más;
-rechaza (429 con `Retry-After`) al pasar el tope. Las tres rutas comparten el contador. La purga
+rechaza (429 con `Retry-After`) al pasar el tope. Todas esas rutas comparten el contador. La purga
 del acceso borra estas filas cuando su ventana ya pasó (la ventana es menor que su calma).
 
 La subida de un medio (F7-09b2) tiene su contador por persona (`med:usr:<id>`). Su 422
@@ -28,7 +29,7 @@ from django.http import HttpRequest, HttpResponse
 from apps.conversations import outbound_media
 from core.api.errors import error_response
 
-PATH = re.compile(r"^/api/v1/o/[^/]+/channels/whatsapp/")
+PATH = re.compile(r"^/api/v1/o/[^/]+/channels/(?:whatsapp|messenger|instagram)/")
 MEDIA = re.compile(r"^/api/v1/o/[^/]+/conversations/[^/]+/media/$")
 _COUNT = """
 INSERT INTO login_throttles AS t (key, failures, blocked_until, updated_at)

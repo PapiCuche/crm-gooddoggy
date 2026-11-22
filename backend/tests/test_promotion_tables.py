@@ -17,7 +17,7 @@ from core.money import Rounding, round_amount
 from core.tenancy.scope import tenant_scope
 from tests import test_authorization
 from tests.test_memberships import ctx
-from tests.test_prices import price_list
+from tests.test_prices import price_list, seeding
 from tests.test_pricing_engine import LIMA, T0, human, person, row
 
 world = test_authorization.world
@@ -82,7 +82,7 @@ def promo(
     }
     wanted = {**wanted, **fields}
     status = wanted.pop("status")  # los objetivos y listas solo entran en un borrador (0004)
-    with tenant_scope(ctx(org)):
+    with seeding(org):
         made = Promotion.objects.create(
             discount_type=kind, value=Decimal(value), starts_at=starts, ends_at=ends, **wanted
         )
@@ -102,6 +102,7 @@ def final(org: UUID, user: Any, v: UUID, listed: UUID, at: datetime, **query: An
 def shop(world: Any) -> Any:
     class Shop:
         viewer = person(world, {"prices.view": None})
+        manager = person(world, {"prices.manage": None})  # escribe promociones (pricing/0011)
         listed = price_list(world.a, is_default=True)
         iphone = tree(world.a, "celulares", "iphone")
         make = brand(world.a)
@@ -165,7 +166,7 @@ def test_composite_foreign_keys_refuse_another_organizations_rows(world: Any, sh
         ),
     ]
     for model, values, name in cases:
-        with pytest.raises(IntegrityError, match=name), tenant_scope(ctx(world.a)):
+        with pytest.raises(IntegrityError, match=name), tenant_scope(ctx(world.a, shop.manager)):
             model.objects.create(**values)
 
 
@@ -191,7 +192,8 @@ def test_promotion_check_constraints(world: Any, values: dict[str, Any], name: s
         "starts_at": D1,
         "ends_at": D8,
     }
-    with pytest.raises(IntegrityError, match=name), tenant_scope(ctx(world.a)):
+    manager = ctx(world.a, person(world, {"prices.manage": None}))
+    with pytest.raises(IntegrityError, match=name), tenant_scope(manager):
         Promotion.objects.create(**{**base, **values})
 
 
@@ -200,10 +202,11 @@ def test_a_percent_of_exactly_100_is_a_valid_row_and_an_item_needs_exactly_one_t
 ) -> None:
     made = promo(world.a, [shop.listed], [], "PERCENT_OFF", "100", status="DRAFT")
     both = {"variant_id": shop.variant, "brand_id": shop.make}
+    manager = ctx(world.a, shop.manager)
     for values in ({}, both, {"variant_id": shop.variant, "override_value": Decimal("0")}):
-        with pytest.raises(IntegrityError, match="promo_items_"), tenant_scope(ctx(world.a)):
+        with pytest.raises(IntegrityError, match="promo_items_"), tenant_scope(manager):
             PromotionItem.objects.create(promotion_id=made, **values)
-    with pytest.raises(IntegrityError, match="promo_lists_pair_uq"), tenant_scope(ctx(world.a)):
+    with pytest.raises(IntegrityError, match="promo_lists_pair_uq"), tenant_scope(manager):
         PromotionPriceList.objects.create(promotion_id=made, price_list_id=shop.listed)
         PromotionPriceList.objects.create(promotion_id=made, price_list_id=shop.listed)
 
@@ -227,5 +230,5 @@ def test_the_runtime_role_cannot_delete_promotions_or_change_their_items(
             connection.cursor() as cursor,
         ):
             cursor.execute(sql)
-    with tenant_scope(ctx(world.a)):  # y sí cambia de estado
+    with tenant_scope(ctx(world.a, shop.manager)):  # y sí cambia de estado
         assert Promotion.objects.filter(pk=made).update(status="CANCELLED") == 1

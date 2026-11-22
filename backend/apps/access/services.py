@@ -35,6 +35,7 @@ from apps.access.selectors import (
     ExecutionContext,
     definition,
     execution_context,
+    member_context,
     require,
 )
 from apps.audit.services import Entity, record
@@ -291,6 +292,41 @@ def _inviting(ctx: TenantContext, role_ids: Collection[UUID]) -> Iterator[tuple[
         grants = RolePermission.objects.using(actor.alias).filter(role_id__in=wanted)
         actor.must_cover(grants.values_list("permission_id", "scope"))
         yield actor, wanted
+
+
+def lock_rbac(ctx: TenantContext) -> None:
+    """El bloqueo de RBAC hasta el final del scope, antes de leer una invitación para aceptarla
+    (el orden de invitar y revocar). Sin rol Owner, `AccessDenied` (`LAST_OWNER`)."""
+    _lock_owner_role(require_scope(ctx))
+
+
+def ensure_inviter_can_grant(
+    ctx: TenantContext, inviter_id: UUID, role_ids: Collection[UUID]
+) -> None:
+    """Reglas de ADR-020 §2 al aceptar una invitación, con actor `SYSTEM`: quien invitó sigue
+    siendo miembro activo, conserva `users.manage` y `users.invite` y cubre cada concesión de cada
+    rol tal como está ahora (lo sensible, solo un Owner). Sus permisos se releen bajo el bloqueo de
+    RBAC. Lanza `AccessDenied`, o `UnknownRole` si un rol ya no existe. Para `apps.members`."""
+    alias = require_scope(ctx)
+    owner = _lock_owner_role(alias)
+    ectx = member_context(ctx, inviter_id)
+    require(ectx, "users.manage")
+    require(ectx, "users.invite")
+    wanted = {UUID(str(role_id)) for role_id in role_ids}
+    if Role.objects.using(alias).filter(pk__in=wanted).count() != len(wanted):
+        raise UnknownRole
+    assigned = MembershipRole.objects.using(alias)
+    is_owner = assigned.filter(membership_id=ectx.membership_id, role=owner).exists()
+    grants = RolePermission.objects.using(alias).filter(role_id__in=wanted)
+    _Actor(alias, ectx, owner, is_owner).must_cover(grants.values_list("permission_id", "scope"))
+
+
+def grant_invited_roles(
+    ctx: TenantContext, *, membership_id: UUID, role_ids: Collection[UUID]
+) -> None:
+    """Los roles de una invitación aceptada, tras `ensure_inviter_can_grant` en el mismo scope."""
+    for role_id in role_ids:  # `save` toma la organización del contexto, nunca de fuera
+        MembershipRole(membership_id=membership_id, role_id=role_id).save(using=require_scope(ctx))
 
 
 def _member(alias: str, membership_id: UUID) -> tuple[str, UUID | None]:

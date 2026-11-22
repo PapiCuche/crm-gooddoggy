@@ -1,7 +1,9 @@
 """Comandos de listas de precios (F3-40, E03-01): crear y cambiar.
 
-No comprueban permisos: los declara la API (`prices.manage`, F3-40b), la única que los importa
-(contrato de import-linter). Validan lo que guardan y auditan cada cambio,
+Crear y cambiar no comprueban permisos: los declara la API (`prices.manage`, F3-40b), la única que
+los importa (contrato de import-linter). Qué listas puede citar la IA (`ai_exposable`) no se cambia
+con ellos: lo decide el propietario con `set_ai_exposable` (F8-07b, D-F8-06), que comprueba
+`ai.manage` además de la API. Validan lo que guardan y auditan cada cambio,
 también el de la lista que deja de ser la predeterminada. El código y la moneda no cambian. Una
 sola predeterminada por moneda, activa y con `prices.view` (03 §H, 04 §K.2): la primera lista así
 de una moneda lo es, y elegir otra la cambia en la misma transacción.
@@ -13,8 +15,10 @@ from uuid import UUID
 
 from django.db import IntegrityError, connections, transaction
 
+from apps.access.selectors import AccessDenied, Denied, execution_context, has_permission
 from apps.audit.services import Entity, record
 from apps.pricing.models import DISTRIBUTOR, INTERNAL, VIEW, WHOLESALE, PriceList
+from apps.pricing.selectors import visible_price_lists
 from core.tenancy.context import TenantContext
 from core.tenancy.scope import require_scope
 from core.text import name as clean_name
@@ -23,13 +27,13 @@ CODE = re.compile(r"[A-Z0-9]+(-[A-Z0-9]+)*")  # la misma forma que impone la tab
 CODE_MAX, NAME_MAX = 30, 100
 CURRENCIES = ("PEN",)  # D-PRC-2: solo PEN en el MVP; la columna ya admite otras
 CODE_TAKEN = "price_lists_code_uq"
+AI_MANAGE = "ai.manage"  # quién decide qué listas cita la IA (ADR-034 §10, D-F8-06)
 UPDATABLE = frozenset(
     {
         "name",
         "kind",
         "is_default",
         "required_permission",
-        "ai_exposable",
         "payment_condition",
         "is_active",
         "sort_order",
@@ -48,6 +52,10 @@ class PriceListCodeTaken(Exception):
 
 class PriceListIsDefault(Exception):
     """Es la predeterminada de su moneda: no se desactiva ni deja de serlo sin elegir otra."""
+
+
+class InternalList(ValueError):
+    """La lista interna nunca la cita la IA (04 §K.2)."""
 
 
 class InactiveDefault(ValueError):
@@ -73,6 +81,11 @@ def price_list_name(value: str) -> str:
 def required_permission_for(kind: str) -> str:
     """El permiso de lectura que pide una lista de ese tipo si no se elige otro."""
     return BY_KIND.get(kind, VIEW)
+
+
+def _internal(kind: str, required_permission: str) -> bool:
+    """La interna (04 §K.2), por su tipo o por quién la ve: la IA nunca la cita."""
+    return kind == PriceList.Kind.INTERNAL or required_permission == INTERNAL
 
 
 def _cleaned(fields: dict[str, Any]) -> dict[str, Any]:
@@ -163,6 +176,8 @@ def update_price_list(ctx: TenantContext, *, price_list_id: UUID, **fields: Any)
     """Cambia lo que se envía y lo audita con el antes y el después. `is_default=true` quita la
     marca a la anterior de la moneda; activar una lista con `prices.view` cuando su moneda no tiene
     predeterminada la hace serlo, salvo `is_default=false` (otro cambio no la marca).
+    Una lista que pasa a ser la interna deja de citarla la IA en la misma escritura, auditado
+    aparte (`price_list.ai_exposable_changed`); volver atrás no la vuelve a marcar.
     `PriceListIsDefault` si se desactiva la predeterminada, se le quita la marca o se cambia su
     permiso; `InactiveDefault` o `RestrictedDefault` si se marca una inactiva o sin
     `prices.view`. Sin cambios no escribe ni audita. Una borrada o de otra organización:
@@ -194,10 +209,46 @@ def update_price_list(ctx: TenantContext, *, price_list_id: UUID, **fields: Any)
         if changes:
             for field, (_, value) in changes.items():
                 setattr(price_list, field, value)
-            price_list.updated_by_user_id = ctx.user_id
-            price_list.save(
-                using=alias, update_fields=[*changes, "updated_by_user_id", "updated_at"]
+            hidden = price_list.ai_exposable and _internal(
+                price_list.kind, price_list.required_permission
             )
+            saved = [*changes, "updated_by_user_id", "updated_at"]
+            if hidden:  # nunca una interna citable, ni un momento
+                price_list.ai_exposable = False
+                saved.append("ai_exposable")
+            price_list.updated_by_user_id = ctx.user_id
+            price_list.save(using=alias, update_fields=saved)
             entity = Entity("price_list", price_list.pk, price_list.code)
             record(ctx, "price_list.updated", entity, changes)
+            if hidden:
+                off, why = {"ai_exposable": [True, False]}, {"reason": "INTERNAL_LIST"}
+                record(ctx, "price_list.ai_exposable_changed", entity, off, why)
+    return price_list
+
+
+def set_ai_exposable(ctx: TenantContext, *, price_list_id: UUID, exposable: bool) -> PriceList:
+    """Marca o desmarca una lista como citable por la IA (F8-07b, D-F8-06) y lo audita con el antes
+    y el después (`price_list.ai_exposable_changed`). Igual que estaba: no escribe ni audita.
+    `AccessDenied` sin `ai.manage`; `InternalList` si se marca la interna (desmarcarla siempre se
+    puede). Una que el actor no ve (su `required_permission` o `prices.manage`), borrada o de otra
+    organización: `DoesNotExist`, sin decir si es la interna."""
+    alias = require_scope(ctx)
+    ectx = execution_context(ctx)
+    if not has_permission(ectx, AI_MANAGE):
+        raise AccessDenied(Denied.PERMISSION)
+    with transaction.atomic(using=alias):
+        _lock(alias, ctx)
+        seen = visible_price_lists(ectx).using(alias).select_for_update(no_key=True)
+        price_list: PriceList = seen.get(pk=price_list_id)
+        if exposable and _internal(price_list.kind, price_list.required_permission):
+            raise InternalList("ai_exposable")
+        if price_list.ai_exposable != exposable:
+            before = price_list.ai_exposable
+            price_list.ai_exposable, price_list.updated_by_user_id = exposable, ctx.user_id
+            price_list.save(
+                using=alias, update_fields=["ai_exposable", "updated_by_user_id", "updated_at"]
+            )
+            entity = Entity("price_list", price_list.pk, price_list.code)
+            changes = {"ai_exposable": [before, exposable]}
+            record(ctx, "price_list.ai_exposable_changed", entity, changes)
     return price_list

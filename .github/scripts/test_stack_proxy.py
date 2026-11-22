@@ -207,6 +207,46 @@ def services(compose=COMPOSE):
     return found
 
 
+class SharedStack(unittest.TestCase):
+    """Modo de servidor compartido (ADR-046): Caddyfile.shared detrás del borde HTTPS de otra aplicación."""
+
+    caddyfile = (ROOT / "infra/prod/Caddyfile.shared").read_text()
+    prod = (ROOT / "infra/prod/Caddyfile").read_text()
+
+    def test_only_the_fixed_edge_address_may_set_the_client_ip(self):
+        self.assertRegex(self.caddyfile, r"\n\t\ttrusted_proxies static \{\$CRM_EDGE_PROXY_IP\}\n")
+        self.assertRegex(self.caddyfile, r"\n\t\tclient_ip_headers X-Forwarded-For\n")
+        self.assertRegex(self.caddyfile, r"\n\t\ttrusted_proxies_strict\n")
+        self.assertEqual(self.caddyfile.count("trusted_proxies static"), 1)
+        shared = (ROOT / "infra/prod/compose.shared.yaml").read_text()
+        self.assertRegex(shared, r"CRM_EDGE_PROXY_IP: \$\{CRM_EDGE_PROXY_IP:-[0-9.]+\}")
+
+    def test_every_upstream_gets_the_client_ip_and_https_replaced_not_chained(self):
+        self.assertRegex(self.caddyfile, r"\(upstream_identity\) \{\n\theader_up X-Forwarded-For \{client_ip\}\n"
+                                         r"\theader_up X-Forwarded-Proto https\n\theader_up X-Forwarded-Host \{host\}\n\}")
+        upstreams = re.findall(r"reverse_proxy (\S+) \{\n\t+import upstream_identity\n", self.caddyfile)
+        self.assertEqual(upstreams, ["backend:8000", "backend:8000", "ws:8000", "frontend:3000"])
+        self.assertEqual(self.caddyfile.count("reverse_proxy "), 4)
+
+    def test_webhooks_are_limited_per_client_not_per_edge(self):
+        block = re.search(r"handle /webhooks/\* \{(.*?)\n\t\}", self.caddyfile, re.S).group(1)
+        self.assertRegex(block, r"key \{client_ip\}")
+        code = re.sub(r"#.*", "", self.caddyfile)  # los comentarios lo nombran para explicar por qué no
+        self.assertNotIn("{remote_host}", code)
+
+    def test_no_tls_no_admin_and_other_hosts_are_refused(self):
+        for text in ("admin off", "auto_https off", "http://crm.{$CRM_DOMAIN} {"):
+            self.assertIn(text, self.caddyfile)
+        self.assertRegex(self.caddyfile, r"\n:80 \{\n\tabort\n\}\n?$")
+
+    def test_same_caps_routes_redaction_and_stripped_headers_as_the_dedicated_edge(self):
+        def rows(text):
+            return re.findall(r"^\t*(handle \S+ \{|handle \{|max_size \S+|respond \d+|events \d+|window \S+|"
+                              r"request_header -\S+|request>uri .*|request>headers>Referer delete)", text, re.M)
+        self.assertEqual(rows(self.caddyfile), rows(self.prod))
+        self.assertEqual(self.caddyfile.count("import redacted_fields"), 2)
+
+
 class StackAntivirus(unittest.TestCase):
     """F7-15c: clamd analiza archivos no confiables; si lo comprometen, no alcanza ningún listener
     HTTP (`backend:8000` se saltaría el tope del cuerpo de Caddy). Solo comparte red con su relay."""
@@ -238,6 +278,32 @@ class StackAntivirus(unittest.TestCase):
         (command,) = re.findall(r"command: (\[.*\])", relay)
         self.assertRegex(command, r'"TCP-LISTEN:3310,[^"]*", "TCP:clamd:3310"\]$')  # solo a clamd
         self.assertNotIn("ports:", relay)
+
+    def test_the_graph_simulator_lives_only_in_the_development_stack(self):
+        """ADR-041: el servicio y su variable, solo en el compose de desarrollo y tras un perfil;
+        el simulador se monta desde `tests/`, que ninguna imagen copia."""
+        for path in ("infra/prod/compose.yaml", "infra/prod/Caddyfile", "backend/Dockerfile"):
+            text = (ROOT / path).read_text()
+            for needle in ("meta-sim", "meta_sim", "META_GRAPH_SIMULATOR_URL", "tests"):
+                self.assertNotIn(needle, text, f"{needle} en {path}")
+        self.assertIn("tests/", (ROOT / "backend/.dockerignore").read_text().split())
+        sim = COMPOSE[COMPOSE.index("  meta-sim:") : COMPOSE.index("  mailpit:")]
+        for line in ("profiles: [meta-sim]", 'user: "65534:65534"', "read_only: true",
+                     "cap_drop: [ALL]", 'security_opt: ["no-new-privileges:true"]'):
+            self.assertIn(f"\n    {line}\n", sim)
+        self.assertEqual(sim.count("ports:"), 1)  # una sola lista, en la forma de bloque
+        entries = []
+        for line in sim[sim.index("\n    ports:\n"):].split("\n")[2:]:
+            if not line.startswith("      - "):
+                break
+            entries.append(line[8:].split(" #")[0].strip().strip('"'))
+        self.assertEqual(entries, ["127.0.0.1:${META_SIM_HOST_PORT:-8090}:8090"])  # solo loopback
+        self.assertNotIn("privileged", sim)
+        self.assertIn("../../backend/tests/meta_sim:/sim/tests/meta_sim:ro", sim)
+        runtime = COMPOSE[COMPOSE.index("x-runtime:") : COMPOSE.index("services:")]
+        self.assertIn("DJANGO_SETTINGS_MODULE: config.settings.local", runtime)
+        self.assertEqual(re.findall(r"META_GRAPH_SIMULATOR_URL: (\S+)", COMPOSE),
+                         ["${META_GRAPH_SIMULATOR_URL:-}"])  # solo el runtime local, vacía
 
 
 if __name__ == "__main__":

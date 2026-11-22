@@ -66,8 +66,11 @@ TENANT_TABLES = (
     "messages",
     "conversation_assignments",
     "conversations",
+    "contact_identities",  # F7b-04a: tras los hilos (la referencian), antes de cuentas y contactos
     "channel_accounts",
     "credentials",  # F7-02b: después de las cuentas, que la referencian
+    "quick_replies",  # F6-08a1: delante de sus categorías
+    "quick_reply_categories",
     *TENANT_TABLES,
 )
 # F5-03 y F6-06b: delante de todo lo que referencian (etapas, motivos, contactos, variantes,
@@ -80,6 +83,15 @@ TENANT_TABLES = (
 # F5-09a: delante de contactos, oportunidades, listas, variantes y membresías
 # F5-09b: las aprobaciones y las políticas, antes de las cotizaciones y de los roles
 TENANT_TABLES = ("quote_approvals", "discount_policies", "quote_items", "quotes", *TENANT_TABLES)
+# F8-03a: las claves, delante de sus cuentas; las cuentas, delante de las membresías
+TENANT_TABLES = ("ai_provider_keys", "ai_provider_accounts", *TENANT_TABLES)
+TENANT_TABLES = ("ai_budget_usage", "ai_budgets", *TENANT_TABLES)  # F8-05
+TENANT_TABLES = ("ai_llm_calls", "ai_budget_reservations", *TENANT_TABLES)  # delante de su mes
+TENANT_TABLES = (*TENANT_TABLES[:2], "ai_budget_daily_usage", *TENANT_TABLES[2:])  # F8-05b2
+TENANT_TABLES = ("ai_switches", *TENANT_TABLES)  # F8-06: a la organización y las membresías
+# F8-08b: el registro del copiloto, delante de las conversaciones y las membresías
+TENANT_TABLES = ("ai_suggestions", "ai_actions", "ai_runs", *TENANT_TABLES)
+TENANT_TABLES = ("ai_handoff_replies", *TENANT_TABLES)  # F8-08l: a la organización y membresías
 PLATFORM_AUDIT = "platform_audit_logs"  # F2-10: platform-owned, la limpia el migrador
 
 

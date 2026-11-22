@@ -2,6 +2,7 @@
 
 import re
 from pathlib import Path
+from typing import Any
 
 from celery.schedules import crontab
 from django.core.exceptions import ImproperlyConfigured
@@ -37,6 +38,8 @@ INSTALLED_APPS = [
     "apps.conversations",
     "apps.tasks",
     "apps.quotes",
+    "apps.ai_gateway",  # F8-03a (ADR-034 §2): L1, no importa módulos de negocio
+    "apps.ai_agents",  # F8-07a (ADR-034 §2): L4, el copiloto y su Tool Registry
 ]
 
 MIDDLEWARE = [
@@ -52,6 +55,7 @@ MIDDLEWARE = [
     "core.api.middleware.ApiCsrfMiddleware",  # CSRF de /api/ antes de resolver el tenant
     "apps.conversations.throttle.ChannelThrottleMiddleware",  # F7-02e: tope por persona
     "apps.quotes.api.limit.QuoteFloorLimitMiddleware",  # F5-09e2: el oráculo del costo
+    "apps.ai_gateway.throttle.AiAccountThrottleMiddleware",  # F8-03d: tope por persona
     "core.tenancy.middleware.TenantResolutionMiddleware",  # siempre tras la autenticación
 ]
 
@@ -96,12 +100,29 @@ PASSWORD_RESET_THROTTLE = {
     "identifier": (5, 60 * 60),  # un correo, desde cualquier dirección
     "change": (10, 15 * 60),  # presentar un enlace, desde una dirección de red (ADR-021 §5)
 }
+# Enlaces de invitación presentados desde una dirección de red (ADR-020 §4, F2-130a): intentos por
+# ventana, en segundos. Pendiente de confirmación del PO.
+INVITATION_LINK_THROTTLE = (10, 15 * 60)
 # Segundo factor (ADR-023 §5): códigos fallidos por cuenta, vengan de donde vengan, y la ventana
 # en segundos. Alcanzado el tope, se rechaza también el código correcto.
 MFA_CODE_THROTTLE = (10, 24 * 60 * 60)
 # Rutas de cuentas de WhatsApp (F7-02e): peticiones de una persona por ventana (segundos); conectar
 # y rotar preguntan a Meta en cada una. Pendiente de confirmación del PO.
 CHANNEL_CHECK_THROTTLE = (5, 10 * 60)
+# Rutas de cuentas del proveedor de IA (F8-03d): escrituras (POST y DELETE: guardar, rotar, borrar
+# y probar) de una persona por ventana (segundos); la prueba de conexión llama al proveedor. GET y
+# HEAD no cuentan. Confirmado por el propietario el 2026-11-17 (F8-03e, #767).
+AI_ACCOUNT_THROTTLE = (10, 10 * 60)
+# Pedir una sugerencia al copiloto (F8-08h, ADR-034 §7): peticiones de una persona por ventana
+# (segundos), con su propio contador; el presupuesto de la organización sigue siendo el tope duro.
+# PENDIENTE DEL PROPIETARIO (#771): el valor propuesto por el programa; se cambia por PR.
+AI_COPILOT_THROTTLE = (20, 10 * 60)
+# Y por organización (F8-08m, #1047): pedidos de sugerir y resumir de toda la organización por
+# ventana (segundos), con su propio contador, contados tras el permiso; que una organización no
+# agote el servidor ni el proveedor aunque cada persona esté bajo su tope. PROVISIONAL: el valor
+# propuesto por el programa (seis personas a tope), pendiente de confirmación del propietario; se
+# cambia por PR. El presupuesto sigue siendo el tope duro.
+AI_COPILOT_ORG_THROTTLE = (120, 10 * 60)
 # Subidas de medios (F7-09b2): peticiones de una persona por ventana (< su calma). Pendiente del PO.
 MEDIA_UPLOAD_THROTTLE = (30, 10 * 60)
 # Rutas que miden el suelo de costo de una cotización (F5-09e2): peticiones por persona y
@@ -159,6 +180,8 @@ INBOX_GIVE_UP_AFTER_MINUTES = env.integer("INBOX_GIVE_UP_AFTER_MINUTES", 120)
 INBOX_SENDING_DEADLINE_MINUTES = env.integer("INBOX_SENDING_DEADLINE_MINUTES", 15)
 # F7-06b: cada cuánto se comprueba la salud de cada cuenta de WhatsApp (calidad, nivel, token).
 CHANNEL_HEALTH_INTERVAL_MINUTES = env.integer("CHANNEL_HEALTH_INTERVAL_MINUTES", 15)
+if CHANNEL_HEALTH_INTERVAL_MINUTES < 1:  # F7b-06j: con 0, «página suscrita» no valdría nunca
+    raise ImproperlyConfigured("CHANNEL_HEALTH_INTERVAL_MINUTES debe ser al menos 1")
 MEDIA_PER_ORG = 2  # F7-09a1b: descargas de medios a la vez por organización (a confirmar)
 # F7-15 (ADR-008): `host:puerto` de `clamd` (ClamAV). Vacío: nada recibe veredicto, ningún medio
 # entrante se abre (tras los reintentos queda `ERROR`) y ningún envío de un archivo se guarda
@@ -242,6 +265,22 @@ CELERY_BEAT_SCHEDULE = {
         "task": "conversations.reseal_credentials",
         "schedule": crontab(hour=3, minute=57),
     },
+    # F8-03a (ADR-022 §5): y las claves de los proveedores de IA, a otra hora.
+    "ai_gateway.reseal_provider_keys": {
+        "task": "ai_gateway.reseal_provider_keys",
+        "schedule": crontab(hour=4, minute=7),
+    },
+    # F8-08j (D-F8-05): a diario, el texto de los borradores del copiloto de más de 30 días.
+    "ai_agents.purge_suggestion_text": {
+        "task": "ai_agents.purge_suggestion_text",
+        "schedule": crontab(hour=4, minute=37),
+    },
+    # F8-05b5 (ADR-034 §5): cada 5 minutos cierra como gastadas las reservas de IA huérfanas.
+    "ai_gateway.close_orphan_reservations": {
+        "task": "ai_gateway.close_orphan_reservations",
+        "schedule": 300.0,
+        "options": {"expires": 300},
+    },
 }
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
@@ -323,11 +362,18 @@ SPECTACULAR_SETTINGS = {
         "ActorTypeEnum": "core.tenancy.context.ActorType",  # quién hizo un movimiento (F3-36b)
         "AuditResultEnum": "apps.audit.services.Result",
         "InvitationStatusEnum": "apps.organizations.models.UserInvitation.Status",  # F2-80
-        "MessagingPolicyModeEnum": ["FREE_FORM", "BLOCKED"],  # F7-05a: no un `ModeEnum` suelto
+        "MessagingPolicyModeEnum": ["FREE_FORM", "BLOCKED", "HUMAN_AGENT_TAG"],  # F7-05a, F7b-05a
+        # F7b-06a: la cuenta de una red social; la lista entera conserva su nombre.
+        "SocialPlatformEnum": ["MESSENGER", "INSTAGRAM"],
+        "PlatformEnum": "apps.conversations.models.Platform",
         "RevokedEnum": ["REVOKED"],  # el único estado que la API pone a una invitación (F2-82)
         # El catálogo (F3-06, F3-06b): el estado de un producto y el de una variante son listas
         # distintas con valores en común.
         "ConversationStatusEnum": "apps.conversations.models.Status",  # F6-02
+        "HumanRequestReasonEnum": "apps.conversations.models.HumanRequest",  # F8-08n
+        "AiProviderEnum": "apps.ai_gateway.models.Provider",  # F8-03c
+        "AiProviderAccountStatusEnum": "apps.ai_gateway.models.AccountStatus",
+        "QuickReplyVariableEnum": "apps.conversations.quick_replies.VARIABLES",  # F6-08a2
         "StageTypeEnum": "apps.deals.models.StageType",  # F5-04: `stage_type`, `status` y `type`
         "TaskTypeEnum": "apps.tasks.models.TaskType",  # F5-08b: `type` de una tarea
         "QuoteStatusEnum": "apps.quotes.models.QuoteStatus",  # F5-09d: `status` de una cotización
@@ -375,6 +421,16 @@ META_WEBHOOK_VERIFY_TOKEN = env.optional("META_WEBHOOK_VERIFY_TOKEN", "")
 # fixtures del simulador. A confirmar con la versión vigente de Meta y su fecha de retirada.
 META_GRAPH_VERSION = "v23.0"
 META_GRAPH_HOST = "graph.facebook.com"
+# ADR-041: el origen del simulador local de Graph (`http://meta-sim:8090`). Vacío en todo
+# despliegue: solo `local` lo lee del entorno; production, migrate y test no arrancan con ella.
+META_GRAPH_SIMULATOR_URL = ""
+# F7b-05a (ADR-035 §7, D-F7b-08): Meta aprobó la función Human Agent en la app. Solo entonces una
+# persona responde por Instagram o Messenger con la ventana de 24 h cerrada, hasta 168 h después.
+# Apagado por omisión: el propietario lo enciende **después** de la aprobación, nunca antes.
+META_HUMAN_AGENT_APPROVED = env.boolean("META_HUMAN_AGENT_APPROVED", False)
+# F7b-05c (ADR-035 §6): el id de la app de Meta del despliegue, para reconocer nuestros ecos de
+# Instagram y Messenger. Vacío por omisión: entonces un eco con `app_id` nunca se toma por nuestro.
+META_APP_ID = env.optional("META_APP_ID", "")
 # F7-05c: envíos por cuenta y ventana en segundos (muy por debajo del tope de Meta); Redis, el del
 # broker. Validado al arrancar con el canal encendido (`env.check_meta`).
 CHANNEL_SEND_LIMIT = (20, 1)
@@ -383,6 +439,61 @@ CHANNEL_SEND_LIMIT = (20, 1)
 META_MEDIA_HOSTS = ("lookaside.fbsbx.com",)
 if META_ENABLED and META_GRAPH_HOST not in HTTP_ALLOWED_HOSTS:
     HTTP_ALLOWED_HOSTS.append(META_GRAPH_HOST)
+# F8-03b (ADR-034 §3): el host fijo de cada proveedor de IA; nunca una URL que dé el usuario. Solo
+# `apps.ai_gateway` lo llama, con la clave sellada de la organización.
+AI_PROVIDER_HOSTS = {"ANTHROPIC": "api.anthropic.com"}
+# F8-06 (ADR-034 §5): el interruptor global de IA. Apagado por omisión; un valor que no es booleano
+# no arranca. La aplicación no lo cambia (pide reiniciar): con él apagado no se llama a ningún
+# modelo ni se prueba ninguna clave, aunque una organización tenga su interruptor encendido.
+AI_ENABLED = env.boolean("AI_ENABLED", False)
+HTTP_ALLOWED_HOSTS.extend(h for h in AI_PROVIDER_HOSTS.values() if h not in HTTP_ALLOWED_HOSTS)
+# F8-05 (ADR-034 §3, D-F8-03): los modelos permitidos y su precio en USD por millón de tokens, de la
+# página oficial de precios de Anthropic (consultada el día `since`). Sin precio no se llama.
+# Cambiarlo es un PR. `long`: el tramo de prompt largo (más de `above` tokens), si lo hay.
+AI_MODELS: dict[str, dict[str, dict[str, Any]]] = {"ANTHROPIC": {"claude-sonnet-5-5": {
+    "since": "2026-11-17", "input": "2", "cache_write_5m": "2.50", "cache_write_1h": "4",
+    "cache_read": "0.10", "output": "10",
+}}}  # fmt: skip
+# Los parámetros por proveedor; `model`: con el que nace una cuenta (cada cuenta elige el suyo de
+# `AI_MODELS`, F8-05b6). `seconds`: plazo total.
+AI_PROVIDER_PARAMS: dict[str, dict[str, Any]] = {"ANTHROPIC": {
+    "model": "claude-sonnet-5-5", "max_tokens": 2048, "effort": "medium", "seconds": 60,
+}}  # fmt: skip
+AI_TOOL_TOKENS = 1000  # margen de la reserva por los tokens que añade la API al usar tools
+# F8-05b7: los tokens visuales de una imagen como mucho (el tramo de alta resolución) y los límites
+# de un turno con tools; lo que los pasa ni se reserva (`AI_TURN_INVALID`).
+AI_IMAGE_TOKENS = 4784
+AI_TURN_LIMITS = {"turns": 100, "blocks": 400, "thinking": 100, "images": 20,
+                  "image_chars": 2_000_000, "body_bytes": 8_000_000}  # fmt: skip
+# F8-07d (decisión del propietario, #770): «pocas unidades» es de 1 a este número; `get_stock`
+# falla cerrado si no es un entero >= 1.
+AI_STOCK_FEW_UNITS = 3
+# F8-08d (ADR-034 §7): cuántos mensajes recientes visibles para el cliente lee el copiloto; un
+# valor que no sea un entero de 1 a 50 no arranca.
+AI_COPILOT_CONTEXT_MESSAGES = 20
+# F8-08g (ADR-034 §6, §7): tool calls por invocación del copiloto (entero de 1 a 10) y su plazo
+# total en segundos (entero de 20 a 55: por debajo del tiempo límite del proxy de producción,
+# decisión del orquestador en #771). Un valor fuera de rango no arranca.
+AI_COPILOT_TOOL_CALLS = 5
+AI_COPILOT_DEADLINE = 50
+# F8-08e (ADR-034 §9): segundos que vale la evidencia de precio y stock para el Output Guard; un
+# valor fijo en configuración, entero de 1 a 600 (10 minutos como mucho), o el guard falla cerrado.
+AI_EVIDENCE_TTL = 600
+# F8-08f (ADR-034 §8): con traspaso, la sugerencia es siempre el texto de traspaso, nunca el del
+# modelo. Este es el inicial, decidido por el propietario el 2026-11-21 (#771): el de toda
+# organización que no guardó el suyo (F8-08l, `…/ai/handoff-reply/`). Nunca promete atención
+# inmediata; con una cifra, un plazo, una prisa, un enlace o la marca, no arranca.
+AI_HANDOFF_REPLY = (
+    "Entiendo. Voy a solicitar que una persona de nuestro equipo continúe contigo para ayudarte "
+    "directamente. Tu conversación quedará disponible para que pueda revisar el contexto y no "
+    "tengas que repetir toda la información"
+)
+# F8-08j (D-F8-05, ADR-034 §13): días que se guarda el texto de una sugerencia o un resumen; después
+# la purga diaria lo pone a NULL (los hallazgos y los ids quedan).
+AI_SUGGESTION_TEXT_DAYS = 30
+# F8-08k (D-F8-05): el job de migraciones quita el detalle de la IA de más de 12 meses completos.
+# Apagado hasta que el propietario lo confirme con datos reales en producción; encenderlo es un PR.
+AI_RECORDS_RETENTION = False
 # Correo saliente (ADR-019): SMTP por entorno, sin proveedor fijado. Solo `core.mail` lo usa.
 # El backend por defecto de Django no envía nada: lo que no pasa por `core.mail` (el aviso a
 # `ADMINS` de `AdminEmailHandler`, `django.core.mail.send_mail`) no abre una conexión SMTP.

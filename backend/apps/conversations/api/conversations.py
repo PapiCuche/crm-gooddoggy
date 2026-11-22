@@ -16,17 +16,21 @@ from django.db.models import Case, Exists, F, OuterRef, QuerySet, Subquery, When
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework import generics, serializers
 from rest_framework.filters import BaseFilterBackend
+from rest_framework.request import Request
+from rest_framework.response import Response
 
 from apps.access.permissions import ScopeFilter, request_context
 from apps.access.selectors import scoped
 from apps.contacts.selectors import contacts
 from apps.conversations import selectors
+from apps.conversations.api.attention import human_request
 from apps.conversations.models import Conversation, Platform, Status
 from core.api.pagination import RecencyPagination
 from core.api.schema import errors
 from core.tenancy import context
 
 BOXES = (("all", "all"), ("mine", "mine"), ("unassigned", "unassigned"))
+FILTERS = ("box", "status", "unanswered")
 
 
 class ConversationContactSerializer(serializers.Serializer[Any]):
@@ -65,6 +69,12 @@ class ConversationSerializer(serializers.Serializer[Any]):
     last_message_direction = serializers.ChoiceField(
         choices=[("INBOUND", "INBOUND"), ("OUTBOUND", "OUTBOUND")], allow_null=True
     )
+    standby_since = serializers.DateTimeField(
+        allow_null=True,
+        help_text="Instagram o Messenger: desde cuándo otra app controla el hilo (`standby`); "
+        "`null` si no. Mientras tanto nada responde solo (ADR-035 §4).",
+    )
+    human_request = human_request()  # F8-08n
     version = serializers.IntegerField()
 
 
@@ -77,24 +87,35 @@ class ConversationDetailSerializer(ConversationSerializer):
     updated_at = serializers.DateTimeField()
 
 
-class ConversationFilterSerializer(serializers.Serializer[Any]):
+class BoxFilterSerializer(serializers.Serializer[Any]):
     box = serializers.ChoiceField(
         choices=BOXES,
         required=False,
         error_messages={"invalid_choice": "No válido."},
         help_text="`all` (por omisión), `mine` (asignadas a quien consulta) o `unassigned`.",
     )
+
+
+class ConversationFilterSerializer(BoxFilterSerializer):
     status = serializers.ChoiceField(
         choices=Status.choices, required=False, error_messages={"invalid_choice": "No válido."}
     )
+    unanswered = serializers.BooleanField(
+        required=False,
+        help_text="`true`: solo las abiertas cuyo último mensaje es del cliente (sin responder).",
+    )
+
+
+class UnansweredCountSerializer(serializers.Serializer[Any]):
+    count = serializers.IntegerField()
 
 
 class ConversationFilters(BaseFilterBackend):
-    """`?box=` y `?status=`, detrás de `ScopeFilter`: recortan lo que el alcance ya dejó. Cada uno,
-    una sola vez; vacío es lo mismo que no pedirlo."""
+    """`?box=`, `?status=` y `?unanswered=`, detrás de `ScopeFilter`: recortan lo que el alcance ya
+    dejó. Cada uno, una sola vez; vacío es lo mismo que no pedirlo."""
 
     def filter_queryset(self, request: Any, queryset: Any, view: Any) -> QuerySet[Conversation]:
-        params, names = request.query_params, ("box", "status")
+        params, names = request.query_params, getattr(view, "filters", FILTERS)
         if repeated := [k for k in names if len(params.getlist(k)) > 1]:
             raise serializers.ValidationError({k: ["Una sola vez."] for k in repeated})
         given = {k: params[k] for k in names if params.get(k)}
@@ -103,6 +124,8 @@ class ConversationFilters(BaseFilterBackend):
         found: QuerySet[Conversation] = queryset
         if (status := wanted.validated_data.get("status")) is not None:
             found = found.filter(status=status)
+        if wanted.validated_data.get("unanswered"):
+            found = found.filter(selectors.UNANSWERED)
         match wanted.validated_data.get("box", "all"):
             case "mine":
                 found = found.filter(assigned_user_id=context.current().user_id)  # type: ignore[union-attr]
@@ -139,9 +162,9 @@ class ConversationsQuery:
         parameters=[ConversationFilterSerializer],
         responses={200: ConversationSerializer(many=True), **errors(400, 401, 403, 404)},
         description="Las conversaciones dentro del alcance de `conversations.view`, la de mensaje "
-        "más reciente primero (`last_message_at`, `id`; cursor de dos valores). `box` y `status` "
-        "se combinan y la página siguiente se pide con los mismos. 400: un filtro repetido o "
-        "no válido.",
+        "más reciente primero (`last_message_at`, `id`; cursor de dos valores). `box`, `status` y "
+        "`unanswered` se combinan y la página siguiente se pide con los mismos. 400: un filtro "
+        "repetido o no válido.",
     ),
 )
 class ConversationsView(ConversationsQuery, generics.ListAPIView):
@@ -165,3 +188,26 @@ class ConversationView(ConversationsQuery, generics.RetrieveAPIView):
     required_permissions = {"GET": "conversations.view"}
     serializer_class = ConversationDetailSerializer
     lookup_url_kwarg = "conversation_id"
+
+
+@extend_schema_view(
+    get=extend_schema(
+        operation_id="conversations_unanswered_count",
+        tags=["conversations"],
+        parameters=[BoxFilterSerializer],
+        responses={200: UnansweredCountSerializer, **errors(400, 401, 403, 404)},
+        description="Cuántas conversaciones sin responder (`unanswered=true` de la lista) hay "
+        "dentro del alcance de `conversations.view` y de `box`. Solo el número.",
+    ),
+)
+class UnansweredCountView(generics.GenericAPIView[Conversation]):
+    required_permissions = {"GET": "conversations.view"}
+    filter_backends = [ScopeFilter, ConversationFilters]  # en este orden
+    filters = ("box",)
+
+    def get_queryset(self) -> QuerySet[Conversation]:
+        return Conversation.objects.all()
+
+    def get(self, request: Request, **kwargs: Any) -> Response:
+        found = self.filter_queryset(self.get_queryset()).filter(selectors.UNANSWERED)
+        return Response({"count": found.count()})

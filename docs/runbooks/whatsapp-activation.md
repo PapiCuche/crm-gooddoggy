@@ -139,9 +139,9 @@ Con el gestor de secretos de un proveedor, el equivalente que lea el valor de la
 
 ### 4.3 Tiempo real del Inbox (`INBOX_WS=on`)
 
-`NEXT_PUBLIC_INBOX_WS` es una variable de **build** del frontend: se incrusta al hacer `next build` (`frontend/Dockerfile`, `ARG NEXT_PUBLIC_INBOX_WS=off`; en compose, `INBOX_WS` → `NEXT_PUBLIC_INBOX_WS`). Cambiarla exige **reconstruir la imagen del frontend**, no basta con reiniciarla:
+`NEXT_PUBLIC_INBOX_WS` es una variable de **build** del frontend: se incrusta al hacer `next build` (`frontend/Dockerfile`, `ARG NEXT_PUBLIC_INBOX_WS=on` desde F6-09: la imagen que publica `images.yml` ya la lleva encendida; en compose, `INBOX_WS` → `NEXT_PUBLIC_INBOX_WS`). Cambiarla exige **reconstruir la imagen del frontend**, no basta con reiniciarla:
 
-1. `INBOX_WS=on` en el entorno con el que se construye la imagen (no es un secreto).
+1. `INBOX_WS=on` (el valor por omisión) en el entorno con el que se construye la imagen (no es un secreto).
 2. Reconstruir y desplegar la imagen del frontend (en local: `docker compose -f infra/docker/compose.yaml --env-file infra/env/.env up -d --build frontend`; en producción, el build de imágenes de #756).
 3. Comprobar que el servicio `ws` corre y que el proxy lleva `/ws/*` a él. Sin esto el Inbox funciona, pero hay que actualizar a mano para ver un mensaje nuevo.
 

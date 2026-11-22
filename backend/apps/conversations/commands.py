@@ -19,6 +19,7 @@ retrocede el mensaje y no es un error (ADR-010, §E.6).
 
 import datetime as dt
 import re
+import secrets
 import unicodedata
 from typing import Any
 from uuid import UUID
@@ -39,14 +40,15 @@ from apps.access.selectors import (
 )
 from apps.audit.services import Entity, record
 from apps.contacts.models import Contact
-from apps.conversations import media, outbound_media
+from apps.conversations import attention, media, outbound_media
 from apps.conversations.channels import REASONS, Claim, Media, SendResult
 from apps.conversations.models import (
-    BODY_MAX,
     META_ID,
     PREVIEW_MAX,
+    SOCIAL,
     AttentionMode,
     ChannelAccount,
+    ContactIdentity,
     Conversation,
     ConversationAssignment,
     Credential,
@@ -56,21 +58,27 @@ from apps.conversations.models import (
     Platform,
     Status,
 )
-from apps.conversations.policy import PURPOSES, ConversationClosed, require_allowed
+from apps.conversations.policy import (
+    HUMAN_AGENT_TAG,
+    PURPOSES,
+    ConversationClosed,
+    require_allowed,
+)
 from apps.conversations.selectors import messaging_decision
+from apps.conversations.text import clean_body as _body
 from apps.files.models import File
 from apps.organizations.selectors import lock_active_member
 from core.outbox import emit
 from core.sequences import allocate
 from core.tenancy.context import TenantContext
 from core.tenancy.scope import require_scope
+from core.text import has_verify_mark
 
 REOPEN_HOURS = 72  # D-INB-2: una RESOLVED recibe mensajes hasta 72 h después; luego se cierra
 WINDOW_HOURS = 24  # la ventana de WhatsApp: un entrante con más de 24 h no reabre nada
 KEY = "CONV"
 ORDER = (Delivery.QUEUED, Delivery.SENDING, Delivery.SENT, Delivery.DELIVERED, Delivery.READ)
 ZWJ, JOINERS = "\u200d", "\u200c\u200d"
-BIDI = "\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069"
 LAST = ("last_message_at", "last_message_preview", "last_message_direction")
 STAMPS = {
     "SENDING": "sending_at", "SENT": "sent_at", "DELIVERED": "delivered_at", "READ": "read_at",
@@ -103,6 +111,11 @@ class ClientMessageConflict(Exception):
     """Ese `client_message_id` ya es de otro mensaje (otro texto u otra conversación)."""
 
 
+class UnverifiedContent(Exception):
+    """El texto lleva la marca `[verificar]` del copiloto, también disfrazada (ADR-034 §9.3): un
+    dato sin evidencia que nunca sale al cliente."""
+
+
 class StaleVersion(Exception):
     """Otra petición cambió la cuenta después de la versión que se editaba."""
 
@@ -116,26 +129,6 @@ def _uuid(value: Any, what: str) -> UUID:
         return UUID(value)
     except ValueError:
         raise ValueError(f"{what}: un identificador") from None
-
-
-def _body(value: Any) -> str:
-    """El texto de un mensaje: algo que se ve (no solo espacios ni caracteres de ancho cero), sin
-    controles salvo el salto de línea y el tabulador, ni sustitutos Unicode sueltos (UTF-8 y
-    PostgreSQL no los guardan), ni los controles que reordenan el texto (incrustaciones,
-    anulaciones y aislamientos de dirección; las marcas LRM, RLM y ALM sí valen)."""
-    if not isinstance(value, str) or len(value) > BODY_MAX:
-        raise ValueError(f"texto: un texto de 1 a {BODY_MAX} caracteres")
-    try:
-        value.encode("utf-8")
-    except UnicodeEncodeError:
-        raise ValueError("texto: caracteres Unicode no válidos") from None
-    if any(unicodedata.category(c) == "Cc" and c not in "\n\r\t" for c in value):
-        raise ValueError("texto: sin caracteres de control")
-    if any(c in BIDI for c in value):  # reordenan lo que se ve (texto «trojan source»)
-        raise ValueError("texto: sin controles de dirección")
-    if all(unicodedata.category(c) in ("Cc", "Cf", "Zs", "Zl", "Zp") for c in value):
-        raise ValueError("texto: debe tener algo visible")
-    return value
 
 
 def _preview(text: str) -> str:
@@ -178,6 +171,8 @@ def _status(
     convo.version += 1
     convo.save(using=alias, update_fields=["status", *stamps, "version", "updated_at"])
     record(ctx, action, Entity("conversation", convo.pk, convo.number), {"status": [old, new]})
+    if new in (Status.RESOLVED, Status.CLOSED):  # F8-08n: ya no espera a nadie
+        attention.clear(ctx, alias, convo, "CLOSED")
     emit(  # una pista para la pantalla: solo ids
         ctx, "conversation.updated", aggregate_type="conversation", aggregate_id=convo.pk,
     )  # fmt: skip
@@ -250,8 +245,9 @@ def update_channel_account(
 
 
 def _open(
-    ctx: TenantContext, alias: str, contact_id: UUID, account_id: UUID
-) -> tuple[Conversation, bool]:
+    ctx: TenantContext, alias: str, contact_id: UUID, account_id: UUID,
+    identity_id: UUID | None = None,
+) -> tuple[Conversation, bool]:  # fmt: skip
     """La conversación no cerrada del contacto en la cuenta, o una nueva en cola (`PENDING`,
     D-INB-1). Con el contacto bloqueado. Una resuelta hace más de `REOPEN_HOURS` se cierra y se
     abre otra (D-INB-2)."""
@@ -259,8 +255,11 @@ def _open(
     if not live.select_for_update(no_key=True).values_list("pk", flat=True)[:1]:
         raise BadReference("contact_id")
     accounts = ChannelAccount.objects.using(alias).filter(pk=account_id, deleted_at__isnull=True)
-    if not accounts.exists():
+    platform = accounts.values_list("platform", flat=True).first()
+    if platform is None:
         raise BadReference("channel_account_id")
+    if platform in SOCIAL and identity_id is None:  # no solo el disparador (ADR-035 §5)
+        raise BadReference("contact_identity_id")
     open_ones = Conversation.objects.using(alias).exclude(status=Status.CLOSED)
     open_ones = open_ones.filter(contact_id=contact_id, channel_account_id=account_id)
     if (found := open_ones.select_for_update(no_key=True).first()) is not None:
@@ -278,6 +277,7 @@ def _open(
                 number=allocate(ctx, KEY, width=5, using=alias),
                 contact_id=contact_id,
                 channel_account_id=account_id,
+                contact_identity_id=identity_id,
                 last_message_at=now,
             )
     except IntegrityError as error:
@@ -317,6 +317,8 @@ def record_inbound(
     message_type: str = MessageType.TEXT,
     provider_at: dt.datetime | None = None,
     attachment: tuple[str, str] | None = None,
+    contact_identity_id: UUID | None = None,
+    standby: bool | None = None,
 ) -> tuple[Message, bool]:
     """Registra un mensaje del cliente, idempotente por `(cuenta, external_message_id)`: repetirlo
     devuelve el mismo y no cambia nada. Abre o reutiliza la conversación (`PENDING` si es nueva),
@@ -329,7 +331,12 @@ def record_inbound(
     `provider_at` es el instante que informa el canal: ancla de la ventana de 24 h
     (`last_inbound_at`, acotado a «ahora» y sin retroceder); el orden del chat sigue siendo el de
     llegada. Con más de 24 h de antigüedad no reabre una conversación `WAITING_CUSTOMER` ni
-    `RESOLVED` (se anota sin cambiarle el estado)."""
+    `RESOLVED` (se anota sin cambiarle el estado). En Instagram y Messenger, `contact_identity_id`
+    (obligatoria) es la identidad del contacto en la cuenta: la del hilo nuevo (ADR-035 §5), y
+    `standby` dice si otra app controla el hilo (ADR-035 §4): fija `standby_since` (`True`) o la
+    limpia (`False`), solo si el mensaje es el entrante más reciente según el canal (en un empate
+    la fija, nunca la limpia; sin `provider_at` cuenta la llegada); `None` (los demás canales) no
+    la toca."""
     alias = require_scope(ctx)
     allowed: tuple[str, ...] = (MessageType.TEXT, MessageType.UNSUPPORTED)
     if attachment is not None:  # un medio: su tipo y nada más, con un id de solo dígitos
@@ -346,7 +353,7 @@ def record_inbound(
     with transaction.atomic(using=alias):
         if found := same.first():
             return found, False
-        convo, _ = _open(ctx, alias, contact_id, account_id)
+        convo, _ = _open(ctx, alias, contact_id, account_id, contact_identity_id)
         now = timezone.now()
         seen = min(provider_at, now) if provider_at is not None else None
         stale = provider_at is not None and now - provider_at > dt.timedelta(hours=WINDOW_HOURS)
@@ -363,17 +370,24 @@ def record_inbound(
             return same.get(), False  # el mismo mensaje, a la vez
         if attachment is not None:
             media.attach(ctx, message, *attachment)
-        anchor = max(convo.last_inbound_at, seen or now) if convo.last_inbound_at else seen or now
+        at, before = seen or now, convo.last_inbound_at
+        anchor = max(before, at) if before else at
+        # Solo el entrante más reciente cambia el `standby`; en un empate (el canal da segundos)
+        # lo fija, nunca lo limpia: ante la duda, nada responde solo (ADR-035 §4).
+        if standby is not None and (before is None or at > before or (standby and at == before)):
+            convo.standby_since = (convo.standby_since or anchor) if standby else None
         convo.last_inbound_at, convo.last_message_at = anchor, now
         convo.last_message_preview, convo.last_message_direction = _preview(text), "INBOUND"
         if convo.status in (Status.WAITING_CUSTOMER, Status.RESOLVED) and not stale:
             _status(  # con las marcas del mensaje: `update_fields` no las guardaría de otro modo
                 ctx, alias, convo, Status.OPEN, "conversation.reopened", resolved_at=None,
-                last_inbound_at=anchor, last_message_at=now,
+                last_inbound_at=anchor, last_message_at=now, standby_since=convo.standby_since,
                 last_message_preview=convo.last_message_preview, last_message_direction="INBOUND",
             )  # fmt: skip
         else:
-            convo.save(using=alias, update_fields=[*LAST, "last_inbound_at", "updated_at"])
+            convo.save(
+                using=alias, update_fields=[*LAST, "last_inbound_at", "standby_since", "updated_at"]
+            )
         record(ctx, "message.received", Entity("message", message.pk), None, _sent(message))
         ids = {
             "conversation_id": convo.pk,
@@ -453,7 +467,8 @@ def record_outbound(
     `ClientMessageConflict`; `DoesNotExist` (también fuera del alcance de `messages.send`);
     `AccessDenied` sin el permiso. `purpose` (`policy.PURPOSES`; sin valor por omisión: quien llama
     dice para qué escribe): un seguimiento (`FOLLOW_UP`) a quien se dio de baja es `ConsentRevoked`,
-    la respuesta (`CUSTOMER_REPLY`) no. Plantillas: F7-10. Con `media` (F7-09b, el blob limpio ya
+    la respuesta (`CUSTOMER_REPLY`) no. `UnverifiedContent` si el texto (o el pie de foto) lleva la
+    marca `[verificar]` (F8-08a). Plantillas: F7-10. Con `media` (F7-09b, el blob limpio ya
     guardado por `outbound_media.prepare`) el mensaje es de su tipo y crea su archivo `CLEAN`; un
     reintento es el mismo solo con el mismo archivo (`sha256`)."""
     alias = require_scope(ctx)
@@ -466,6 +481,8 @@ def record_outbound(
         _uuid(client_message_id, "id"),
     )
     text = _body(body)
+    if has_verify_mark(text):  # lo mismo que se guarda y se envía; antes de la transacción
+        raise UnverifiedContent
     if media is not None and outbound_media.units(text) > outbound_media.CAPTION_MAX:  # WhatsApp
         raise ValueError(f"pie de foto: hasta {outbound_media.CAPTION_MAX} unidades UTF-16")
     with transaction.atomic(using=alias):
@@ -475,7 +492,7 @@ def record_outbound(
         earlier = Message.objects.using(alias).filter(client_message_id=client_id).first()
         snapshot = None
         if earlier is None:  # un reenvío de lo ya guardado se devuelve aunque ya no se pueda enviar
-            decision = messaging_decision(convo, alias=alias, purpose=purpose)
+            decision = messaging_decision(convo, alias=alias, purpose=purpose, sender="USER")
             require_allowed(decision)  # cerrada, sin canal, bloqueado, ventana cerrada o baja
             snapshot = decision.as_json()
         elif media and not File.objects.using(alias).filter(
@@ -509,6 +526,9 @@ def record_outbound(
                 )
                 convo.save(using=alias, update_fields=[*LAST, "updated_at"])
             record(ctx, "message.queued", Entity("message", message.pk), None, _sent(message))
+            # F8-08n: el aviso de traspaso no atiende; F8-08l2: sin solicitud no se lee el texto
+            if convo.human_requested_at is not None and not attention.handoff_reply(ctx, text):
+                attention.clear(ctx, alias, convo, "REPLIED", message_id=message.pk)
             ids = {"conversation_id": convo.pk, "channel_account_id": convo.channel_account_id}
             emit(  # para el despachador (F6-04b); solo ids, nunca el texto
                 ctx,
@@ -686,6 +706,8 @@ def _assign(
     )  # fmt: skip
     if not moved:
         raise AssignmentConflict
+    if user_id is not None:  # F8-08n: una persona la atiende; soltarla no lo es
+        attention.clear(ctx, alias, convo, "ASSIGNED")
     ConversationAssignment.objects.using(alias).create(
         conversation_id=convo.pk, previous_team_id=convo.assigned_team_id, previous_user_id=old,
         new_team_id=convo.assigned_team_id, new_user_id=user_id, reason_code=reason,
@@ -815,7 +837,9 @@ def claim_outbound(ctx: TenantContext, *, message_id: UUID) -> Claim | None:
         account = ChannelAccount.objects.using(alias).get(pk=convo.channel_account_id)
         # el de encolar; sin él (un mensaje anterior a F7-08b), el más estricto
         purpose = (message.policy_decision or {}).get("purpose") or "FOLLOW_UP"
-        decision = messaging_decision(convo, account=account, alias=alias, purpose=purpose)
+        decision = messaging_decision(
+            convo, account=account, alias=alias, purpose=purpose, sender=message.sender_type
+        )
         queued.update(policy_decision=decision.as_json())  # la última decisión queda en el mensaje
         if decision.reason is not None:
             advance_delivery(
@@ -841,17 +865,35 @@ def claim_outbound(ctx: TenantContext, *, message_id: UUID) -> Claim | None:
                 message.message_type, file.storage_key, file.mime_type, file.sha256,
                 file.original_name, None if message.body == label else message.body,
             )  # fmt: skip
-        phone = Contact.objects.using(alias).filter(pk=convo.contact_id)
         live = Credential.objects.using(alias).filter(
             pk=account.credential_id, owner_id=account.pk, revoked_at__isnull=True
         )  # viva y de esta cuenta
+        token = message.echo_token
+        if account.platform in SOCIAL and token is None:  # ADR-035 §6: el eco la devuelve
+            token = secrets.token_hex(16)
+            queued.update(echo_token=token)
         advance_delivery(ctx, message_id=message.pk, status=Delivery.SENDING)
         return Claim(
             message_id=message.pk, account_id=account.pk, platform=account.platform,
             phone_number_id=account.external_account_id, body=message.body,
-            recipient=phone.values_list("primary_phone_e164", flat=True).first() or "",
+            recipient=_recipient(alias, convo, account),
             credential=live.first() if account.credential_id else None, media=shown,
+            parent_id=account.external_parent_id,
+            human_agent=decision.mode == HUMAN_AGENT_TAG, echo_token=token,
         )  # fmt: skip
+
+
+def _recipient(alias: str, convo: Conversation, account: ChannelAccount) -> str:
+    """El destinatario en el canal (ADR-035 §6): en Messenger e Instagram, el id de la identidad de
+    la conversación **en esa misma cuenta**; si no, el teléfono del contacto. Vacío si no lo hay
+    (el adaptador lo rechaza sin llamar al canal)."""
+    if account.platform in SOCIAL:
+        found = ContactIdentity.objects.using(alias).filter(
+            pk=convo.contact_identity_id, channel_account_id=account.pk
+        )
+        return found.values_list("external_id", flat=True).first() or ""
+    phone = Contact.objects.using(alias).filter(pk=convo.contact_id)
+    return phone.values_list("primary_phone_e164", flat=True).first() or ""
 
 
 def release_outbound(ctx: TenantContext, *, message_id: UUID, wait: dt.timedelta) -> int | None:

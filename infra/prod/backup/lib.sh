@@ -6,13 +6,19 @@
 
 prod_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 
-# Los prefijos de un volcado según el día UTC (ISO: 1 = lunes … 7 = domingo). Las reglas de ciclo de
-# vida del destino (lifecycle.json) los borran: 7 días el diario, 28 el semanal y 184 el mensual.
-retention_prefixes() { # <kind: nightly|predeploy> <día de la semana> <día del mes>
+# El periodo de una noche, «semana mes»: la semana empieza en domingo (el día 0 de la época, el
+# 1970-01-01, fue jueves) y el mes, el día 1.
+backup_period() { echo "$((($1 / 86400 + 4) / 7)) $2"; } # <segundos UTC> <AAAA-MM>
+
+# Los prefijos de un volcado. nightly: daily siempre, y weekly y monthly si su periodo aún no tiene
+# copia; así, si falla la noche del domingo o la del día 1, la siguiente noche buena hace la copia.
+# Las reglas de ciclo de vida del destino (lifecycle.json) los borran: 7 días el diario, 28 el
+# semanal y 184 el mensual.
+retention_prefixes() { # <kind: nightly|predeploy> <periodo de esta noche> <el de la última subida nocturna>
   if [ "$1" = predeploy ]; then echo predeploy; return; fi
   echo daily
-  [ "$2" = 7 ] && echo weekly
-  [ "$3" = 01 ] && echo monthly
+  [ "${2% *}" = "${3% *}" ] || echo weekly
+  [ "${2#* }" = "${3#* }" ] || echo monthly
   return 0
 }
 
@@ -102,9 +108,13 @@ configure() { # <evento del aviso si backup.env no es seguro>
   export storage_bucket state_dir
 }
 
+# shellcheck source=infra/prod/host-mode.sh
+. "$prod_dir/host-mode.sh"
 compose() {
-  local files=(-f "$prod_dir/compose.yaml")
-  [ -z "${CRM_COMPOSE_OVERRIDE:-}" ] || files+=(-f "$CRM_COMPOSE_OVERRIDE")
+  local files=(-f "$prod_dir/compose.yaml") override
+  # CRM_COMPOSE_OVERRIDE (el simulacro) o, si no, el modo del servidor (ADR-046): host-mode.sh.
+  override=$(crm_compose_override "$prod_dir") || return 1
+  [ -z "$override" ] || files+=(-f "$override")
   [ -z "${CRM_COMPOSE_PROJECT:-}" ] || files+=(-p "$CRM_COMPOSE_PROJECT")
   docker compose "${files[@]}" --env-file "${CRM_RELEASE_ENV:-/etc/crm/release.env}" "$@"
 }
@@ -113,11 +123,30 @@ compose() {
 psql_su() { compose exec -T postgres psql -X -q -v ON_ERROR_STOP=1 -U postgres -At "$@"; }
 
 # Filas por tabla del esquema public, «tabla<TAB>filas» y ordenado: compara origen y restauración.
-table_counts() {
-  psql_su -d crm -c "SELECT c.relname || E'\t' || (xpath('/row/n/text()', query_to_xml(
-    format('SELECT count(*) AS n FROM public.%I', c.relname), false, true, '')))[1]::text
-    FROM pg_class c JOIN pg_namespace s ON s.oid = c.relnamespace
-    WHERE s.nspname = 'public' AND c.relkind IN ('r', 'p') ORDER BY 1"
+counts_sql="SELECT c.relname || E'\\t' || (xpath('/row/n/text()', query_to_xml(
+  format('SELECT count(*) AS n FROM public.%I', c.relname), false, true, '')))[1]::text
+  FROM pg_class c JOIN pg_namespace s ON s.oid = c.relnamespace
+  WHERE s.nspname = 'public' AND c.relkind IN ('r', 'p') ORDER BY 1"
+table_counts() { psql_su -d crm -c "$counts_sql"; }
+
+# El backup nocturno y deploy.sh no se pisan (F1-15b): los dos toman /var/lib/crm-deploy/lock, un
+# directorio (mkdir es atómico). Si está puesto, el nocturno espera hasta BACKUP_LOCK_WAIT s (3600)
+# a que el despliegue termine; si sigue (un despliegue cortado lo deja), falla y avisa. `predeploy`
+# no lo toma: lo lanza deploy.sh, que ya lo tiene.
+deploy_lock() {
+  local dir=${CRM_DEPLOY_DIR:-/var/lib/crm-deploy} waited=0
+  mkdir -p "$dir"
+  chmod 700 "$dir"
+  until mkdir "$dir/lock" 2> /dev/null; do
+    if [ "$waited" -ge "${BACKUP_LOCK_WAIT:-3600}" ]; then
+      echo "$dir/lock sigue puesto tras ${waited}s: un despliegue en curso o cortado ($dir/deploy.log)" >&2
+      return 1
+    fi
+    sleep 30
+    waited=$((waited + 30))
+  done
+  # shellcheck disable=SC2034 # lo lee el trap de salida de backup.sh, que lo suelta
+  held_lock=$dir/lock
 }
 
 need() { local c; for c in "$@"; do command -v "$c" > /dev/null || { echo "falta el comando $c" >&2; return 1; }; done; }

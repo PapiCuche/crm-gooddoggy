@@ -32,6 +32,7 @@ export const NAVIGATION: readonly NavigationItem[] = [
   { key: "quotes", path: "/cotizaciones", section: "/cotizaciones", permission: "quotes.view" },
   { key: "inbox", path: "/inbox", section: "/inbox", permission: "conversations.view" },
   { key: "channels", path: "/canales", section: "/canales", permission: "channels.manage" },
+  { key: "quickReplies", path: "/respuestas-rapidas", permission: "quick_replies.manage" },
   { key: "catalog", path: "/catalogo/marcas", section: "/catalogo", permission: "products.view" },
   {
     key: "inventory",
@@ -47,6 +48,7 @@ export const NAVIGATION: readonly NavigationItem[] = [
       (code) => `prices.${code}`,
     ),
   },
+  { key: "ai", path: "/ia", section: "/ia", anyOf: ["ai.manage", "ai.kill_switch"] }, // el Supervisor solo apaga
   { key: "audit", path: "/auditoria", permission: "audit.view" },
 ];
 

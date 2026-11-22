@@ -98,6 +98,29 @@ def test_public_resolution_pins_the_ip_and_no_redirects_are_followed(
     assert http._manager.pool_classes_by_scheme == {"https": http._GuardedPool}  # sin http
 
 
+def test_retry_false_only_removes_the_retries_and_the_retry_after_wait(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F8-03b: quien no puede esperar pide cero reintentos; el resto sigue con los del gestor."""
+    monkeypatch.setattr(socket, "getaddrinfo", resolving_to("93.184.216.34"))
+    calls: list[dict[str, Any]] = []
+
+    def request(*args: Any, **kwargs: Any) -> Any:
+        calls.append(kwargs)
+        return urllib3.HTTPResponse(body=io.BytesIO(b""), preload_content=False)
+
+    monkeypatch.setattr(http._manager, "request", request)
+    with ALLOWED:
+        http.request("GET", "https://api.example.com/x", retry=False)
+        http.request("GET", "https://api.example.com/x")
+    never, default = calls
+    assert never["redirect"] is False and "timeout" not in never
+    retries = never["retries"]
+    assert (retries.total, retries.redirect, retries.raise_on_redirect) == (0, False, False)
+    assert "retries" not in default  # por omisión, los del gestor (`total=2`)
+    assert http._manager.connection_pool_kw["retries"].total == 2
+
+
 @ALLOWED
 @pytest.mark.parametrize("name", ["Host", "HOST", "hOsT"])
 def test_host_header_cannot_be_overridden(name: str, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -441,6 +441,7 @@ def test_a_name_of_hangul_fillers_only_is_refused() -> None:
         "\U00013441",
         "\U00013442 \U00013441",
     ):
-        with pytest.raises(ValueError, match="alguna letra o cifra"):
+        with pytest.raises(ValueError):  # desde F2-131 un relleno nunca vale (`core.text`)
             clean_name(filler, 100)
-    assert clean_name("\u3164 Ventas", 100) == "\u3164 Ventas"  # con algo que se ve, vale
+    with pytest.raises(ValueError):
+        clean_name("\u3164 Ventas", 100)  # ni con algo que se ve

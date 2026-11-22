@@ -564,6 +564,93 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/invitations/accept/:
+    post:
+      operationId: invitations_accept
+      description: |-
+        Acepta la invitación: la membresía con sus roles y, sin cuenta, la crea (`first_name`,
+        `password`); con cuenta, hay que tener su sesión. No inicia sesión. 400: el enlace no vale
+        (`INVALID_INVITATION_LINK`, sin decir por qué) o `VALIDATION_ERROR`. 409 `ACCOUNT_EXISTS`:
+        el correo tiene cuenta y no es la de la sesión. 429: demasiados intentos desde esta red.
+      tags:
+      - invitations
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InvitationAcceptRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvitationAccepted'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/invitations/preview/:
+    post:
+      operationId: invitations_preview
+      description: |-
+        Lo que enseña el enlace de una invitación pendiente: la organización, el correo
+        invitado y si hay que crear una cuenta. No cambia nada. 400 `INVALID_INVITATION_LINK`:
+        el enlace no vale, sin decir por qué. 429: demasiados intentos desde esta red.
+      tags:
+      - invitations
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InvitationLinkRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvitationPreview'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/me/organizations/:
     get:
       operationId: me_organizations
@@ -584,6 +671,709 @@ paths:
                   $ref: '#/components/schemas/OrganizationSummary'
           description: ''
         '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/ai/budget/:
+    get:
+      operationId: ai_budget_retrieve
+      description: 'Los topes mensual y diario de IA de la organización, en USD con
+        6 decimales (`ai.manage` y segundo factor reciente); null si no hay: sin los
+        dos, la IA no llama (`AI_BUDGET_NOT_SET`). No cuenta en el tope por persona
+        de las escrituras.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - ai
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AiBudget'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+    put:
+      operationId: ai_budget_update
+      description: 'Fija los dos topes (`ai.manage` y segundo factor reciente) y lo
+        audita (`ai.limits.changed`, con el antes y el después). Importes en USD mayores
+        que cero, con 6 decimales como mucho; el diario no supera al mensual. Bajar
+        un tope por debajo de lo gastado corta la siguiente llamada. 429 `RATE_LIMITED`:
+        el tope por persona de las escrituras, con `Retry-After`.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - ai
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AiBudgetWriteRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AiBudget'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/ai/handoff-reply/:
+    get:
+      operationId: ai_handoff_reply_retrieve
+      description: 'El texto de traspaso que propone el copiloto (`ai.manage` y segundo
+        factor reciente): el de la organización o, sin él, el inicial. No cuenta en
+        el tope por persona de las escrituras.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - ai
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AiHandoffReply'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+    put:
+      operationId: ai_handoff_reply_update
+      description: 'Cambia el texto de traspaso de la organización (`ai.manage` y
+        segundo factor reciente) y lo audita (`ai.handoff_reply.changed`, sin el texto).
+        400 en `text`: un código y un mensaje por problema (`BODY`, `TOO_LONG`, `SCRIPT`,
+        `SOON`, `FIGURE`, `DELIVERY`, `DISCOUNT`, `AVAILABILITY`, `TERMS`, `LINK`,
+        `MARKUP`); nunca repite lo enviado. 429 `RATE_LIMITED`: el tope por persona
+        de las escrituras, con `Retry-After`.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - ai
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AiHandoffReplyWriteRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AiHandoffReply'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/ai/provider-accounts/:
+    get:
+      operationId: ai_provider_accounts_list
+      description: 'Las cuentas de proveedor de IA de la organización, activas y desactivadas
+        (`ai.manage` y segundo factor reciente). Nunca la clave ni su cifrado: solo
+        `key_last_four`. No cuenta en el tope por persona de las escrituras.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - ai
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AiProviderAccount'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+    post:
+      operationId: ai_provider_accounts_create
+      description: 'Guarda la clave de un proveedor (`ai.manage` y segundo factor
+        reciente), cifrada; reactiva una cuenta desactivada. 400 en `api_key`: no
+        tiene el formato de una clave. 409 `AI_ACCOUNT_EXISTS`: ya hay una activa
+        (se rota). 409 `AI_ACCOUNT_CONFLICT`: otra petición la creó a la vez. 429
+        `RATE_LIMITED`: el tope por persona de las escrituras, con `Retry-After`.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - ai
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AiProviderAccountCreateRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AiProviderAccount'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/ai/provider-accounts/{account_id}/:
+    delete:
+      operationId: ai_provider_accounts_destroy
+      description: 'Desactiva la cuenta (`ai.manage` y segundo factor reciente): el
+        cifrado de su clave se borra. Para volver a usarla se guarda una clave nueva.
+        404: no existe, es de otra organización o ya está desactivada. 429 `RATE_LIMITED`:
+        el tope por persona de las escrituras, con `Retry-After`.'
+      parameters:
+      - in: path
+        name: account_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - ai
+      security:
+      - sessionCookie: []
+      responses:
+        '204':
+          description: No response body
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/ai/provider-accounts/{account_id}/key/:
+    post:
+      operationId: ai_provider_accounts_rotate_key
+      description: 'Sustituye la clave de la cuenta (`ai.manage` y segundo factor
+        reciente): la anterior se invalida y su cifrado se borra. 404: no existe,
+        es de otra organización o está desactivada. 429 `RATE_LIMITED`: el tope por
+        persona de las escrituras, con `Retry-After`.'
+      parameters:
+      - in: path
+        name: account_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - ai
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AiProviderKeyRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AiProviderAccount'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/ai/provider-accounts/{account_id}/model/:
+    put:
+      operationId: ai_provider_accounts_set_model
+      description: 'Elige el modelo de la cuenta (`ai.manage` y segundo factor reciente)
+        entre los de la lista permitida de su proveedor y lo audita (`ai.account.model_changed`,
+        con el antes y el después). Cambia cuánto gasta la organización. 400 en `model`:
+        fuera de la lista (nunca repite lo enviado). 404: no existe, es de otra organización
+        o está desactivada. 429 `RATE_LIMITED`: el tope por persona de las escrituras,
+        con `Retry-After`.'
+      parameters:
+      - in: path
+        name: account_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - ai
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AiProviderModelRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AiProviderAccount'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/ai/provider-accounts/{account_id}/test/:
+    post:
+      operationId: ai_provider_accounts_test
+      description: 'Prueba la clave de la cuenta contra el proveedor (`ai.manage`
+        y segundo factor reciente) con la llamada más barata, sin reintentos, y la
+        audita (`ai.account.tested`). 200 con el código: `OK`, `CREDENTIALS_REJECTED`,
+        `PROVIDER_BILLING` o `PROVIDER_UNAVAILABLE`; nunca el cuerpo del proveedor
+        ni la clave. 404: no existe, es de otra organización o está desactivada. 409
+        `AI_DISABLED`: `AI_ENABLED` apagado. 429 `RATE_LIMITED`: el tope por persona
+        de las escrituras, con `Retry-After`.'
+      parameters:
+      - in: path
+        name: account_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - ai
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AiProviderTest'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/ai/switch/:
+    get:
+      operationId: ai_switch_retrieve
+      description: El interruptor de la organización y el del despliegue (`ai.kill_switch`
+        o `ai.manage`, sin segundo factor). La IA llama solo con los dos encendidos;
+        los dos nacen apagados.
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - ai
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AiSwitch'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/ai/switch/off/:
+    post:
+      operationId: ai_switch_off
+      description: Apaga la IA de la organización (`ai.kill_switch` o `ai.manage`,
+        sin segundo factor ni tope por persona) y lo audita (`ai.kill_switch.activated`).
+        La siguiente llamada recibe `AI_DISABLED`; la que ya reservó termina. Apagada
+        ya, no cambia nada.
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - ai
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AiSwitch'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/ai/switch/on/:
+    post:
+      operationId: ai_switch_on
+      description: 'Enciende la IA de la organización (`ai.manage` y segundo factor
+        reciente) con la confirmación del aviso de datos y lo audita (`ai.kill_switch.deactivated`).
+        No enciende `AI_ENABLED`. Encendida ya, no cambia nada. 429 `RATE_LIMITED`:
+        el tope por persona de las escrituras, con `Retry-After`.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - ai
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AiSwitchOnRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AiSwitch'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '429':
           content:
             application/json:
               schema:
@@ -1476,6 +2266,219 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/channels/{platform}/:
+    post:
+      operationId: channels_social_connect
+      description: 'Registra una página de Messenger o una cuenta de Instagram como
+        la ruta de WhatsApp (ADR-035 §3): Meta comprueba la página (y su cuenta de
+        Instagram) y se suscribe la app. El 400 sin oráculo va en `page_id` (Messenger)
+        o `instagram_account_id`.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: platform
+        schema:
+          type: string
+          enum:
+          - instagram
+          - messenger
+        required: true
+      tags:
+      - conversations
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SocialConnectRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SocialAccount'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '503':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/channels/{platform}/{account_id}/:
+    delete:
+      operationId: channels_social_disconnect
+      description: Como en WhatsApp. 404 también si la cuenta es de otra plataforma.
+      parameters:
+      - in: path
+        name: account_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: platform
+        schema:
+          type: string
+          enum:
+          - instagram
+          - messenger
+        required: true
+      tags:
+      - conversations
+      security:
+      - sessionCookie: []
+      responses:
+        '204':
+          description: No response body
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/channels/{platform}/{account_id}/token/:
+    post:
+      operationId: channels_social_rotate_token
+      description: Como en WhatsApp; Meta comprueba la misma página (y la misma cuenta
+        de Instagram). 404 también si la cuenta es de otra plataforma.
+      parameters:
+      - in: path
+        name: account_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: platform
+        schema:
+          type: string
+          enum:
+          - instagram
+          - messenger
+        required: true
+      tags:
+      - conversations
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TokenRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SocialAccount'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '503':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/channels/sandbox/inbound/:
     post:
       operationId: channels_sandbox_inbound
@@ -1551,7 +2554,7 @@ paths:
         400 en `phone_number_id`: no se puede registrar (mal formado o repetido: el
         mismo error); `CHANNEL_CREDENTIALS_REJECTED`; 409 `CHANNEL_NOT_ENABLED`; 503
         `CHANNEL_PROVIDER_UNAVAILABLE`; 429 `RATE_LIMITED` (5 peticiones cada 10 minutos
-        por persona, las tres rutas).'
+        por persona, compartido con Messenger e Instagram).'
       parameters:
       - in: path
         name: org_slug
@@ -2422,8 +3425,8 @@ paths:
       operationId: conversations_list
       description: 'Las conversaciones dentro del alcance de `conversations.view`,
         la de mensaje más reciente primero (`last_message_at`, `id`; cursor de dos
-        valores). `box` y `status` se combinan y la página siguiente se pide con los
-        mismos. 400: un filtro repetido o no válido.'
+        valores). `box`, `status` y `unanswered` se combinan y la página siguiente
+        se pide con los mismos. 400: un filtro repetido o no válido.'
       parameters:
       - in: query
         name: box
@@ -2479,6 +3482,12 @@ paths:
           * `WAITING_INTERNAL` - Waiting Internal
           * `RESOLVED` - Resolved
           * `CLOSED` - Closed
+      - in: query
+        name: unanswered
+        schema:
+          type: boolean
+        description: '`true`: solo las abiertas cuyo último mensaje es del cliente
+          (sin responder).'
       tags:
       - conversations
       security:
@@ -2685,13 +3694,330 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/conversations/{conversation_id}/copilot/suggest/:
+    post:
+      operationId: conversations_copilot_suggest
+      description: 'Pide al copiloto una sugerencia de respuesta (`conversations.view`
+        con su alcance y `ai.use`; 403 `PERMISSION_DENIED` sin uno de los dos). No
+        envía nada: la sugerencia se guarda y se audita (`ai.suggestion.created`).
+        404: fuera de alcance, de otra organización o inexistente. 409 `AI_DISABLED`,
+        `AI_NOT_CONFIGURED`, `AI_BUDGET_NOT_SET` o `AI_BUDGET_EXHAUSTED`. 502 `PROVIDER_UNAVAILABLE`,
+        `PROVIDER_ERROR`, `CREDENTIALS_REJECTED`, `PROVIDER_BILLING`, `AI_MALFORMED`
+        o `AI_TURN_INVALID`. 504 `AI_DEADLINE`. 429 `RATE_LIMITED`: el tope por persona
+        (uno para sugerir y resumir), con `Retry-After`. 429 `AI_ORG_RATE_LIMITED`:
+        el de la organización (uno para sugerir y resumir; tras el permiso), con `Retry-After`.'
+      parameters:
+      - in: path
+        name: conversation_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - ai
+      security:
+      - sessionCookie: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CopilotSuggestion'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '502':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '504':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/conversations/{conversation_id}/copilot/suggestions/{suggestion_id}/insert/:
+    post:
+      operationId: conversations_copilot_suggestion_insert
+      description: 'Devuelve el texto de una sugerencia para el compositor y audita
+        `ai.suggestion.inserted` en la misma transacción (`conversations.view` con
+        su alcance y `ai.use`; 403 `PERMISSION_DENIED` sin uno de los dos). No envía
+        nada ni llama al modelo. 404: fuera de alcance, de otra organización, conversación
+        o persona, inexistente, un resumen o ya purgada (30 días). 409 `AI_EVIDENCE_EXPIRED`:
+        su evidencia caducó; hay que regenerarla.'
+      parameters:
+      - in: path
+        name: conversation_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: suggestion_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - ai
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CopilotInsert'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/conversations/{conversation_id}/copilot/summary/:
+    post:
+      operationId: conversations_copilot_summary
+      description: 'Pide al copiloto un resumen de la conversación para quien atiende
+        (`conversations.view` con su alcance y `ai.use`; 403 `PERMISSION_DENIED` sin
+        uno de los dos), sin herramientas. Se muestra «Generado por IA», con sus cifras,
+        términos y enlaces marcados «sin verificar» (`marks`), y no se inserta en
+        el compositor. No envía nada: se guarda y se audita (`ai.summary.created`).
+        404: fuera de alcance, de otra organización o inexistente. 409 `AI_DISABLED`,
+        `AI_NOT_CONFIGURED`, `AI_BUDGET_NOT_SET` o `AI_BUDGET_EXHAUSTED`. 502 `PROVIDER_UNAVAILABLE`,
+        `PROVIDER_ERROR`, `CREDENTIALS_REJECTED`, `PROVIDER_BILLING`, `AI_MALFORMED`
+        o `AI_TURN_INVALID`. 504 `AI_DEADLINE`. 429 `RATE_LIMITED`: el tope por persona
+        (uno para sugerir y resumir), con `Retry-After`. 429 `AI_ORG_RATE_LIMITED`:
+        el de la organización (uno para sugerir y resumir; tras el permiso), con `Retry-After`.'
+      parameters:
+      - in: path
+        name: conversation_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - ai
+      security:
+      - sessionCookie: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CopilotSummary'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '502':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '504':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/conversations/{conversation_id}/human-request/:
+    post:
+      operationId: conversation_human_request_create
+      description: 'Pide que una persona la atienda (`AGENT`); una abierta no cambia.
+        Nada sale al cliente. 409 `CONVERSATION_CLOSED`; 404: no existe o fuera del
+        alcance.'
+      parameters:
+      - in: path
+        name: conversation_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - conversations
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanRequestState'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+    delete:
+      operationId: conversation_human_request_close
+      description: 'Cierra la solicitud; sin una abierta no cambia nada. 404: no existe
+        o fuera del alcance.'
+      parameters:
+      - in: path
+        name: conversation_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - conversations
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanRequestState'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/conversations/{conversation_id}/media/:
     post:
       operationId: conversation_media_send
       description: 'Pone en cola una imagen (JPEG, PNG) o un PDF para el cliente,
         con la política del texto; idempotente por `client_message_id` (202; 200 con
         el mismo archivo). Pide `messages.send` y `conversations.view`. El archivo
-        pasa por el antivirus antes de guardarse. 409: la política o `CLIENT_MESSAGE_ID_TAKEN`;
+        pasa por el antivirus antes de guardarse. 400 `UNVERIFIED_CONTENT`: el pie
+        de foto lleva la marca `[verificar]`. 409: la política o `CLIENT_MESSAGE_ID_TAKEN`;
         411 sin `Content-Length`; 413 `MEDIA_TOO_LARGE`; 415 `MEDIA_TYPE_NOT_ALLOWED`
         (el tipo real); 422 `MEDIA_INFECTED` o `MEDIA_TOO_COMPLEX` (pasa los topes
         del antivirus: no se pudo revisar entero); 429 `RATE_LIMITED`; 503 `MEDIA_SCAN_UNAVAILABLE`
@@ -2873,10 +4199,14 @@ paths:
         canal es de la tarea de salida), idempotente por `client_message_id`: 202
         la primera vez y 200 con el mismo mensaje en un reintento igual. Pide `messages.send`
         y `conversations.view`; no hace falta ver al contacto (el `body` de la respuesta
-        sigue la regla de la lectura). 409: `CONVERSATION_CLOSED`, `CHANNEL_UNAVAILABLE`
-        (canal sin conectar), `CONTACT_BLOCKED`, `WINDOW_CLOSED` (pasó la ventana
-        de atención del canal desde el último mensaje del cliente) o `CLIENT_MESSAGE_ID_TAKEN`
-        (ese id es de otro texto, otra conversación u otra persona).'
+        sigue la regla de la lectura). 400 `UNVERIFIED_CONTENT`: el texto lleva la
+        marca `[verificar]` del copiloto, también disfrazada (letras parecidas, otro
+        ancho, caracteres que no se ven o mayúsculas). 409: `CONVERSATION_CLOSED`,
+        `CHANNEL_UNAVAILABLE` (canal sin conectar), `CONTACT_BLOCKED`, `WINDOW_CLOSED`
+        (pasó la ventana de atención del canal desde el último mensaje del cliente),
+        `CONSENT_REVOKED` (fuera de la ventana, con la etiqueta Human Agent, el cliente
+        se dio de baja en este canal) o `CLIENT_MESSAGE_ID_TAKEN` (ese id es de otro
+        texto, otra conversación u otra persona).'
       parameters:
       - in: path
         name: conversation_id
@@ -3059,6 +4389,197 @@ paths:
                 $ref: '#/components/schemas/Error'
           description: ''
         '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/conversations/{conversation_id}/quick-replies/:
+    get:
+      operationId: conversation_quick_replies_list
+      description: 'Las respuestas rápidas que se pueden usar en la conversación:
+        activas, en una categoría activa, por creación (ADR-016); cada una con su
+        categoría para agruparlas. Pide `conversations.view` y `messages.send`; 404:
+        la conversación no existe, es de otra organización o queda fuera del alcance.'
+      parameters:
+      - in: path
+        name: conversation_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - name: cursor
+        in: query
+        required: false
+        description: El `next` de la página anterior. Sin él, la primera página.
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        description: Filas por página.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+          default: 50
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: query
+        name: q
+        schema:
+          type: string
+        description: Busca en el atajo (con o sin `/`), el título y el texto, sin
+          distinguir mayúsculas; hasta 100 caracteres.
+      tags:
+      - conversations
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedQuickReplyUseList'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/conversations/{conversation_id}/quick-replies/{quick_reply_id}/render/:
+    post:
+      operationId: conversation_quick_replies_render
+      description: 'El texto de la respuesta con sus variables resueltas para esta
+        conversación, y las que quedaron vacías. Suma un uso. **No envía nada**: el
+        texto se envía, si se quiere, con `POST …/messages/`. Pide `conversations.view`
+        y `messages.send`; 404: la conversación o la respuesta no existen, no se pueden
+        usar o quedan fuera del alcance.'
+      parameters:
+      - in: path
+        name: conversation_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: quick_reply_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - conversations
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Rendered'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/conversations/unanswered/:
+    get:
+      operationId: conversations_unanswered_count
+      description: Cuántas conversaciones sin responder (`unanswered=true` de la lista)
+        hay dentro del alcance de `conversations.view` y de `box`. Solo el número.
+      parameters:
+      - in: query
+        name: box
+        schema:
+          enum:
+          - all
+          - mine
+          - unassigned
+          type: string
+          minLength: 1
+        description: |-
+          `all` (por omisión), `mine` (asignadas a quien consulta) o `unassigned`.
+
+          * `all` - all
+          * `mine` - mine
+          * `unassigned` - unassigned
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - conversations
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnansweredCount'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
           content:
             application/json:
               schema:
@@ -3996,13 +5517,16 @@ paths:
           description: ''
     post:
       operationId: invitations_create
-      description: 'Deja creada la invitación de una persona, pendiente y con los
-        roles que tendrá al aceptar. Todavía no envía el correo. 400: correo al que
-        no se puede escribir, o `role_ids` vacío, con un rol repetido o que no es
-        de la organización. 403: sin `users.invite` y `users.manage`, o con un rol
-        que el actor no podría asignar. 409: `ALREADY_MEMBER`, `INVITATION_PENDING`,
-        `INVITATION_LIMIT` (50 pendientes) o `LAST_OWNER` (la organización no tiene
-        rol Owner y no admite ningún cambio). 429: 100 invitaciones en 24 h.'
+      description: 'Deja creada la invitación de una persona (201), pendiente y con
+        los roles que tendrá al aceptar, y pide su correo, que sale después con el
+        enlace. Si el correo tiene una pendiente, la renueva (200, F2-130e). 400:
+        correo al que no se puede escribir, o `role_ids` vacío, con un rol repetido
+        o que no es de la organización. 403: sin `users.invite` y `users.manage`,
+        o con un rol que el actor no podría asignar (al renovar, también los que tenía).
+        409: `ALREADY_MEMBER`, `INVITATION_SEND_LIMIT`, `INVITATION_LIMIT` (50 pendientes)
+        o `LAST_OWNER` (la organización no tiene rol Owner y no admite ningún cambio).
+        429: 100 invitaciones en 24 h; con `Retry-After`, `INVITATION_ADDRESS_LIMIT`
+        o `INVITATION_SEND_TOO_SOON` (ver el reenvío).'
       parameters:
       - in: path
         name: org_slug
@@ -4026,11 +5550,79 @@ paths:
               schema:
                 $ref: '#/components/schemas/Invitation'
           description: ''
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Invitation'
+          description: ''
         '400':
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/invitations/{invitation_id}/resend/:
+    post:
+      operationId: invitations_resend
+      description: |-
+        Reenvía una invitación pendiente, caducada o no: la renueva con sus roles y las reglas de
+        invitar (ADR-020 §1). El enlace anterior deja de valer. 409: `INVALID_TRANSITION`,
+        `ALREADY_MEMBER`, `INVITATION_SEND_LIMIT` (5 envíos), `INVITATION_ROLE_GONE` o `LAST_OWNER`.
+        429 con `Retry-After`: `INVITATION_ADDRESS_LIMIT` (3 envíos a ese correo en 24 h) o
+        `INVITATION_SEND_TOO_SOON` (15 minutos entre dos).
+      parameters:
+      - in: path
+        name: invitation_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - members
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Invitation'
           description: ''
         '401':
           content:
@@ -6049,9 +7641,10 @@ paths:
           description: ''
     post:
       operationId: price_lists_create
-      description: Crea una lista. Es la predeterminada de su moneda si se pide (la
+      description: 'Crea una lista. Es la predeterminada de su moneda si se pide (la
         anterior deja de serlo) o, sin `is_default`, si es la primera activa con `prices.view`;
         solo una así puede serlo (400 en `is_default`). 409 `PRICE_LIST_CODE_TAKEN`.
+        `ai_exposable` da 400 en ese campo: va por `…/ai-exposable/`.'
       parameters:
       - in: path
         name: org_slug
@@ -6157,7 +7750,8 @@ paths:
         no cambian. `is_default=true` la hace la predeterminada de su moneda (la anterior
         deja de serlo); debe estar activa y pedir `prices.view` (400 en `is_default`).
         409 `PRICE_LIST_IS_DEFAULT`: la predeterminada no se desactiva, no deja de
-        serlo ni cambia de `required_permission`; antes hay que elegir otra.'
+        serlo ni cambia de `required_permission`; antes hay que elegir otra. `ai_exposable`
+        da 400 en ese campo: va por `…/ai-exposable/`.'
       parameters:
       - in: path
         name: org_slug
@@ -6211,6 +7805,73 @@ paths:
                 $ref: '#/components/schemas/Error'
           description: ''
         '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/pricing/price-lists/{price_list_id}/ai-exposable/:
+    put:
+      operationId: price_lists_ai_exposable
+      description: 'Marca o desmarca la lista como citable por la IA (`ai.manage`
+        y segundo factor reciente) y lo audita (`price_list.ai_exposable_changed`,
+        antes y después); igual que estaba, no cambia nada. La interna da 400 en `ai_exposable`.
+        404: no existe, está borrada o no es de la organización. 429 `RATE_LIMITED`:
+        el tope por persona de las escrituras de IA, con `Retry-After`.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: price_list_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - pricing
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PriceListAiExposableRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PriceList'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '429':
           content:
             application/json:
               schema:
@@ -7363,6 +9024,418 @@ paths:
       responses:
         '204':
           description: No response body
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/quick-replies/:
+    get:
+      operationId: quick_replies_list
+      description: Las respuestas rápidas no borradas, activas o no, por creación
+        (ADR-016). Con `quick_replies.manage`.
+      parameters:
+      - name: cursor
+        in: query
+        required: false
+        description: El `next` de la página anterior. Sin él, la primera página.
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        description: Filas por página.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+          default: 50
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - conversations
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedQuickReplyList'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+    post:
+      operationId: quick_replies_create
+      description: 'Crea una respuesta activa (`quick_replies.manage`), auditada sin
+        el texto (solo su huella). 400 en `category_id`: no es una categoría viva
+        y activa de la organización. 409 `SHORTCUT_TAKEN`: otra activa ya usa el atajo.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - conversations
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QuickReplyCreateRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuickReply'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/quick-replies/{quick_reply_id}/:
+    patch:
+      operationId: quick_replies_update
+      description: 'Cambia lo enviado, también `is_active` (activar o desactivar),
+        si `version` sigue vigente (409 `STALE_VERSION` si no); lo que no cambia no
+        se escribe ni se audita. 409 `SHORTCUT_TAKEN`. 400 en `category_id` o en `is_active`:
+        la respuesta quedaría activa en una categoría desactivada. Con `quick_replies.manage`.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: quick_reply_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - conversations
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedQuickReplyUpdateRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuickReply'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+    delete:
+      operationId: quick_replies_delete
+      description: 'Borra la respuesta (borrado lógico, sin `version`): deja de listarse
+        y su atajo queda libre. 404: no es de la organización o ya está borrada. Con
+        `quick_replies.manage`.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: quick_reply_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - conversations
+      security:
+      - sessionCookie: []
+      responses:
+        '204':
+          description: No response body
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/quick-reply-categories/:
+    get:
+      operationId: quick_reply_categories_list
+      description: Las categorías no borradas, activas o no, por creación (ADR-016);
+        la pantalla las ordena por `sort_order`. Con `quick_replies.manage`.
+      parameters:
+      - name: cursor
+        in: query
+        required: false
+        description: El `next` de la página anterior. Sin él, la primera página.
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        description: Filas por página.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+          default: 50
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - conversations
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedManagedQuickReplyCategoryList'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+    post:
+      operationId: quick_reply_categories_create
+      description: 'Crea una categoría activa, auditada (`quick_replies.manage`).
+        Sin `sort_order`, va al final. 409 `CATEGORY_NAME_TAKEN`: ya hay una con ese
+        nombre, sin distinguir mayúsculas.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - conversations
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ManagedQuickReplyCategoryCreateRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManagedQuickReplyCategory'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/quick-reply-categories/{category_id}/:
+    patch:
+      operationId: quick_reply_categories_update
+      description: 'Renombra, reordena (`sort_order`), activa o desactiva, si `version`
+        sigue vigente (409 `STALE_VERSION` si no); lo que no cambia no se escribe
+        ni se audita. 409 `CATEGORY_NAME_TAKEN`; 409 `CATEGORY_IN_USE`: desactivarla
+        con respuestas activas (se mueven o se desactivan antes). Con `quick_replies.manage`.'
+      parameters:
+      - in: path
+        name: category_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - conversations
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedManagedQuickReplyCategoryUpdateRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManagedQuickReplyCategory'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
         '401':
           content:
             application/json:
@@ -10508,6 +12581,210 @@ components:
       - default_probability
       - name
       - stage_type
+    AiBudget:
+      type: object
+      properties:
+        monthly_usd:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,6}(?:\.\d{0,6})?$
+          nullable: true
+          description: 'Tope del mes de Lima en USD; null: sin tope.'
+        daily_usd:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,6}(?:\.\d{0,6})?$
+          nullable: true
+          description: 'Tope del día de Lima en USD; null: sin tope.'
+      required:
+      - daily_usd
+      - monthly_usd
+    AiBudgetWriteRequest:
+      type: object
+      properties:
+        monthly_usd:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,6}(?:\.\d{0,6})?$
+        daily_usd:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,6}(?:\.\d{0,6})?$
+          description: No puede superar al mensual.
+      required:
+      - daily_usd
+      - monthly_usd
+    AiHandoffReply:
+      type: object
+      properties:
+        text:
+          type: string
+          description: Lo que el copiloto propone cuando piden una persona.
+        initial:
+          type: boolean
+          description: 'true: el inicial del propietario (sin texto guardado, o el
+            guardado ya no vale).'
+        changed_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: 'Último cambio; null: nunca.'
+      required:
+      - changed_at
+      - initial
+      - text
+    AiHandoffReplyWriteRequest:
+      type: object
+      properties:
+        text:
+          type: string
+          minLength: 1
+          description: De 1 a 500 caracteres, sin cifras, plazos, prisas, promesas,
+            enlaces ni la marca.
+      required:
+      - text
+    AiProviderAccount:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        provider:
+          $ref: '#/components/schemas/AiProviderEnum'
+        status:
+          $ref: '#/components/schemas/AiProviderAccountStatusEnum'
+        model:
+          type: string
+          description: Con el que se estima, reserva, llama y cobra.
+        key_last_four:
+          type: string
+          description: Lo único que se enseña de la clave.
+        configured_at:
+          type: string
+          format: date-time
+          description: Cuándo se guardó la clave vigente.
+        rotated_at:
+          type: string
+          format: date-time
+          nullable: true
+        revoked_at:
+          type: string
+          format: date-time
+          nullable: true
+        updated_at:
+          type: string
+          format: date-time
+      required:
+      - configured_at
+      - id
+      - key_last_four
+      - model
+      - provider
+      - revoked_at
+      - rotated_at
+      - status
+      - updated_at
+    AiProviderAccountCreateRequest:
+      type: object
+      properties:
+        api_key:
+          type: string
+          writeOnly: true
+          minLength: 1
+          description: 'Solo se escribe: ninguna respuesta la devuelve.'
+          maxLength: 256
+        provider:
+          $ref: '#/components/schemas/AiProviderEnum'
+      required:
+      - api_key
+      - provider
+    AiProviderAccountStatusEnum:
+      enum:
+      - ACTIVE
+      - DISABLED
+      type: string
+      description: |-
+        * `ACTIVE` - Active
+        * `DISABLED` - Disabled
+    AiProviderEnum:
+      enum:
+      - ANTHROPIC
+      type: string
+      description: '* `ANTHROPIC` - Anthropic'
+    AiProviderKeyRequest:
+      type: object
+      properties:
+        api_key:
+          type: string
+          writeOnly: true
+          minLength: 1
+          description: 'Solo se escribe: ninguna respuesta la devuelve.'
+          maxLength: 256
+      required:
+      - api_key
+    AiProviderModelRequest:
+      type: object
+      properties:
+        model:
+          type: string
+          minLength: 1
+          description: Uno de la lista permitida del proveedor de la cuenta (`AI_MODELS`).
+          maxLength: 64
+      required:
+      - model
+    AiProviderTest:
+      type: object
+      properties:
+        result:
+          allOf:
+          - $ref: '#/components/schemas/AiProviderTestResultEnum'
+          description: |-
+            Solo el código de la prueba, nunca lo que contestó el proveedor.
+
+            * `OK` - OK
+            * `CREDENTIALS_REJECTED` - CREDENTIALS_REJECTED
+            * `PROVIDER_BILLING` - PROVIDER_BILLING
+            * `PROVIDER_UNAVAILABLE` - PROVIDER_UNAVAILABLE
+      required:
+      - result
+    AiProviderTestResultEnum:
+      enum:
+      - OK
+      - CREDENTIALS_REJECTED
+      - PROVIDER_BILLING
+      - PROVIDER_UNAVAILABLE
+      type: string
+      description: |-
+        * `OK` - OK
+        * `CREDENTIALS_REJECTED` - CREDENTIALS_REJECTED
+        * `PROVIDER_BILLING` - PROVIDER_BILLING
+        * `PROVIDER_UNAVAILABLE` - PROVIDER_UNAVAILABLE
+    AiSwitch:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+          description: El interruptor de la organización.
+        global_enabled:
+          type: boolean
+          description: '`AI_ENABLED`: apagado, no hay IA.'
+        changed_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: 'Último cambio; null: nunca.'
+      required:
+      - changed_at
+      - enabled
+      - global_enabled
+    AiSwitchOnRequest:
+      type: object
+      properties:
+        notice_confirmed:
+          type: boolean
+          description: 'Exactamente `true`: el aviso de datos.'
+      required:
+      - notice_confirmed
     AssignActionEnum:
       enum:
       - TAKE
@@ -11149,6 +13426,22 @@ components:
           nullable: true
           description: Lo único que se enseña del token; `null` si la cuenta no tiene
             credencial viva.
+        has_standby_conversations:
+          type: boolean
+          description: 'Instagram o Messenger: alguna conversación no cerrada de la
+            cuenta está en `standby` (otra app controla el hilo, ADR-035 §4).'
+        page_subscription:
+          readOnly: true
+          nullable: true
+          description: |-
+            Messenger o Instagram: si la página tiene suscrita la app del CRM según la última respuesta de Meta; `UNKNOWN` si no se comprobó, no se sabe o esa respuesta tiene más de cuatro intervalos de salud (una hora por omisión). `null` en las demás.
+
+            * `SUBSCRIBED` - SUBSCRIBED
+            * `NOT_SUBSCRIBED` - NOT_SUBSCRIBED
+            * `UNKNOWN` - UNKNOWN
+          oneOf:
+          - $ref: '#/components/schemas/PageSubscriptionEnum'
+          - $ref: '#/components/schemas/NullEnum'
         version:
           type: integer
         created_at:
@@ -11161,10 +13454,12 @@ components:
       - created_at
       - external_account_id
       - external_parent_id
+      - has_standby_conversations
       - id
       - last_healthcheck_at
       - messaging_limit_tier
       - name
+      - page_subscription
       - platform
       - quality_rating
       - status
@@ -11478,6 +13773,19 @@ components:
           oneOf:
           - $ref: '#/components/schemas/LastMessageDirectionEnum'
           - $ref: '#/components/schemas/NullEnum'
+        standby_since:
+          type: string
+          format: date-time
+          nullable: true
+          description: 'Instagram o Messenger: desde cuándo otra app controla el hilo
+            (`standby`); `null` si no. Mientras tanto nada responde solo (ADR-035
+            §4).'
+        human_request:
+          allOf:
+          - $ref: '#/components/schemas/HumanRequest'
+          nullable: true
+          description: Alguien pidió que una persona la atienda; `null` si no. Se
+            cierra cuando una persona responde al cliente o la toma, o a mano.
         version:
           type: integer
       required:
@@ -11487,12 +13795,14 @@ components:
       - attention_mode
       - channel
       - contact
+      - human_request
       - id
       - last_inbound_at
       - last_message_at
       - last_message_direction
       - last_message_preview
       - number
+      - standby_since
       - status
       - version
     ConversationContact:
@@ -11554,6 +13864,19 @@ components:
           oneOf:
           - $ref: '#/components/schemas/LastMessageDirectionEnum'
           - $ref: '#/components/schemas/NullEnum'
+        standby_since:
+          type: string
+          format: date-time
+          nullable: true
+          description: 'Instagram o Messenger: desde cuándo otra app controla el hilo
+            (`standby`); `null` si no. Mientras tanto nada responde solo (ADR-035
+            §4).'
+        human_request:
+          allOf:
+          - $ref: '#/components/schemas/HumanRequest'
+          nullable: true
+          description: Alguien pidió que una persona la atienda; `null` si no. Se
+            cierra cuando una persona responde al cliente o la toma, o a mano.
         version:
           type: integer
         assigned_at:
@@ -11587,6 +13910,7 @@ components:
       - closed_at
       - contact
       - created_at
+      - human_request
       - id
       - last_inbound_at
       - last_message_at
@@ -11594,6 +13918,7 @@ components:
       - last_message_preview
       - number
       - resolved_at
+      - standby_since
       - status
       - updated_at
       - version
@@ -11613,6 +13938,121 @@ components:
         * `WAITING_INTERNAL` - Waiting Internal
         * `RESOLVED` - Resolved
         * `CLOSED` - Closed
+    CopilotFinding:
+      type: object
+      properties:
+        type:
+          type: string
+          description: El tipo del hallazgo (`FIGURE`, `LINK`…).
+        position:
+          allOf:
+          - $ref: '#/components/schemas/CopilotPosition'
+          description: Dónde está su marca; nunca el texto original.
+      required:
+      - position
+      - type
+    CopilotHandoff:
+      type: object
+      properties:
+        requested:
+          type: boolean
+          description: El cliente pide una persona; en la sugerencia, `text` es el
+            texto fijo.
+        reason:
+          type: string
+          nullable: true
+          description: El motivo (un código) o null.
+      required:
+      - reason
+      - requested
+    CopilotInsert:
+      type: object
+      properties:
+        text:
+          type: string
+          description: El texto guardado, con sus `[verificar]`.
+      required:
+      - text
+    CopilotMark:
+      type: object
+      properties:
+        type:
+          type: string
+          description: Qué se marca «sin verificar» (`FIGURE`, `LINK`…).
+        start:
+          type: integer
+          description: Índice del tramo en `text` (code points).
+        end:
+          type: integer
+          description: Fin (exclusivo) del tramo.
+      required:
+      - end
+      - start
+      - type
+    CopilotPosition:
+      type: object
+      properties:
+        start:
+          type: integer
+          description: Índice de la marca en `text`.
+        end:
+          type: integer
+          description: Fin (exclusivo) de la marca.
+      required:
+      - end
+      - start
+    CopilotSuggestion:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: La sugerencia guardada.
+        text:
+          type: string
+          description: Ya renderizado, con `[verificar]` en cada hallazgo.
+        findings:
+          type: array
+          items:
+            $ref: '#/components/schemas/CopilotFinding'
+        handoff:
+          $ref: '#/components/schemas/CopilotHandoff'
+        evidence_expires_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: 'Cuándo caduca su evidencia; null: no cita ninguna.'
+      required:
+      - evidence_expires_at
+      - findings
+      - handoff
+      - id
+      - text
+    CopilotSummary:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: El resumen guardado.
+        text:
+          type: string
+          description: El resumen, sin sustituir nada; no se inserta.
+        marks:
+          type: array
+          items:
+            $ref: '#/components/schemas/CopilotMark'
+        handoff:
+          $ref: '#/components/schemas/CopilotHandoff'
+        generated_by_ai:
+          type: boolean
+          description: 'Siempre true: «Generado por IA».'
+      required:
+      - generated_by_ai
+      - handoff
+      - id
+      - marks
+      - text
     Cost:
       type: object
       properties:
@@ -11729,6 +14169,12 @@ components:
       - price_id
       - starts_at
       - tax_included
+    DeliveryEnum:
+      enum:
+      - NOT_SENT
+      - SENT
+      - NOT_DELIVERED
+      type: string
     DirectionEnum:
       enum:
       - INBOUND
@@ -11906,6 +14352,56 @@ components:
       - id
       - seconds_in_previous_stage
       - to_stage
+    HumanRequest:
+      type: object
+      properties:
+        reason:
+          allOf:
+          - $ref: '#/components/schemas/HumanRequestReasonEnum'
+          description: |-
+            Del copiloto: `ASKED_FOR_PERSON`, `UPSET` o `MODEL`; `AGENT`: quien atiende.
+
+            * `ASKED_FOR_PERSON` - Asked For Person
+            * `UPSET` - Upset
+            * `MODEL` - Model
+            * `AGENT` - Agent
+        requested_at:
+          type: string
+          format: date-time
+        requested_by_user_id:
+          type: string
+          format: uuid
+      required:
+      - reason
+      - requested_at
+      - requested_by_user_id
+    HumanRequestReasonEnum:
+      enum:
+      - ASKED_FOR_PERSON
+      - UPSET
+      - MODEL
+      - AGENT
+      type: string
+      description: |-
+        * `ASKED_FOR_PERSON` - Asked For Person
+        * `UPSET` - Upset
+        * `MODEL` - Model
+        * `AGENT` - Agent
+    HumanRequestState:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        human_request:
+          allOf:
+          - $ref: '#/components/schemas/HumanRequest'
+          nullable: true
+          description: Alguien pidió que una persona la atienda; `null` si no. Se
+            cierra cuando una persona responde al cliente o la toma, o a mano.
+      required:
+      - human_request
+      - id
     ImportRowActionEnum:
       enum:
       - CREATE
@@ -11972,14 +14468,97 @@ components:
         created_at:
           type: string
           format: date-time
+        sent_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: El último envío.
+        send_count:
+          type: integer
+          description: Cuántas veces se envió (de 0 a 5).
+        delivery:
+          allOf:
+          - $ref: '#/components/schemas/DeliveryEnum'
+          description: '`NOT_DELIVERED`: el último enlace se emitió y contó sin entrega
+            confirmada.'
+          readOnly: true
       required:
       - created_at
+      - delivery
       - email
       - expires_at
       - id
       - invited_by
       - role_ids
+      - send_count
+      - sent_at
       - status
+    InvitationAcceptRequest:
+      type: object
+      properties:
+        token:
+          type: string
+          writeOnly: true
+          minLength: 1
+          description: El secreto del enlace, del fragmento de la URL.
+          maxLength: 128
+        password:
+          type: string
+          writeOnly: true
+          default: ''
+          maxLength: 1024
+        first_name:
+          type: string
+          writeOnly: true
+          default: ''
+          maxLength: 150
+        last_name:
+          type: string
+          writeOnly: true
+          default: ''
+          maxLength: 150
+      required:
+      - token
+    InvitationAccepted:
+      type: object
+      properties:
+        organization_name:
+          type: string
+          description: La organización a la que se entró.
+        account_created:
+          type: boolean
+          description: Se creó una cuenta para el correo.
+      required:
+      - account_created
+      - organization_name
+    InvitationLinkRequest:
+      type: object
+      properties:
+        token:
+          type: string
+          writeOnly: true
+          minLength: 1
+          description: El secreto del enlace, del fragmento de la URL.
+          maxLength: 128
+      required:
+      - token
+    InvitationPreview:
+      type: object
+      properties:
+        organization_name:
+          type: string
+          description: La organización que invita.
+        email:
+          type: string
+          description: El correo invitado.
+        needs_account:
+          type: boolean
+          description: 'El correo no tiene cuenta: hay que crearla (si no, iniciar
+            sesión).'
+      required:
+      - email
+      - needs_account
+      - organization_name
     InvitationStatusChangeRequest:
       type: object
       properties:
@@ -12263,6 +14842,50 @@ components:
       required:
       - id
       - name
+    ManagedQuickReplyCategory:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        sort_order:
+          type: integer
+          description: El orden en que se muestran, de menor a mayor.
+        is_active:
+          type: boolean
+        version:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required:
+      - created_at
+      - id
+      - is_active
+      - name
+      - sort_order
+      - updated_at
+      - version
+    ManagedQuickReplyCategoryCreateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          description: Hasta 100 caracteres; único sin distinguir mayúsculas.
+          maxLength: 100
+        sort_order:
+          type: integer
+          maximum: 32767
+          minimum: -32768
+          description: Sin él, al final.
+      required:
+      - name
     MarginFigure:
       type: object
       properties:
@@ -12507,6 +15130,7 @@ components:
             * `TEMPLATE_UNAVAILABLE` - TEMPLATE_UNAVAILABLE
             * `PROVIDER_ERROR` - PROVIDER_ERROR
             * `MEDIA_NOT_SCANNED` - MEDIA_NOT_SCANNED
+            * `MESSAGES_ACCESS_OFF` - MESSAGES_ACCESS_OFF
           oneOf:
           - $ref: '#/components/schemas/ProviderErrorCodeEnum'
           - $ref: '#/components/schemas/NullEnum'
@@ -12703,10 +15327,12 @@ components:
       enum:
       - FREE_FORM
       - BLOCKED
+      - HUMAN_AGENT_TAG
       type: string
       description: |-
         * `FREE_FORM` - FREE_FORM
         * `BLOCKED` - BLOCKED
+        * `HUMAN_AGENT_TAG` - HUMAN_AGENT_TAG
     MessagingPolicyReasonEnum:
       enum:
       - INTERNAL_NOTE_NOT_SENDABLE
@@ -13510,6 +16136,16 @@ components:
       - id
       - name
       - slug
+    PageSubscriptionEnum:
+      enum:
+      - SUBSCRIBED
+      - NOT_SUBSCRIBED
+      - UNKNOWN
+      type: string
+      description: |-
+        * `SUBSCRIBED` - SUBSCRIBED
+        * `NOT_SUBSCRIBED` - NOT_SUBSCRIBED
+        * `UNKNOWN` - UNKNOWN
     PaginatedAuditEntryList:
       type: object
       required:
@@ -13706,6 +16342,20 @@ components:
           type: string
           nullable: true
           description: Cursor de la página siguiente; `null` en la última.
+    PaginatedManagedQuickReplyCategoryList:
+      type: object
+      required:
+      - results
+      - next
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/ManagedQuickReplyCategory'
+        next:
+          type: string
+          nullable: true
+          description: Cursor de la página siguiente; `null` en la última.
     PaginatedMemberList:
       type: object
       required:
@@ -13842,6 +16492,34 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Promotion'
+        next:
+          type: string
+          nullable: true
+          description: Cursor de la página siguiente; `null` en la última.
+    PaginatedQuickReplyList:
+      type: object
+      required:
+      - results
+      - next
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/QuickReply'
+        next:
+          type: string
+          nullable: true
+          description: Cursor de la página siguiente; `null` en la última.
+    PaginatedQuickReplyUseList:
+      type: object
+      required:
+      - results
+      - next
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/QuickReplyUse'
         next:
           type: string
           nullable: true
@@ -14136,6 +16814,29 @@ components:
           description: La que se leyó; si no, 409.
       required:
       - version
+    PatchedManagedQuickReplyCategoryUpdateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          description: Hasta 100 caracteres; único sin distinguir mayúsculas.
+          maxLength: 100
+        sort_order:
+          type: integer
+          maximum: 32767
+          minimum: -32768
+        is_active:
+          type: boolean
+          description: '`false` la desactiva si no tiene respuestas activas (si no,
+            409).'
+        version:
+          type: integer
+          maximum: 2147483647
+          minimum: 1
+          description: La que se leyó; si no, 409.
+      required:
+      - version
     PatchedNoteUpdateRequest:
       type: object
       properties:
@@ -14241,8 +16942,6 @@ components:
           type: boolean
         required_permission:
           $ref: '#/components/schemas/PricePermissionEnum'
-        ai_exposable:
-          type: boolean
         payment_condition:
           nullable: true
           oneOf:
@@ -14279,6 +16978,34 @@ components:
           maxLength: 5000
         ai_visible:
           type: boolean
+    PatchedQuickReplyUpdateRequest:
+      type: object
+      properties:
+        shortcut:
+          type: string
+          minLength: 1
+          maxLength: 64
+        title:
+          type: string
+          minLength: 1
+          maxLength: 100
+        category_id:
+          type: string
+          format: uuid
+        body:
+          type: string
+          minLength: 1
+          maxLength: 4096
+        is_active:
+          type: boolean
+          description: '`false` la desactiva y libera el atajo.'
+        version:
+          type: integer
+          maximum: 2147483647
+          minimum: 1
+          description: La que se leyó; si no, 409.
+      required:
+      - version
     PatchedQuoteUpdateRequest:
       type: object
       description: Lo que se envía de una cotización al crearla o cambiarla.
@@ -14587,10 +17314,14 @@ components:
       enum:
       - SANDBOX
       - WHATSAPP
+      - MESSENGER
+      - INSTAGRAM
       type: string
       description: |-
         * `SANDBOX` - Sandbox
         * `WHATSAPP` - Whatsapp
+        * `MESSENGER` - Messenger
+        * `INSTAGRAM` - Instagram
     Price:
       type: object
       properties:
@@ -14677,8 +17408,8 @@ components:
             * `prices.view_internal` - prices.view_internal
         ai_exposable:
           type: boolean
-          description: Si un agente de IA de cara al cliente podrá comunicar sus precios
-            (Fase 8).
+          description: Si la IA puede citar sus precios. Lo cambia `PUT …/ai-exposable/`
+            (`ai.manage`).
         payment_condition:
           nullable: true
           oneOf:
@@ -14700,6 +17431,14 @@ components:
       - payment_condition
       - required_permission
       - sort_order
+    PriceListAiExposableRequest:
+      type: object
+      properties:
+        ai_exposable:
+          type: boolean
+          description: Exactamente `true` o `false`.
+      required:
+      - ai_exposable
     PriceListCreateRequest:
       type: object
       properties:
@@ -14713,8 +17452,6 @@ components:
           type: boolean
         required_permission:
           $ref: '#/components/schemas/PricePermissionEnum'
-        ai_exposable:
-          type: boolean
         payment_condition:
           nullable: true
           oneOf:
@@ -15194,6 +17931,7 @@ components:
       - TEMPLATE_UNAVAILABLE
       - PROVIDER_ERROR
       - MEDIA_NOT_SCANNED
+      - MESSAGES_ACCESS_OFF
       type: string
       description: |-
         * `CONVERSATION_CLOSED` - CONVERSATION_CLOSED
@@ -15212,6 +17950,7 @@ components:
         * `TEMPLATE_UNAVAILABLE` - TEMPLATE_UNAVAILABLE
         * `PROVIDER_ERROR` - PROVIDER_ERROR
         * `MEDIA_NOT_SCANNED` - MEDIA_NOT_SCANNED
+        * `MESSAGES_ACCESS_OFF` - MESSAGES_ACCESS_OFF
     QualityRatingEnum:
       enum:
       - GREEN
@@ -15224,6 +17963,121 @@ components:
         * `YELLOW` - YELLOW
         * `RED` - RED
         * `UNKNOWN` - UNKNOWN
+    QuickReply:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        shortcut:
+          type: string
+          description: Único entre las activas de la organización.
+        title:
+          type: string
+        category_id:
+          type: string
+          format: uuid
+        body:
+          type: string
+        is_active:
+          type: boolean
+        usage_count:
+          type: integer
+        version:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required:
+      - body
+      - category_id
+      - created_at
+      - id
+      - is_active
+      - shortcut
+      - title
+      - updated_at
+      - usage_count
+      - version
+    QuickReplyCategoryRef:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        sort_order:
+          type: integer
+          description: Para agrupar y ordenar por categoría.
+      required:
+      - id
+      - name
+      - sort_order
+    QuickReplyCreateRequest:
+      type: object
+      properties:
+        shortcut:
+          type: string
+          minLength: 1
+          description: 'Sin la `/`: hasta 32 letras sin acento, cifras, `_` o `-`;
+            en minúsculas.'
+          maxLength: 64
+        title:
+          type: string
+          minLength: 1
+          maxLength: 100
+        category_id:
+          type: string
+          format: uuid
+          description: Una categoría viva y activa de la organización.
+        body:
+          type: string
+          minLength: 1
+          description: 'Hasta 4096 caracteres, con algo visible. Variables: `{{contact.first_name}}`,
+            `{{contact.name}}`, `{{org.name}}`; otras llaves dobles o triples son
+            un 400.'
+          maxLength: 4096
+      required:
+      - body
+      - category_id
+      - shortcut
+      - title
+    QuickReplyUse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        shortcut:
+          type: string
+          description: 'Sin la `/`: `delivery`.'
+        title:
+          type: string
+        body:
+          type: string
+          description: Con sus variables sin resolver, como `{{org.name}}`.
+        category:
+          $ref: '#/components/schemas/QuickReplyCategoryRef'
+      required:
+      - body
+      - category
+      - id
+      - shortcut
+      - title
+    QuickReplyVariableEnum:
+      enum:
+      - contact.first_name
+      - contact.name
+      - org.name
+      type: string
+      description: |-
+        * `contact.first_name` - contact.first_name
+        * `contact.name` - contact.name
+        * `org.name` - org.name
     Quote:
       type: object
       description: 'La cotización de la lista: sin líneas ni texto libre.'
@@ -15825,6 +18679,28 @@ components:
         * `TRANSFER` - Transfer
         * `IMPORT` - Import
         * `MANUAL` - Manual
+    Rendered:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        shortcut:
+          type: string
+        text:
+          type: string
+          description: El texto resuelto, para el cuadro de redacción.
+        missing:
+          type: array
+          items:
+            $ref: '#/components/schemas/QuickReplyVariableEnum'
+          description: 'Las variables que quedaron vacías: sin valor o sin `contacts.view`
+            sobre el contacto.'
+      required:
+      - id
+      - missing
+      - shortcut
+      - text
     Reservation:
       type: object
       properties:
@@ -16174,6 +19050,98 @@ components:
           $ref: '#/components/schemas/User'
       required:
       - user
+    SocialAccount:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        platform:
+          $ref: '#/components/schemas/SocialPlatformEnum'
+        name:
+          type: string
+        display_identifier:
+          type: string
+        page_id:
+          type: string
+          description: En Instagram, la página vinculada.
+        instagram_account_id:
+          type: string
+          nullable: true
+        status:
+          $ref: '#/components/schemas/ChannelAccountStatusEnum'
+        status_detail:
+          nullable: true
+          oneOf:
+          - $ref: '#/components/schemas/StatusDetailEnum'
+          - $ref: '#/components/schemas/NullEnum'
+        last_healthcheck_at:
+          type: string
+          format: date-time
+          nullable: true
+        token_last_four:
+          type: string
+        token_rotated_at:
+          type: string
+          format: date-time
+          nullable: true
+        token_expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        version:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+      required:
+      - created_at
+      - display_identifier
+      - id
+      - instagram_account_id
+      - last_healthcheck_at
+      - name
+      - page_id
+      - platform
+      - status
+      - status_detail
+      - token_expires_at
+      - token_last_four
+      - token_rotated_at
+      - version
+    SocialConnectRequest:
+      type: object
+      properties:
+        access_token:
+          type: string
+          minLength: 1
+          description: El token de acceso del usuario del sistema de Meta. Solo se
+            guarda cifrado.
+        name:
+          type: string
+          minLength: 1
+          description: El nombre que le das a la cuenta.
+          maxLength: 100
+        page_id:
+          type: string
+          minLength: 1
+          description: La página de Facebook (en Instagram, la vinculada).
+        instagram_account_id:
+          type: string
+          minLength: 1
+          description: Obligatorio en Instagram y prohibido en Messenger.
+      required:
+      - access_token
+      - name
+      - page_id
+    SocialPlatformEnum:
+      enum:
+      - MESSENGER
+      - INSTAGRAM
+      type: string
+      description: |-
+        * `MESSENGER` - MESSENGER
+        * `INSTAGRAM` - INSTAGRAM
     Stage:
       type: object
       properties:
@@ -16260,6 +19228,8 @@ components:
       - LIMIT_REACHED
       - DISCONNECTED_BY_ADMIN
       - PROVIDER_ERROR
+      - MESSAGES_ACCESS_OFF
+      - PAGE_NOT_SUBSCRIBED
       type: string
       description: |-
         * `TOKEN_INVALID` - TOKEN_INVALID
@@ -16268,6 +19238,8 @@ components:
         * `LIMIT_REACHED` - LIMIT_REACHED
         * `DISCONNECTED_BY_ADMIN` - DISCONNECTED_BY_ADMIN
         * `PROVIDER_ERROR` - PROVIDER_ERROR
+        * `MESSAGES_ACCESS_OFF` - MESSAGES_ACCESS_OFF
+        * `PAGE_NOT_SUBSCRIBED` - PAGE_NOT_SUBSCRIBED
     StockImport:
       type: object
       properties:
@@ -16922,6 +19894,13 @@ components:
       - reason
       - to_warehouse_id
       - variant_id
+    UnansweredCount:
+      type: object
+      properties:
+        count:
+          type: integer
+      required:
+      - count
     User:
       type: object
       properties:
@@ -16933,12 +19912,15 @@ components:
           type: string
           format: email
           readOnly: true
+          title: Correo electrónico
         first_name:
           type: string
           readOnly: true
+          title: Nombre
         last_name:
           type: string
           readOnly: true
+          title: Apellido
       required:
       - email
       - first_name

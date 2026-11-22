@@ -1,9 +1,9 @@
-"""Cómo se sirve `FakeGraph`: `install(monkeypatch, graph)` sustituye solo la capa de red de
-`core.http` (el gestor de conexiones de urllib3), así que su política real (https, puerto 443,
-allowlist, `Host`) sigue aplicándose; la prueba fija `HTTP_ALLOWED_HOSTS` con `override_settings`.
-Un servidor local para el entorno de desarrollo se añade con el adaptador de salida (F7-05) o con
-la activación (F7-12): `core.http` no llega a un servidor local a propósito (solo https e IP
-públicas).
+"""Cómo se sirve `FakeGraph` (WhatsApp) o `FakePageGraph` (Messenger e Instagram, F7b-03):
+`install(monkeypatch, graph)` sustituye solo la capa de red de `core.http` (el gestor de conexiones
+de urllib3), así que su política real (https, puerto 443, allowlist, `Host`) sigue aplicándose; la
+prueba fija `HTTP_ALLOWED_HOSTS` con `override_settings`. Un servidor local para el entorno de
+desarrollo se añade con el adaptador de salida (F7-05) o con la activación (F7-12): `core.http` no
+llega a un servidor local a propósito (solo https e IP públicas).
 """
 
 import io
@@ -16,6 +16,7 @@ from urllib3.exceptions import ProtocolError, ReadTimeoutError
 
 from core import http
 from tests.meta_sim.graph import Cut, FakeGraph, Timeout
+from tests.meta_sim.page_graph import FakePageGraph
 from tests.meta_sim.webhooks import MEDIA_HOST
 
 GRAPH_HOST = "graph.facebook.com"
@@ -24,7 +25,7 @@ GRAPH_HOST = "graph.facebook.com"
 class _Manager:
     """El `PoolManager` falso: contesta `request` con el estado y el cuerpo de `FakeGraph`."""
 
-    def __init__(self, graph: FakeGraph, hosts: tuple[str, ...]) -> None:
+    def __init__(self, graph: FakeGraph | FakePageGraph, hosts: tuple[str, ...]) -> None:
         self.graph, self.hosts = graph, hosts
 
     def request(
@@ -62,7 +63,9 @@ class _Manager:
         )
 
 
-def install(monkeypatch: pytest.MonkeyPatch, graph: FakeGraph, *hosts: str) -> _Manager:
+def install(
+    monkeypatch: pytest.MonkeyPatch, graph: FakeGraph | FakePageGraph, *hosts: str
+) -> _Manager:
     manager = _Manager(graph, hosts or (GRAPH_HOST, MEDIA_HOST))
     monkeypatch.setattr(http, "_manager", manager)
     return manager

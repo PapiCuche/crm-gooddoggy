@@ -13,8 +13,9 @@ from uuid import UUID
 from django.contrib.auth import SESSION_KEY, authenticate
 from django.contrib.auth import login as django_login
 from django.contrib.auth import logout as django_logout
+from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
-from django.db import DEFAULT_DB_ALIAS, transaction
+from django.db import DEFAULT_DB_ALIAS, IntegrityError, transaction
 from django.db.models import F
 from django.http import HttpRequest
 
@@ -23,6 +24,7 @@ from apps.accounts.emails import canonical_email, presented_email
 from apps.accounts.models import MfaDevice, User
 from apps.audit import platform
 from apps.audit.services import Entity, Result
+from core import text
 from core.api.errors import ApiError
 from core.observability import reporting
 
@@ -186,6 +188,75 @@ def revoke_sessions(user_id: UUID, *, using: str = DEFAULT_DB_ALIAS) -> None:
     No comprueba permisos.
     """
     User.objects.using(using).filter(pk=user_id).update(session_epoch=F("session_epoch") + 1)
+
+
+class AccountExists(Exception):
+    """El correo ya tiene cuenta y no es la de la sesión, o se creó a la vez (ADR-020 §4)."""
+
+
+class StaffAccount(Exception):
+    """El correo es de una cuenta de personal de plataforma: nunca es miembro (ADR-001)."""
+
+
+NAME_MAX = User._meta.get_field("first_name").max_length or 0
+
+
+def _person_name(value: str, *, required: bool) -> str:
+    """Un nombre o apellido como se guarda (`core.text.line`: NFC, una línea, sin controles ni
+    caracteres de dirección ni ocultos) o `ValidationError` con un mensaje fijo, que nunca repite
+    el valor. Con alguna letra o cifra que se vea (`core.text.name`): el nombre siempre y el
+    apellido si lo lleva (`core.text.optional_name`, F2-131)."""
+    try:
+        tidy = text.line(value, NAME_MAX)
+    except ValueError:
+        message = "Escríbelo en una sola línea, sin caracteres de control ni de dirección."
+        raise ValidationError(message, code="invalid") from None
+    try:
+        return text.name(tidy, NAME_MAX) if required else text.optional_name(tidy, NAME_MAX)
+    except ValueError:
+        if not required:
+            message = "Escribe tu apellido con alguna letra o cifra, o déjalo vacío."
+            raise ValidationError(message, code="invalid") from None
+        raise ValidationError("Escribe tu nombre.", code="required") from None
+
+
+def invited_account(
+    email: str, *, session_user_id: UUID | None, password: str, first_name: str, last_name: str
+) -> tuple[UUID, bool]:
+    """La cuenta que acepta una invitación a `email` (canónico), como `(id, creada)` (ADR-020 §4).
+
+    Si existe, solo vale la de la sesión, activa, y no se toca (ni se miran los nombres): si no,
+    `AccountExists` (también desactivada) o `StaffAccount`. Si no, se crea con el nombre
+    (`_person_name`) y una contraseña que pasa los validadores con esos nombres
+    (`ValidationError` por campo, con el código de cada validador). Si otra aceptación la creó a
+    la vez, `AccountExists`: quien llama deshace su transacción entera. No inicia sesión.
+    """
+    existing = User.objects.filter(email=email).first()
+    if existing is not None:
+        if existing.is_platform_staff:
+            raise StaffAccount
+        if existing.pk != session_user_id or not existing.is_active:
+            raise AccountExists
+        return existing.pk, False
+    names = {"first_name": first_name, "last_name": last_name}
+    problems: dict[str, list[ValidationError]] = {}
+    for field, value in names.items():
+        try:
+            names[field] = _person_name(value, required=field == "first_name")
+        except ValidationError as invalid:
+            problems[field], names[field] = [invalid], ""
+    try:
+        validate_password(password, User(email=email, **names))
+    except ValidationError as weak:
+        problems["password"] = weak.error_list  # con el código de cada validador
+    if problems:
+        raise ValidationError(problems)
+    try:
+        with transaction.atomic():  # savepoint: la misma cuenta pudo nacer en otra organización
+            user = User.objects.create_user(email=email, password=password, **names)
+    except IntegrityError:
+        raise AccountExists from None
+    return user.pk, True
 
 
 def logout(request: HttpRequest) -> None:

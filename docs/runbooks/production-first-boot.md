@@ -134,7 +134,7 @@ sudo install -m 0644 /dev/stdin /etc/crm/backup-recipients.txt   # pega las lín
 Después, en el servidor, un archivo cifrado con todos los archivos de entorno salvo `postgres.env`, que se borra en el paso 5.2:
 
 ```bash
-sudo sh -c 'cd /etc/crm && tar -cf - --exclude=postgres.env -- *.env | age -R backup-recipients.txt' \
+sudo sh -c 'cd /etc/crm && tar -cf - --exclude=postgres.env -- *.env $(ls host-mode 2>/dev/null) | age -R backup-recipients.txt' \
   > "crm-secretos-$(date -u +%Y%m%dT%H%MZ).tar.age"
 ```
 
@@ -162,14 +162,16 @@ sudo git -C /opt/crm checkout --detach <SHA>
 sudo install -m 0600 /dev/stdin /root/release-<SHA>.env   # pega el release.env del resumen y pulsa Ctrl-D
 ```
 
+El bloque termina en `REVISION=<SHA>`: `deploy.sh` se niega si el checkout de `/opt/crm` está en otro commit, porque `compose.yaml`, `smoke.sh` y `backup/` tienen que ser los de esas imágenes (F1-15b).
+
 Si los paquetes de GHCR siguen privados, antes `sudo docker login ghcr.io` con un token de solo lectura de paquetes ([infra/prod/README.md](../../infra/prod/README.md), «Imágenes»).
 
 **Arrancar solo PostgreSQL y comprobar los roles.** Todavía no existe `/etc/crm/release.env`: lo escribe `deploy.sh` cuando el despliegue pasa. Hasta entonces se usa el archivo de `/root`:
 
 ```bash
 cd /opt/crm
-sudo docker compose -f infra/prod/compose.yaml --env-file /root/release-<SHA>.env up -d --wait postgres
-sudo docker compose -f infra/prod/compose.yaml --env-file /root/release-<SHA>.env exec -T postgres \
+sudo infra/prod/compose.sh --env-file /root/release-<SHA>.env up -d --wait postgres
+sudo infra/prod/compose.sh --env-file /root/release-<SHA>.env exec -T postgres \
   psql -U postgres -d crm -Atc "SELECT rolname, rolsuper, rolbypassrls, rolcreatedb FROM pg_roles WHERE rolname IN ('crm_app', 'crm_migrator') ORDER BY 1"
 ```
 
@@ -180,7 +182,7 @@ crm_app|f|f|f
 crm_migrator|f|t|f
 ```
 
-Si el volumen ya existía (un intento anterior), la imagen no vuelve a ejecutar el script. Es idempotente: con `postgres.env` aún en su sitio, `sudo docker compose -f infra/prod/compose.yaml --env-file /root/release-<SHA>.env exec -T postgres /docker-entrypoint-initdb.d/10-roles.sh` crea lo que falte y fija atributos y contraseñas.
+Si el volumen ya existía (un intento anterior), la imagen no vuelve a ejecutar el script. Es idempotente: con `postgres.env` aún en su sitio, `sudo infra/prod/compose.sh --env-file /root/release-<SHA>.env exec -T postgres /docker-entrypoint-initdb.d/10-roles.sh` crea lo que falte y fija atributos y contraseñas.
 
 ## 4. Lo que necesitan los backups
 
@@ -208,7 +210,7 @@ sudo infra/prod/deploy.sh /root/release-<SHA>.env
 
 `deploy.sh` ([infra/prod/README.md](../../infra/prod/README.md), «Desplegar») valida el release, descarga los cinco digests, se salta el volcado previo (en el primer despliegue no hay nada que volcar), arranca PostgreSQL y Redis, ejecuta el job `migrate` como `crm_migrator`, levanta el stack y pasa la puerta de salud: `/health/ready` 200 desde dentro del backend, [`smoke.sh`](../../infra/prod/smoke.sh) y `https://crm.<DOMINIO>/login` 200. En el primer arranque Caddy pide el certificado en segundo plano, después de que `up --wait` termine: `smoke.sh` lo espera hasta 120 s de reloj (`CRM_SMOKE_TLS_TIMEOUT`; un intento cada 5 s, y cada uno corta a los 15 s) y, si tarda, dice cuánto (`smoke: certificado válido tras 15s`). Termina con `DESPLIEGUE OK: /etc/crm/release.env`.
 
-Si la puerta falla en el primer despliegue no hay versión a la que volver: sale con `ROLLBACK IMPOSIBLE` y el stack queda como está. Mira `sudo docker compose -f infra/prod/compose.yaml --env-file /root/release-<SHA>.env ps` y `… logs backend proxy`, corrige y repite la misma orden. Lo habitual:
+Si la puerta falla en el primer despliegue no hay versión a la que volver: sale con `ROLLBACK IMPOSIBLE` y el stack queda como está. Mira `sudo infra/prod/compose.sh --env-file /root/release-<SHA>.env ps` y `… logs backend proxy`, corrige y repite la misma orden. Lo habitual:
 
 - **El certificado:**
   - `smoke FAIL: el certificado de … no es válido tras 125s (curl sale con 35 …)` (o 7, o 28; los segundos son los reales, algo más de 120): Caddy no lo obtuvo en ese tiempo. Los logs de `proxy` dicen qué respondió la autoridad. Si el registro A no resuelve aquí (`getent`) o el 80 o el 443 están cerrados, corrígelo. Si la autoridad solo va lenta, repite con más margen: `sudo CRM_SMOKE_TLS_TIMEOUT=300 infra/prod/deploy.sh /root/release-<SHA>.env`.
@@ -224,8 +226,8 @@ Con `migrate` ya hecho, la contraseña de `crm_migrator` no puede quedar en el e
 
 ```bash
 sudo shred -u /etc/crm/postgres.env
-sudo docker compose -f infra/prod/compose.yaml --env-file /etc/crm/release.env up -d --wait --force-recreate postgres
-sudo docker compose -f infra/prod/compose.yaml --env-file /etc/crm/release.env exec -T postgres \
+sudo infra/prod/compose.sh --env-file /etc/crm/release.env up -d --wait --force-recreate postgres
+sudo infra/prod/compose.sh --env-file /etc/crm/release.env exec -T postgres \
   sh -c 'test -z "$POSTGRES_PASSWORD$CRM_MIGRATOR_PASSWORD$CRM_APP_PASSWORD" && echo limpio'
 ```
 
@@ -256,7 +258,7 @@ La última orden tiene que responder `limpio`. Las contraseñas de los roles sig
 
 ```bash
 cd /opt/crm
-sudo docker compose -f infra/prod/compose.yaml --env-file /etc/crm/release.env exec backend \
+sudo infra/prod/compose.sh --env-file /etc/crm/release.env exec backend \
   python manage.py bootstrap_organization --slug <slug> --name "<Nombre de la organización>" \
   --owner-email <correo del Owner> --reason "primer arranque de producción"
 ```
@@ -296,7 +298,7 @@ Hoy no hay forma de recuperar una cuenta que pierde a la vez el teléfono y los 
 ```bash
 cd /opt/crm
 # /health/ready desde dentro del backend: «200» y el estado de database, redis y storage.
-sudo docker compose -f infra/prod/compose.yaml --env-file /etc/crm/release.env exec -T backend python -c 'import urllib.error as e, urllib.request as u
+sudo infra/prod/compose.sh --env-file /etc/crm/release.env exec -T backend python -c 'import urllib.error as e, urllib.request as u
 try: r = u.urlopen("http://127.0.0.1:8000/health/ready", timeout=5)
 except e.HTTPError as x: r = x
 print(r.status, r.read().decode())'
@@ -324,4 +326,5 @@ Y el navegador no avisa de nada al abrir `https://crm.<DOMINIO>/`: el certificad
 - **El equipo del Owner:** [add-member.md](add-member.md), una ejecución por persona.
 - **El simulacro de restauración** en un servidor nuevo, obligatorio antes de salir a producción (F1-18): [backup-restore.md](backup-restore.md) §7.
 - **Una comprobación externa** de `https://crm.<DOMINIO>/` con un servicio de monitorización de disponibilidad, más las alertas de disco y de backup (ADR-033 §9).
-- **Los siguientes despliegues y la vuelta atrás:** [infra/prod/README.md](../../infra/prod/README.md), «Desplegar» y «Volver atrás». Desde el segundo despliegue, `deploy.sh` hace antes de migrar el volcado previo cifrado (`backup.sh predeploy`, a `db/predeploy/`, 7 días). Restaurarlo es la única vuelta atrás de una versión con migraciones que no siguen expandir y contraer, y **el orden depende de cómo terminó `deploy.sh`**: tras `DESPLIEGUE OK`, `restore.sh` con `CRM_RELEASE_ENV=/etc/crm/release.env.previous` y después `deploy.sh --rollback`; tras `ROLLBACK OK` o `ROLLBACK FALLIDO`, `restore.sh` con `CRM_RELEASE_ENV=/etc/crm/release.env` y después `deploy.sh /etc/crm/release.env`, nunca `--rollback`. `--roles-env`, con las contraseñas actuales (paso 5.2). Los pasos completos están en ese README.
+- **El `migrate` mensual** (las particiones de auditoría se acaban si pasan 12 meses sin desplegar): instala `crm-migrate.timer` como dice [infra/prod/README.md](../../infra/prod/README.md), «Migrate mensual».
+- **Los siguientes despliegues y la vuelta atrás:** [infra/prod/README.md](../../infra/prod/README.md), «Desplegar» y «Volver atrás». Desde el segundo despliegue, `deploy.sh` hace antes de migrar el volcado previo cifrado (`backup.sh predeploy`, a `db/predeploy/`, 7 días). Restaurarlo es la única vuelta atrás de una versión con migraciones que no siguen expandir y contraer, y **el orden depende de cómo terminó `deploy.sh`**: tras `DESPLIEGUE OK`, `restore.sh` con `CRM_RELEASE_ENV=/etc/crm/release.env.previous` y después `deploy.sh --rollback` (con el checkout en el `REVISION` de ese archivo); tras `ROLLBACK OK` o `ROLLBACK FALLIDO`, `restore.sh` con `CRM_RELEASE_ENV=/etc/crm/release.env` y después `deploy.sh /etc/crm/release.env`, nunca `--rollback`. `--roles-env`, con las contraseñas actuales (paso 5.2). Los pasos completos están en ese README.

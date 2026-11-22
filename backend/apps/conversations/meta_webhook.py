@@ -26,6 +26,15 @@ whatsapp/cloud-api/guides/set-up-webhooks); lo que no recibe un `200` lo reinten
 (mensajes y estados): `MAX_ITEMS` es cinco veces el máximo documentado y lo que de verdad acota el
 trabajo es el cuerpo (3 MiB, y el proxy antes). Solo una cuenta absurda, más de `MAX_ITEMS` en
 alguna lista o en total, es `503` sin guardar nada: nunca un `200` que pierda una parte del lote.
+
+Instagram y Messenger (F7b-04b, ADR-035 §4) llegan por la misma ruta y la misma firma: `parse`
+despacha por `object` (`page`, `instagram`). Cada evento de `entry[].messaging[]` o `standby[]` es
+un ítem con `entry.id` como id de enrutado y una clave **por cuenta** (F7b-04d; ADR-040,
+que enmienda ADR-035 §4): `fb:msg:<page>:<mid>`, `ig:msg:<igid>:<mid>`, `ig:read:<igid>:<mid>`, un
+borrado `…:del:<cuenta>:<mid>`, `fb:read:<page>:<psid>:<watermark>`, `fb:delivery:…` y lo demás
+`…:other:<cuenta>:<resumen>`. Dos cuentas conectadas que se escriben reciben el mismo `mid` (eco en
+una, entrante en la otra) y cada una guarda el suyo. Las URL de las historias se quitan **antes** de
+guardar: Meta prohíbe guardar esa media.
 """
 
 import hashlib
@@ -43,7 +52,7 @@ from django.http import Http404, HttpRequest, HttpResponse, HttpResponseNotAllow
 from django.views.decorators.csrf import csrf_exempt
 
 from apps.conversations import ingest_alerts, ingress
-from apps.conversations.models import META_ID
+from apps.conversations.models import EXTERNAL_ID, META_ID
 from core.observability.logging import get_logger
 
 logger = get_logger(__name__)
@@ -53,9 +62,16 @@ CHALLENGE = re.compile(r"[A-Za-z0-9]{1,128}")
 ID = re.compile(META_ID)
 FIELD = re.compile(r"[a-z_]{1,64}")
 OBJECT = "whatsapp_business_account"
+SOCIAL = {"page": ("MESSENGER", "fb"), "instagram": ("INSTAGRAM", "ig")}  # ADR-035 §4
+PERSON = re.compile(EXTERNAL_ID)  # el PSID o el IGSID, y la cuenta en el evento
 MAX_ITEMS, MAX_DEPTH = 5000, 16  # 5 × «a batch with a maximum of 1000 updates»
 MAX_ENTRIES = MAX_CHANGES = MAX_ROWS = MAX_ITEMS  # ninguna lista corta antes que el total
 ID_MAX, TEXT_MAX, KEY_PART_MAX = 200, 8192, 300
+# La clave social más larga con un `mid`: `ig:read:` + la cuenta (`META_ID`, 30) + `:` + 300 = 339,
+# dentro de los 700 de `webhook_ingress.event_key` (prueba con los dos ids al máximo). La marca de
+# agua de Messenger (milisegundos) se acota a 15 dígitos: con la cuenta y el PSID, 12 + 30 + 1 + 100
+# + 1 + 15 = 159. Sin tope, un entero enorme rompería el CHECK de la clave y con él todo el lote.
+WATERMARK_MAX = 10**15
 PROFILE_NAME_MAX = 200  # el nombre de perfil que viaja en el ítem; `inbound` lo recorta a 100
 
 
@@ -82,9 +98,11 @@ class Item:
 
     kind: str  # `message`, `status` u `other`
     key: str
-    waba_id: str
+    waba_id: str | None  # solo WhatsApp
     phone_number_id: str | None
     payload: dict[str, Any]
+    platform: str = "WHATSAPP"
+    routing_id: str | None = None  # Instagram y Messenger: el `entry.id` (la cuenta)
 
 
 def _text(value: Any, limit: int) -> str:
@@ -106,6 +124,14 @@ def _quote(value: Any, limit: int) -> str:
     if len(encoded) > KEY_PART_MAX:
         raise Invalid("id")
     return encoded
+
+
+def _mid(value: Any) -> Any:
+    """El `mid` de un mensaje será su `external_message_id`: imprimible y sin espacios en los
+    extremos, como exige `record_inbound`. Si no, se descarta aquí y no se reintenta en vano."""
+    if isinstance(value, str) and (value != value.strip() or not value.isprintable()):
+        raise Invalid("mid")
+    return value
 
 
 def _deep(value: Any) -> bool:
@@ -214,6 +240,73 @@ def _change(waba: str, change: Any, rejected: list[str]) -> list[Item]:
     return items
 
 
+def _no_story_media(message: dict[str, Any]) -> None:
+    """Quita la URL de una mención o una respuesta a una historia: «You must not store or cache the
+    media content» [S13]; no llega ni a la ingesta (ni a un ítem `FAILED` o `DEAD`)."""
+    found = message.get("attachments")
+    for attachment in found if isinstance(found, list) else []:
+        if not isinstance(attachment, dict) or attachment.get("type") != "story_mention":
+            continue
+        if isinstance(payload := attachment.get("payload"), dict):
+            payload.pop("url", None)
+    reply = message.get("reply_to")
+    if isinstance(reply, dict) and isinstance(reply.get("story"), dict):
+        reply["story"].pop("url", None)
+
+
+def _social(social: tuple[str, str], account: str, event: Any, field: str) -> Item:
+    """Un evento de Instagram o Messenger. `sender` y `recipient` con ids de Meta; el cruce con la
+    cuenta lo hace la ruta (`ACCOUNT_MISMATCH`), con la cuenta ya resuelta."""
+    if not isinstance(event, dict):
+        raise Invalid("event")
+    people = (event.get("sender"), event.get("recipient"))
+    ids = [p.get("id") if isinstance(p, dict) else None for p in people]
+    if not all(isinstance(i, str) and PERSON.fullmatch(i) for i in ids):
+        raise Invalid("ids")
+    (platform, prefix), payload = social, event
+    payload["standby"] = field == "standby"
+    here = _quote(account, ID_MAX)  # la cuenta va en la clave: el mismo `mid` llega a dos cuentas
+    message, read, delivered = event.get("message"), event.get("read"), event.get("delivery")
+    if isinstance(message, dict):
+        text = message.get("text")
+        if text is not None and (not isinstance(text, str) or not 1 <= len(text) <= TEXT_MAX):
+            raise Invalid("text")
+        _no_story_media(message)
+        tag = "del" if message.get("is_deleted") is True else "msg"
+        key, kind = f"{prefix}:{tag}:{here}:{_quote(_mid(message.get('mid')), ID_MAX)}", "message"
+    elif prefix == "ig" and isinstance(read, dict):
+        key, kind = f"ig:read:{here}:{_quote(read.get('mid'), ID_MAX)}", "status"
+    elif prefix == "fb" and isinstance(found := delivered or read, dict):
+        mark = found.get("watermark")
+        if not isinstance(mark, int) or isinstance(mark, bool) or not 1 <= mark < WATERMARK_MAX:
+            raise Invalid("watermark")
+        which = "delivery" if isinstance(delivered, dict) else "read"
+        key, kind = f"fb:{which}:{here}:{ids[0]}:{mark}", "status"
+    else:  # reacción, edición, postback…: se guarda y se ignora con su motivo
+        digest = hashlib.sha256(json.dumps(event, sort_keys=True).encode()).hexdigest()
+        key, kind = f"{prefix}:other:{here}:{digest[:32]}", "other"
+    return Item(kind, key, None, None, payload, platform, account)
+
+
+def _social_entry(social: tuple[str, str], entry: Any, rejected: list[str]) -> list[Item]:
+    account = entry.get("id") if isinstance(entry, dict) else None
+    if not isinstance(account, str) or not ID.fullmatch(account):
+        raise Invalid("account")  # nunca llega al resolver, que lanza con un id que no es de Meta
+    fields = [f for f in ("messaging", "standby") if f in entry]
+    if not fields or any(not isinstance(entry[f], list) for f in fields):
+        raise Invalid("messaging")
+    items: list[Item] = []
+    for field in fields:
+        if len(entry[field]) > MAX_ROWS:
+            raise Overflow(field)
+        for event in entry[field]:
+            try:
+                items.append(_social(social, account, event, field))
+            except Invalid as error:
+                rejected.append(error.reason)
+    return items
+
+
 @dataclass(frozen=True, slots=True)
 class Parsed:
     items: list[Item]
@@ -229,7 +322,10 @@ def parse(body: bytes) -> Parsed:
         event = json.loads(body, parse_constant=_no_constant)
     except ValueError, RecursionError:  # incluye UnicodeDecodeError; 100 000 corchetes
         raise Invalid("json") from None
-    if not isinstance(event, dict) or event.get("object") != OBJECT or _deep(event):
+    if not isinstance(event, dict) or _deep(event):
+        raise Invalid("object")
+    social = SOCIAL.get(event["object"]) if isinstance(event.get("object"), str) else None
+    if social is None and event.get("object") != OBJECT:
         raise Invalid("object")
     entries = event.get("entry")
     if not isinstance(entries, list) or not entries:
@@ -240,6 +336,9 @@ def parse(body: bytes) -> Parsed:
     rejected: list[str] = []
     for entry in entries:
         try:
+            if social is not None:
+                items += _social_entry(social, entry, rejected)
+                continue
             waba = entry.get("id") if isinstance(entry, dict) else None
             changes = entry.get("changes") if isinstance(entry, dict) else None
             if not isinstance(waba, str) or not ID.fullmatch(waba):

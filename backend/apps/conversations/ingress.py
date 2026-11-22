@@ -7,10 +7,15 @@ sobre ellas y solo entra por las funciones `SECURITY DEFINER` de las migraciones
 **nunca** usa la organización que diga el payload: sale de `resolve_channel_account` (la cuenta
 que la propia organización registró), y el procesador solo enruta y marca: un ítem enrutado queda
 `PROCESSED` sin efecto hasta F7-04.
+
+Instagram y Messenger (F7b-04b, ADR-035 §4) se guardan con las versiones `_social` de las funciones
+y se enrutan por `resolve_social_account` (la cuenta viva de ese `entry.id` firmado), con el cruce
+obligatorio de la cuenta del evento (`ACCOUNT_MISMATCH`) antes de escribir nada.
 """
 
 import json
 import math
+import re
 import time
 from collections import Counter
 from dataclasses import dataclass
@@ -23,7 +28,7 @@ from psycopg.types.json import Jsonb
 
 from apps.audit.services import Entity, record
 from apps.conversations import delivery, inbound
-from apps.conversations.models import ChannelAccount
+from apps.conversations.models import META_ID, ChannelAccount
 from core.observability.logging import get_logger
 from core.tenancy.context import ActorType, TenantContext
 from core.tenancy.scope import tenant_scope
@@ -44,10 +49,12 @@ _now = time.monotonic  # separado para que una prueba mueva el reloj
 class Claimed:
     id: UUID
     kind: str
-    waba_id: str
+    waba_id: str | None
     phone_number_id: str | None
     payload: dict[str, Any]
     attempts: int
+    platform: str = "WHATSAPP"
+    routing_id: str | None = None
 
 
 def clean(value: Any) -> Any:
@@ -99,20 +106,28 @@ def refuse(item: Any, sqlstate: str) -> bool:
     sql = "SELECT public.webhook_ingress_refuse(%s, %s, %s, %s, %s, %s, %s)"
     payload = Jsonb(clean(item.payload))
     args = [PROVIDER, item.key, item.kind, item.waba_id, item.phone_number_id, payload, reason]
+    if getattr(item, "platform", "WHATSAPP") != "WHATSAPP":  # con plataforma y `entry.id`
+        sql = sql.replace("refuse(", "refuse_social(")
+        args[3:5] = [item.platform, item.routing_id]
     return _bound(sql, args)[0][0] is not None
 
 
 def _insert_all(items: list[Any]) -> int:
     """Todos los ítems en una sola sentencia, en el orden dado; devuelve cuántos eran nuevos."""
+    social = getattr(items[0], "platform", "WHATSAPP") != "WHATSAPP"  # un solo `object`
     rows = [
-        {"k": i.key, "t": i.kind, "w": i.waba_id, "n": i.phone_number_id, "p": clean(i.payload)}
+        {"k": i.key, "t": i.kind, "p": clean(i.payload)}
+        | ({"w": i.platform, "n": i.routing_id} if social else
+           {"w": i.waba_id, "n": i.phone_number_id})
         for i in items
-    ]
+    ]  # fmt: skip
     sql = (  # la función, volátil, se evalúa después del `ORDER BY`: en el orden dado
         "SELECT count(s.id) FROM (SELECT public.webhook_ingress_insert(%s, e->>'k', e->>'t',"
         " e->>'w', e->>'n', e->'p') AS id FROM jsonb_array_elements(%s) WITH ORDINALITY AS a(e, n)"
         " ORDER BY a.n) AS s"
     )
+    if social:  # la versión con plataforma y `entry.id` (0040): mismo orden de argumentos
+        sql = sql.replace("webhook_ingress_insert(", "webhook_ingress_insert_social(")
     return int(_bound(sql, [PROVIDER, Jsonb(rows)])[0][0])
 
 
@@ -151,9 +166,13 @@ def store(items: list[Any]) -> int:
 
 
 def claim(limit: int = 50, lease: int = LEASE_SECONDS) -> list[Claimed]:
-    rows = _call("SELECT * FROM public.webhook_ingress_claim(%s, %s)", [limit, lease])
+    """Reclama un lote y lo entrega en orden de llegada (`uuidv7`): la función elige los ítems por
+    su `ORDER BY`, pero su `UPDATE … RETURNING` los devuelve en el orden físico de la tabla, y una
+    BAJA procesada después de su ALTA dejaba la baja (TEST-FLAKY-02, #934)."""
+    sql = "SELECT * FROM public.webhook_ingress_claim(%s, %s) ORDER BY id"
+    rows = _call(sql, [limit, lease])
     # El jsonb llega como texto por el cursor de Django.
-    return [Claimed(r[0], r[1], r[2], r[3], json.loads(r[4]), r[5]) for r in rows]
+    return [Claimed(r[0], r[1], r[2], r[3], json.loads(r[4]), *r[5:8]) for r in rows]
 
 
 def mark(
@@ -188,6 +207,14 @@ def resolve(platform: str, number: str) -> tuple[UUID, UUID] | None:
     return (found[0][0], found[0][1]) if found else None
 
 
+def resolve_social(platform: str, external_id: str) -> tuple[UUID, UUID] | None:
+    """(organización, cuenta) de la cuenta viva de Instagram o Messenger de ese `entry.id` firmado
+    (ADR-035 §4), o `None`: la organización nunca sale del payload."""
+    sql = "SELECT * FROM public.resolve_social_account(%s, %s)"
+    found = _bound(sql, [platform, external_id])  # el id, aparte: nunca en el texto ni en el log
+    return (found[0][0], found[0][1]) if found else None
+
+
 def wake() -> None:
     """Avisa al procesador de que hay ítems nuevos, sin retener la ruta pública: una conexión propia
     al broker que no reintenta ni espera más de `BROKER_WAIT`. Si falla, el barrido de beat lo
@@ -213,6 +240,8 @@ def wake() -> None:
 def route(item: Claimed) -> tuple[str, UUID | None, UUID | None, str | None]:
     """A dónde va un ítem: (estado, organización, cuenta, motivo). La organización es la de la
     cuenta registrada, nunca una del payload; el WABA del evento tiene que ser el de la cuenta."""
+    if item.platform != "WHATSAPP":
+        return _route_social(item)
     if item.phone_number_id is None:
         return "IGNORED", None, None, "NO_NUMBER"  # cuenta y plantillas: F7-10 y F7-11
     found = resolve("WHATSAPP", item.phone_number_id)
@@ -240,6 +269,41 @@ def route(item: Claimed) -> tuple[str, UUID | None, UUID | None, str | None]:
     return "PROCESSED", organization_id, account_id, None
 
 
+def _route_social(item: Claimed) -> tuple[str, UUID | None, UUID | None, str | None]:
+    """Instagram o Messenger: la cuenta viva de ese `entry.id`; la cuenta que nombra el evento (el
+    destinatario, o el remitente en un eco) tiene que ser esa misma, o no se escribe nada."""
+    if item.routing_id is None or not re.fullmatch(META_ID, item.routing_id):
+        return "IGNORED", None, None, "UNKNOWN_ACCOUNT"  # el resolver lanzaría: ni se le pregunta
+    if (found := resolve_social(item.platform, item.routing_id)) is None:
+        return "IGNORED", None, None, "UNKNOWN_ACCOUNT"
+    organization_id, account_id = found
+    context = TenantContext(organization_id, "webhook", actor_type=ActorType.INTEGRATION)
+    message = item.payload.get("message")
+    echo = isinstance(message, dict) and message.get("is_echo") is True
+    named = item.payload.get("sender" if echo else "recipient")
+    with tenant_scope(context):
+        live = ChannelAccount.objects.filter(pk=account_id, deleted_at__isnull=True)
+        account = live.filter(platform=item.platform, external_account_id=item.routing_id).first()
+        if account is None or not isinstance(named, dict) or named.get("id") != item.routing_id:
+            logger.warning("meta.webhook.account_mismatch", channel_account_id=str(account_id))
+            return "IGNORED", None, None, "ACCOUNT_MISMATCH"
+        seen(context, account)
+        try:  # un eco, un leído o una entrega: su saliente (F7b-05c); lo demás, el entrante
+            outgoing = echo or item.kind == "status"
+            if reason := (
+                delivery.social(context, account, item.payload)
+                if outgoing
+                else inbound.receive_social(context, account, item.kind, item.payload)
+            ):
+                return "IGNORED", organization_id, account_id, reason
+        except delivery.NotYet as wait:  # como un estado de WhatsApp: espera y luego se cierra
+            if item.attempts >= UNKNOWN_AFTER:
+                logger.info("meta.webhook.status_unknown_message", reason=wait.closing)
+                return "IGNORED", organization_id, account_id, wait.closing
+            return "FAILED", None, None, "MESSAGE_NOT_FOUND"
+    return "PROCESSED", organization_id, account_id, None
+
+
 def seen(ctx: TenantContext, account: ChannelAccount) -> None:
     """El primer evento firmado enrutado a una cuenta `PENDING` es la señal de «webhook visto»
     (ADR-029 §2): limpia `WEBHOOK_NOT_SEEN` y, solo si ya no queda otro detalle y la cuenta tiene
@@ -253,7 +317,8 @@ def seen(ctx: TenantContext, account: ChannelAccount) -> None:
     if account.status != "PENDING":
         return
     before = (account.status, account.status_detail)
-    if account.status_detail == "WEBHOOK_NOT_SEEN":
+    # Un evento firmado de la página también prueba que la app volvió a estar suscrita (F7b-06g).
+    if account.status_detail in ("WEBHOOK_NOT_SEEN", "PAGE_NOT_SUBSCRIBED"):
         account.status_detail = None
     ready = account.credential_id is not None and account.last_healthcheck_at is not None
     if account.status_detail is None and ready:

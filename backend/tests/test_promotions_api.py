@@ -22,7 +22,7 @@ from tests.factories import make_user
 from tests.test_authorization import give
 from tests.test_member_branch import DENIED
 from tests.test_memberships import ctx, join
-from tests.test_prices import price_list
+from tests.test_prices import price_list, seeding
 from tests.test_prices_api import no_cost
 from tests.test_pricing_engine import T0, row
 from tests.test_products import send
@@ -270,7 +270,7 @@ def test_items_and_lists_come_back_by_id_whatever_their_insertion_order(team: An
     cats = tree(team.org, "audio", "bocinas", "portatiles")
     lists = [team.regular, price_list(team.org, "B"), price_list(team.org, "C")]
     keys = sorted(uuid4() for _ in range(3))  # se insertan de mayor a menor
-    with tenant_scope(ctx(team.org)):
+    with seeding(team.org):
         made = Promotion.objects.create(
             name="P",
             currency="PEN",
@@ -304,7 +304,9 @@ def test_a_text_keeps_its_line_breaks_and_tabs(team: Any) -> None:
 
 
 def test_a_text_keeps_composed_emoji_and_turns_windows_breaks_into_line_feeds(team: Any) -> None:
-    family = "Oferta 👨‍👩‍👧 ¡Ñandú! con­guion‌blando"
+    family = "Oferta 👨‍👩‍👧 ¡Ñandú! con guion"
     made = create(team.a, team, terms="Uno\r\nDos\rTres", description=family)
     assert made.status_code == 201
     assert (made.json()["terms"], made.json()["description"]) == ("Uno\nDos\nTres", family)
+    for hidden in ("con\u00adguion", "guion\u200cblando"):  # F8-11: no se ven y la IA lo leerá
+        assert create(team.a, team, description=hidden).status_code == 400

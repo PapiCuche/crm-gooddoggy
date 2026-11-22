@@ -28,6 +28,7 @@ FUNCTIONS = (
     "public.messages_sending_organizations(timestamptz, integer)",  # F7-05c, SECURITY DEFINER
     "public.channel_accounts_health_due(timestamptz, integer)",  # F7-06b, SECURITY DEFINER
     "public.credentials_stale_organizations(integer, integer)",  # F7-02b, SECURITY DEFINER
+    "public.ai_provider_keys_stale_organizations(integer, integer)",  # F8-03a, SECURITY DEFINER
     "public.webhook_ingress_insert(text, text, text, text, text, jsonb)",  # F7-03b
     "public.webhook_ingress_claim(integer, integer)",  # F7-03c
     "public.webhook_ingress_mark(uuid, integer, text, uuid, uuid, text)",
@@ -35,12 +36,31 @@ FUNCTIONS = (
     "public.webhook_ingress_purge(integer, integer)",
     "public.webhook_ingress_refuse(text, text, text, text, text, jsonb, text)",  # F7-11b
     "public.resolve_channel_account(text, text)",
+    "public.webhook_ingress_insert_social(text, text, text, text, text, jsonb)",  # F7b-04a
+    "public.webhook_ingress_refuse_social(text, text, text, text, text, jsonb, text)",
+    "public.resolve_social_account(text, text)",
+    "public.conversations_identity_required()",  # INVOKER
+    "public.contact_identities_live_account()",  # F7b-04b, INVOKER
     "public.meta_ingest_counts(timestamptz, timestamptz)",  # F7-11a, SECURITY DEFINER
     "public.quotes_guard()",  # F5-09b: guardas de la cotización, INVOKER
     "public.quote_items_guard()",
     "public.quote_approvals_guard()",
     "public.inventory_reservations_guard()",  # F3-33, INVOKER
     "public.message_attachments_advance()",  # F7-09a1b, INVOKER
+    "public.ai_budget_reservations_guard()",  # F8-05, INVOKER
+    "public.ai_budget_usage_guard()",
+    "public.ai_llm_calls_ensure_partitions(integer)",
+    "public.ai_budget_month(timestamptz)",  # F8-05b1
+    "public.ai_budget_day(timestamptz)",  # F8-05b2
+    "public.ai_budget_usage_alerted_once()",  # F8-05b4, INVOKER
+    "public.ai_budget_reserve(numeric, text, text, text, uuid)",  # SECURITY DEFINER
+    "public.ai_budget_settle(uuid, text, numeric, integer, integer, integer, integer, integer,"
+    " text)",
+    "public.ai_budget_orphan_organizations(integer)",  # F8-05b5, SECURITY DEFINER
+    "public.resolve_invitation(text)",  # F2-130a, SECURITY DEFINER
+    "public.ai_runs_ensure_partitions(integer)",  # F8-08b
+    "public.ai_actions_ensure_partitions(integer)",
+    "public.ai_suggestions_guard()",  # INVOKER
 )
 
 

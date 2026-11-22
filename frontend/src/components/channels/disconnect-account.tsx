@@ -4,24 +4,31 @@ import { useTranslations } from "next-intl";
 import { useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
-import { channelsWhatsappDisconnect } from "@/lib/api/client";
 import { Plain } from "@/components/inbox/plain";
 import { apiErrorKey } from "@/lib/api-errors";
 import type { ApiError } from "@/lib/http";
 
-// Desconectar una cuenta (F7-07b): `DELETE …/channels/whatsapp/{id}/` tras una confirmación que
+import { type Route, disconnect } from "./channel-routes";
+
+// Desconectar una cuenta (F7-07b; Messenger e Instagram en F7b-06):
+// `DELETE …/channels/{whatsapp|messenger|instagram}/{id}/` tras una confirmación que
 // dice lo que pasa: deja de recibir y enviar, y reconectar es crear una cuenta nueva. El foco
-// va a «Cancelar» (lo seguro) al abrir y la lista se vuelve a pedir al terminar.
+// va a «Cancelar» (lo seguro) al abrir. El resultado y el 404 (la cuenta ya no existe) los dice
+// la lista, fuera de esta tarjeta, que se va con la lista nueva (F7b-06f).
 export function DisconnectAccount({
   slug,
+  route,
   accountId,
   name,
   onDisconnected,
+  onMissing,
 }: {
   slug: string;
+  route: Route;
   accountId: string;
   name: string;
   onDisconnected: () => void;
+  onMissing: () => void;
 }) {
   const t = useTranslations("channels.disconnect");
   const errors = useTranslations("channels.errors");
@@ -39,7 +46,7 @@ export function DisconnectAccount({
     if (busy) return;
     setBusy(true);
     setProblem(null);
-    channelsWhatsappDisconnect(slug, accountId).then(
+    disconnect(slug, route, accountId).then(
       () => {
         setBusy(false);
         onDisconnected(); // la cuenta ya no está: su tarjeta se va con la lista nueva
@@ -47,15 +54,12 @@ export function DisconnectAccount({
       (error: ApiError) => {
         setBusy(false);
         if (error.status === 401) return; // `Providers` lleva al login
-        // La cuenta ya no existe (404): se vuelve a leer la lista y se dice.
-        if (error.status === 404) onDisconnected();
-        setProblem(
-          error.status === 403
-            ? errors("denied")
-            : error.status === 404
-              ? t("gone")
-              : api(apiErrorKey(error)),
-        );
+        // La cuenta ya no existe (404): la pregunta se cierra y lo dice la lista, que se vuelve a leer.
+        if (error.status === 404) {
+          setAsking(false);
+          return onMissing();
+        }
+        setProblem(error.status === 403 ? errors("denied") : api(apiErrorKey(error)));
       },
     );
   }

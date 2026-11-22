@@ -1,6 +1,6 @@
-# syntax=docker/dockerfile:1
-# Frontend (Next.js standalone). Versiones de ADR-012 §4.1: Node 24.21.0, pnpm 12.8.1.
-FROM node:24.21.0-bookworm-slim AS build
+# syntax=docker/dockerfile:1.27.1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
+# Frontend (Next.js standalone). Versiones de ADR-012 §4.1: Node 24.21.0, pnpm 12.8.1. Bases por digest (F1-15b).
+FROM node:24.21.0-bookworm-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20 AS build
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm install --global --no-audit --no-fund pnpm@12.8.1
 WORKDIR /app
@@ -10,8 +10,9 @@ COPY . .
 # Los rewrites de Next se fijan en el build; en el stack los enruta Caddy (same-origin).
 ARG BACKEND_ORIGIN=http://backend:8000
 # Variable pública y no secreta que Next incrusta en el bundle al construir (F6-07e): `on` abre el
-# WebSocket del Inbox; cualquier otro valor, ninguno.
-ARG NEXT_PUBLIC_INBOX_WS=off
+# WebSocket del Inbox; cualquier otro valor, ninguno. Encendida por omisión desde F6-09 (la imagen
+# de producción la lleva; infra/prod/README.md, «Tiempo real del Inbox»).
+ARG NEXT_PUBLIC_INBOX_WS=on
 # F1-14: `production` (por omisión) construye sin el prototipo /demo, que sigue en el repositorio
 # para desarrollo (AGENTS.md §11): se quita de la copia del build y se comprueba la salida. Solo
 # `development` lo conserva; cualquier otro valor (`prod`, `Production`, vacío) no construye.
@@ -25,7 +26,7 @@ RUN case "$CRM_BUILD_PROFILE" in \
     && BACKEND_ORIGIN="$BACKEND_ORIGIN" NEXT_PUBLIC_INBOX_WS="$NEXT_PUBLIC_INBOX_WS" pnpm build \
     && { [ "$CRM_BUILD_PROFILE" = development ] || node scripts/check-no-demo.mjs; }
 
-FROM node:24.21.0-bookworm-slim AS runtime
+FROM node:24.21.0-bookworm-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20 AS runtime
 ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 PORT=3000 HOSTNAME=0.0.0.0
 WORKDIR /app
 COPY --from=build --chown=node:node /app/.next/standalone ./

@@ -125,8 +125,10 @@ def _instant(alias: str, at: datetime | None) -> datetime:
 
 def _lists(ctx: ExecutionContext | TenantContext, audience: Audience) -> QuerySet[PriceList]:
     if audience is Audience.PUBLIC_AI:
-        return PriceList.objects.filter(deleted_at__isnull=True, ai_exposable=True).exclude(
-            required_permission="prices.view_internal"  # 04 §K.2: la interna, nunca
+        lists = PriceList.objects.filter(deleted_at__isnull=True, ai_exposable=True)
+        # 04 §K.2: la interna, nunca; por quién la ve o por su tipo, como `set_ai_exposable`.
+        return lists.exclude(required_permission="prices.view_internal").exclude(
+            kind=PriceList.Kind.INTERNAL
         )
     if not isinstance(ctx, ExecutionContext):
         raise TypeError("una persona resuelve con su ExecutionContext")
@@ -142,6 +144,17 @@ def _price_list(
     if found is None:
         raise ListNotVisible(wanted)
     return found
+
+
+def ai_price_lists(ectx: ExecutionContext, limit: int) -> list[tuple[UUID, str]]:
+    """Las listas (id y nombre) que la IA puede citar a esta persona (ADR-034 §6, D-F8-06): activas,
+    las que `PUBLIC_AI` ve (marcadas por el propietario, nunca la interna) y que la persona ve por
+    sí misma (`visible_price_lists`); la predeterminada primero, como mucho `limit`."""
+    alias = require_scope(ectx.tenant)
+    seen = visible_price_lists(ectx).values("id")
+    lists = _lists(ectx, Audience.PUBLIC_AI).using(alias).filter(is_active=True, pk__in=seen)
+    rows = lists.order_by("-is_default", "sort_order", "name", "id")[:limit]
+    return [(row.pk, row.name) for row in rows]
 
 
 def price_list_currency(ctx: ExecutionContext, price_list_id: UUID) -> str | None:
