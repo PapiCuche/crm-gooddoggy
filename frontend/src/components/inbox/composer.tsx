@@ -171,7 +171,7 @@ export function Composer({
               ))}
             </div>
           ) : null}
-          {tools ? <div className="ml-auto flex">{tools}</div> : null}
+          {tools ? <div className="ml-auto flex gap-2">{tools}</div> : null}
         </div>
       ) : null}
       {(["reply", "note"] as const).map((mode) =>
@@ -213,7 +213,8 @@ function ComposeBox({
   const client = useQueryClient();
   const field = useId();
   const box = useRef<HTMLTextAreaElement>(null);
-  const attempt = useRef<{ id: string; body: string; file: File | null } | null>(null);
+  // El intento que falló: su id, el texto con que se probó primero y su archivo.
+  const attempt = useRef<{ id: string; first: string; file: File | null } | null>(null);
   const [text, setText] = useState("");
   const [problem, setProblem] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
@@ -251,7 +252,7 @@ function ComposeBox({
   // El texto del copiloto se suma a lo ya escrito (no lo borra) y queda editable; no se envía. Si
   // llega mientras sale un envío, ese envío solo quita del cuadro lo que él mandó (`onSuccess`).
   useImperativeHandle(inserter, () => (value) => {
-    settleUntil.current = Date.now() + SETTLE; // otra inserción alarga la espera, no la acorta
+    settleUntil.current = performance.now() + SETTLE; // otra inserción alarga la espera, no la acorta
     setText((current) => (current.trim() ? `${current}\n\n${value}` : value));
     setProblem(null);
     setRefusal(null);
@@ -331,7 +332,9 @@ function ComposeBox({
       );
       // `onMutate` canceló la lectura en curso: si era la primera, el chat se quedaría «Cargando…».
       void client.invalidateQueries({ queryKey: key });
-      // Ese id ya es de otro envío: reintentar con él chocaría siempre.
+      // Ese id ya es de otro envío: reintentar con él chocaría siempre. Si el texto creció tras un
+      // fallo, lo primero pudo haber salido: se avisa en lugar de mandarlo otra vez.
+      const grown = attempt.current !== null && attempt.current.first !== request.body;
       if (error.code === "CLIENT_MESSAGE_ID_TAKEN") attempt.current = null;
       const reason = failure(error);
       if (DROP_FILE_ON.includes(reason)) {
@@ -350,16 +353,24 @@ function ComposeBox({
           ? t(note ? "deniedNote" : "denied")
           : reason === "CLIENT_MESSAGE_ID_TAKEN" && request.file
             ? t("idTakenMedia")
-            : errors(`api.${reason}`),
+            : reason === "CLIENT_MESSAGE_ID_TAKEN" && grown
+              ? t("idTakenGrown")
+              : errors(`api.${reason}`),
       );
     },
   });
 
   const submit = () => {
     if (send.isPending || closed || over || empty) return;
-    // El mismo texto (y archivo) reintentado reutiliza su id; otro empieza un intento nuevo.
-    if (attempt.current?.body !== text || attempt.current.file !== file) {
-      attempt.current = { id: uuid(), body: text, file };
+    // Reintentar reutiliza el id mientras el texto empiece por el que falló (también con lo que se
+    // insertó o escribió después) y el archivo sea el mismo: si el primero llegó al servidor sin
+    // respuesta, el mismo id no deja que salga dos veces. Otro texto empieza un intento nuevo.
+    if (
+      !attempt.current ||
+      !text.startsWith(attempt.current.first) ||
+      attempt.current.file !== file
+    ) {
+      attempt.current = { id: uuid(), first: text, file };
     }
     send.mutate({ client_message_id: attempt.current.id, body: text, file: file ?? undefined });
   };
@@ -383,7 +394,7 @@ function ComposeBox({
     const composing = event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229;
     if (event.key !== "Enter" || event.shiftKey || composing) return;
     event.preventDefault();
-    if (Date.now() < settleUntil.current) return; // recién insertado: se revisa antes de enviar
+    if (performance.now() < settleUntil.current) return; // recién insertado: se revisa antes de enviar
     submit();
   };
   const idle = note ? t("save") : t("send");

@@ -2512,6 +2512,7 @@
       "remove": "Quitar el archivo",
       "captionHint": "Puedes escribir un texto que lo acompañe (opcional).",
       "idTakenMedia": "Ese id de mensaje ya se usó para otro envío. Vuelve a enviar el archivo.",
+      "idTakenGrown": "Puede que la primera parte ya se haya enviado. Revisa el chat y quita del cuadro lo que ya salió antes de volver a enviar.",
       "overLimit": {
         "reply": "Pasaste el tope de caracteres: no se puede enviar.",
         "note": "Pasaste el tope de caracteres: no se puede guardar."
@@ -2586,6 +2587,24 @@
         "org": "el nombre de tu empresa"
       }
     },
+    "humanRequest": {
+      "request": "Solicitar atención humana",
+      "close": "Cerrar la solicitud de atención humana",
+      "saving": "Guardando…",
+      "requested": "Se pidió que una persona atienda esta conversación. Al cliente no se le envió nada.",
+      "closed": "Solicitud de atención humana cerrada.",
+      "denied": "No puedes cambiar esta conversación. Puede que ya no esté en tu alcance.",
+      "open": "Atención humana solicitada:",
+      "badge": "Pide atención humana",
+      "by": "por",
+      "you": "ti",
+      "reason": {
+        "ASKED_FOR_PERSON": "El cliente pidió hablar con una persona.",
+        "UPSET": "El cliente parece molesto.",
+        "MODEL": "La recomendó el copiloto.",
+        "AGENT": "La pidió quien atiende."
+      }
+    },
     "copilot": {
       "label": "Copiloto de IA",
       "suggest": "Sugerir respuesta",
@@ -2601,11 +2620,28 @@
       "discard": "Descartar",
       "discarded": "Sugerencia descartada.",
       "never": "Nunca se envía sola: la envías tú desde el cuadro de respuesta.",
+      "summarize": "Resumir",
+      "resummarize": "Resumir de nuevo",
+      "summarizing": "Preparando un resumen…",
+      "summarized": "Resumen listo. Es solo para leer.",
+      "summary": "Resumen de la conversación",
+      "generated": "Generado por IA",
+      "summaryUnverified": "Lo marcado no tiene respaldo en los datos: confírmalo antes de usarlo.",
+      "closeSummary": "Cerrar resumen",
+      "summaryClosed": "Resumen cerrado.",
+      "readOnly": "Solo para leer: no se inserta ni se envía.",
+      "handoff": {
+        "ASKED_FOR_PERSON": "El cliente pidió hablar con una persona.",
+        "UPSET": "El cliente parece molesto.",
+        "MODEL": "El copiloto recomienda que lo atienda una persona.",
+        "other": "El copiloto recomienda que lo atienda una persona.",
+        "next": "Se pidió atención humana para esta conversación; al cliente no se le envía nada."
+      },
       "error": {
-        "RATE_LIMITED": "Pediste muchas sugerencias seguidas. Vuelve a probar en unos minutos.",
-        "RATE_LIMITED_WAIT": "Pediste muchas sugerencias seguidas. Vuelve a probar en {minutes, plural, one {# minuto} other {# minutos}}.",
-        "AI_ORG_RATE_LIMITED": "Tu empresa pidió muchas sugerencias seguidas. Vuelve a probar en unos minutos.",
-        "AI_ORG_RATE_LIMITED_WAIT": "Tu empresa pidió muchas sugerencias seguidas. Vuelve a probar en {minutes, plural, one {# minuto} other {# minutos}}.",
+        "RATE_LIMITED": "Usaste el copiloto muchas veces seguidas. Vuelve a probar en unos minutos.",
+        "RATE_LIMITED_WAIT": "Usaste el copiloto muchas veces seguidas. Vuelve a probar en {minutes, plural, one {# minuto} other {# minutos}}.",
+        "AI_ORG_RATE_LIMITED": "Tu empresa usó el copiloto muchas veces seguidas. Vuelve a probar en unos minutos.",
+        "AI_ORG_RATE_LIMITED_WAIT": "Tu empresa usó el copiloto muchas veces seguidas. Vuelve a probar en {minutes, plural, one {# minuto} other {# minutos}}.",
         "AI_BUDGET_EXHAUSTED": "Se agotó el presupuesto de IA de tu empresa. Pide a un administrador que lo revise.",
         "AI_BUDGET_NOT_SET": "La IA aún no tiene presupuesto. Pide a un administrador que lo configure.",
         "AI_DISABLED": "La IA está apagada en tu empresa. Puedes responder sin el copiloto.",
@@ -2614,7 +2650,7 @@
         "AI_EVIDENCE_EXPIRED": "Los datos de esta sugerencia caducaron. Pide una nueva.",
         "denied": "No puedes usar el copiloto en esta conversación. Puede que ya no esté en tu alcance.",
         "gone": "Esa sugerencia ya no está disponible. Pide una nueva.",
-        "failed": "El copiloto no pudo preparar una sugerencia. Inténtalo de nuevo en unos minutos."
+        "failed": "El copiloto no pudo responder. Inténtalo de nuevo en unos minutos."
       }
     }
   },
