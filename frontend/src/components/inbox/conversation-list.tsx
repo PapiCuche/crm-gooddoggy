@@ -1,7 +1,7 @@
 "use client";
 
 import { useInfiniteQuery } from "@tanstack/react-query";
-import { Hand, RefreshCw } from "lucide-react";
+import { BotOff, Hand, RefreshCw } from "lucide-react";
 import { useFormatter, useTranslations } from "next-intl";
 
 import { useTenant } from "@/components/app-shell/tenant-context";
@@ -250,6 +250,12 @@ function Row({
             <span className="text-foreground inline-flex items-center gap-1 font-semibold">
               <Hand aria-hidden className="size-3" />
               {t("humanRequest.badge")}
+            </span>
+          ) : null}
+          {row.ai_excluded_at ? (
+            <span className="inline-flex items-center gap-1">
+              <BotOff aria-hidden className="size-3" />
+              {t("aiExclusion.mark")}
             </span>
           ) : null}
         </span>
