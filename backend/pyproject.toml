@@ -265,6 +265,14 @@ protected_modules = ["apps.ai_agents.replies"]
 allowed_importers = ["apps.ai_agents.copilot", "apps.ai_agents.api.handoff"]
 
 [[tool.importlinter.contracts]]
+# F8-08l (revisión de #1054): el `protected` de arriba mira solo los imports directos; este mira
+# también los indirectos (una tool que importara `api.handoff` llegaría a la auditoría).
+name = "Nada salvo el runtime y su ruta llega al texto de traspaso, ni indirectamente (F8-08l)"
+type = "forbidden"
+source_modules = ["apps.ai_agents.tools", "apps.ai_agents.registry", "apps.ai_agents.fields", "apps.ai_agents.models", "apps.ai_agents.apps", "apps.ai_agents.migrations", "apps.ai_agents.context", "apps.ai_agents.guard", "apps.ai_agents.detectors", "apps.ai_agents.records"]
+forbidden_modules = ["apps.ai_agents.replies"]
+
+[[tool.importlinter.contracts]]
 name = "Fronteras de alta: solo provisioning importa los bootstrap.py de L2 (F2-06)"
 type = "protected"
 protected_modules = ["apps.access.bootstrap", "apps.accounts.bootstrap", "apps.organizations.bootstrap"]

@@ -152,15 +152,18 @@ REASONS = ("ASKED_FOR_PERSON", "UPSET", "MODEL")
 # (decisión del propietario, #771): además de los detectores (`inmediat…`, `ahorita`, `hoy`,
 # `horas`…), estas prisas, sobre la clave y solo en ese texto.
 SOON = re.compile(
-    r"\benseguida\b|\bpronto\b|\bbrevedad\b|\ben\s+breve\b|\bya\s+mismo\b|\bminutos?\b"
+    r"\benseguid\w*|\bpront\w*|\bbrevedad\b|\ben\s+breve\b|\bya\s+mismo\b|\bminutos?\b"
     r"|\bsegundos?\b|\bal\s+(?:instante|momento|tiro)\b|\brapid\w*|\bvolando\b|\bpriorid\w*"
-    r"|\b(?:un|unos|pocos)\s+(?:momentos?|instantes?)\b|\burgen\w*"
+    r"|\b(?:un|unos|pocos)\s+momentos?\b|\burgen\w*|\binstantes?\b|\brat(?:it)?os?\b"
+    r"|\ben\s+(?:este|ese)\s+momento\b|\bya\s+(?:te|le|les|lo|la|los|las)\b|\bsin\s+esperas?\b"
+    r"|\bluego\s+luego\b|\basap\b|\bde\s+una\b|\ben\s+nada\b|\bsin\s+falta\b|\bseguro\b"
 )
 # La única frase que los detectores marcan y el texto de traspaso admite: la del propietario sobre
-# la conversación («Tu conversación quedará disponible…», #771). `disponib…` es de AVAILABILITY
-# (el stock de un producto); aquí no habla de stock. Solo esa frase y solo en ese texto: el del
-# modelo se sigue marcando igual. Lo que vaya pegado a ella («… disponible 2 días») sí se detecta.
-KEPT = re.compile(r"\bconversacion\s+quedara\s+disponible\b")
+# la conversación («Tu conversación quedará disponible…», #771), con su sujeto al empezar una frase
+# (no «el producto de tu conversación…»). `disponib…` es de AVAILABILITY (el stock de un
+# producto); aquí no habla de stock. Solo esa frase y solo en ese texto: el del modelo se sigue
+# marcando igual. Lo que vaya pegado a ella («… disponible 2 días») sí se detecta.
+KEPT = re.compile(r"(?:^|[.!?¿¡]\s*)((?:tu|la)\s+conversacion\s+quedara\s+disponible)\b")
 
 
 @dataclass(frozen=True)
@@ -330,8 +333,9 @@ def handoff(customer: Sequence[str], wants_handoff: bool) -> Handoff:
 def reply_problems(reply: object) -> tuple[str, ...]:
     """Por qué `reply` no vale como texto de traspaso; vacío si vale. `TOO_LONG`: más de
     `HANDOFF_MAX`; `BODY`: no es un cuerpo que `clean_body` acepta tal cual (sin controles de
-    dirección ni caracteres ocultos); si no, los tipos de lo que detectan los detectores (cifras,
-    plazos, promesas, enlaces, la marca), salvo `KEPT`, y `SOON` (una prisa). Solo códigos."""
+    dirección ni caracteres ocultos); `SCRIPT`: una letra que no es latina; si no, los tipos de
+    lo que detectan los detectores (cifras, plazos, promesas, enlaces, la marca), salvo `KEPT`, y
+    `SOON` (una prisa). Solo códigos."""
     if not isinstance(reply, str):
         return ("BODY",)
     if len(reply) > HANDOFF_MAX:
@@ -341,11 +345,15 @@ def reply_problems(reply: object) -> tuple[str, ...]:
             return ("BODY",)
     except ValueError:
         return ("BODY",)
+    if not all(unicodedata.name(c, "").startswith("LATIN ") for c in reply if c.isalpha()):
+        return (
+            "SCRIPT",
+        )  # una letra parecida de otro alfabeto: «hoy» con la «o» cirílica (U+043E)
     key, origin = _fold(reply)
     owned, pos = [], 0
     for kept in KEPT.finditer(key):
-        owned.append((pos, origin[kept.start()]))
-        pos = origin[kept.end() - 1] + 1
+        owned.append((pos, origin[kept.start(1)]))
+        pos = origin[kept.end(1) - 1] + 1
     found = [kind for kind, _, _ in _parts(reply, [*owned, (pos, len(reply))])]
     return tuple(dict.fromkeys(found + (["SOON"] if SOON.search(key) else [])))
 

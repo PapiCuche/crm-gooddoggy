@@ -26,6 +26,7 @@ MANAGE = "ai.manage"
 PROBLEMS = {
     "BODY": "Escribe un texto visible, sin caracteres ocultos ni de control.",
     "TOO_LONG": f"Como mucho {HANDOFF_MAX} caracteres.",
+    "SCRIPT": "Solo letras del alfabeto latino.",
     "SOON": "Sin prometer atención inmediata ni rápida.",
     "FIGURE": "Sin cifras, importes ni monedas.",
     "DELIVERY": "Sin plazos, fechas, horarios ni entregas.",
@@ -75,8 +76,8 @@ ASKED = "`ai.manage` y segundo factor reciente"
         responses={200: AiHandoffReplySerializer, **errors(400, 401, 403, 404, 429)},
         description=f"Cambia el texto de traspaso de la organización ({ASKED}) y lo audita "
         "(`ai.handoff_reply.changed`, sin el texto). 400 en `text`: un código y un mensaje por "
-        "problema (`BODY`, `TOO_LONG`, `SOON`, `FIGURE`, `DELIVERY`, `DISCOUNT`, `AVAILABILITY`, "
-        "`TERMS`, `LINK`, `MARKUP`); nunca repite lo enviado." + LIMITED,
+        "problema (`BODY`, `TOO_LONG`, `SCRIPT`, `SOON`, `FIGURE`, `DELIVERY`, `DISCOUNT`, "
+        "`AVAILABILITY`, `TERMS`, `LINK`, `MARKUP`); nunca repite lo enviado." + LIMITED,
     ),
 )  # fmt: skip
 class HandoffReplyView(APIView):

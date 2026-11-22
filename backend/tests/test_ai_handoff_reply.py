@@ -5,7 +5,11 @@ de cada organización. `GET`/`PUT …/ai/handoff-reply/` y `apps.ai_agents.repli
 usarlo (`detectors.reply_problems`); sin texto guardado, el inicial del propietario. Y el runtime y
 la ruta de sugerir proponen el de la organización. PostgreSQL con `crm_app`; datos ficticios."""
 
+import importlib
 import logging
+import pathlib
+import pkgutil
+import tomllib
 from types import SimpleNamespace
 from typing import Any
 
@@ -132,27 +136,30 @@ def test_each_organization_has_its_own_text(crm: SimpleNamespace, migrator: DB) 
         assert cursor.fetchall() == [(crm.a,)]
 
 
-@pytest.mark.parametrize(
-    ("text", "codes"),
-    [
-        ("Te atendemos en 24 horas", ["DELIVERY"]),  # un solo tramo: el tipo de mayor prioridad
-        ("Somos un equipo de 3 personas", ["FIGURE"]),
-        ("Te atendemos en 5 minutos", ["FIGURE", "SOON"]),
-        ("Te escribimos mañana", ["DELIVERY"]),
-        ("Una persona te atiende de inmediato", ["DELIVERY"]),
-        ("Una persona te responde enseguida", ["SOON"]),
-        ("Te atenderán en unos minutos", ["SOON"]),
-        ("Pagas en cuotas con tarjeta", ["TERMS"]),
-        ("Mira tiendagooddoggy.pe", ["LINK"]),
-        ("Revisa [verificar]", ["MARKUP"]),
-        ("Te damos un descuento", ["DISCOUNT"]),
-        ("El collar está disponible", ["AVAILABILITY"]),
-        ("Tu conversación quedará disponible dos días", ["DELIVERY"]),  # lo pegado a la frase
-        ("Ho​la", ["BODY"]),
-        ("‮Hola", ["BODY"]),
-        ("x" * (HANDOFF_MAX + 1), ["TOO_LONG"]),
-    ],
-)
+CASES = [  # revisión de #1054: más prisas, la frase anclada y solo letras latinas
+    ("Te atendemos en 24 horas", ["DELIVERY"]), ("Somos un equipo de 3 personas", ["FIGURE"]),
+    ("Te atendemos en 5 minutos", ["FIGURE", "SOON"]), ("Te escribimos mañana", ["DELIVERY"]),
+    ("Una persona te atiende de inmediato", ["DELIVERY"]),
+    ("Una persona te responde enseguida", ["SOON"]), ("Te atenderán en unos minutos", ["SOON"]),
+    ("Pagas en cuotas con tarjeta", ["TERMS"]), ("Mira tiendagooddoggy.pe", ["LINK"]),
+    ("Revisa [verificar]", ["MARKUP"]), ("Te damos un descuento", ["DISCOUNT"]),
+    ("El collar está disponible", ["AVAILABILITY"]),
+    ("Tu conversación quedará disponible dos días", ["DELIVERY"]),
+    ("Ya te atiende una persona", ["SOON"]), ("En este momento te atiende una persona", ["SOON"]),
+    ("En un ratito te escriben", ["SOON"]), ("Prontito te escribe una persona", ["SOON"]),
+    ("Te atienden sin esperas", ["SOON"]), ("Te atienden de una", ["SOON"]),
+    ("Luego luego te atienden", ["SOON"]), ("ASAP te atienden", ["SOON"]),
+    # la excepción, solo con su sujeto al empezar una frase
+    ("El producto de tu conversación quedará disponible", ["AVAILABILITY"]),
+    ("Tu pedido y tu conversación quedará disponible", ["AVAILABILITY"]),
+    ("El collar quedará disponible", ["AVAILABILITY"]),
+    ("Gracias. Conversación quedará disponible", ["AVAILABILITY"]),
+    ("Te escribimos h\u043ey", ["SCRIPT"]), ("Ho\u200bla", ["BODY"]), ("\u202eHola", ["BODY"]),
+    ("x" * (HANDOFF_MAX + 1), ["TOO_LONG"]),
+]  # fmt: skip
+
+
+@pytest.mark.parametrize(("text", "codes"), CASES)
 def test_a_text_with_a_figure_a_deadline_a_hurry_or_a_link_is_refused_and_never_echoed(
     crm: SimpleNamespace, migrator: DB, text: str, codes: list[str]
 ) -> None:
@@ -256,3 +263,24 @@ def test_the_suggest_route_answers_with_the_organization_text(
     assert answer.status_code == 201
     assert answer.json()["text"] == MINE
     assert answer.json()["handoff"] == {"requested": True, "reason": "ASKED_FOR_PERSON"}
+
+
+def test_only_the_runtime_and_its_route_reach_the_handoff_text_even_indirectly() -> None:
+    """`replies -> audit.services` está en `ignore_imports`: todo módulo de `ai_agents` está en el
+    `forbidden` (con los indirectos), es `replies` o es del runtime y sus rutas."""
+    config = tomllib.loads((pathlib.Path(__file__).parents[1] / "pyproject.toml").read_text())
+    contracts = config["tool"]["importlinter"]["contracts"]
+    [guard] = [c for c in contracts if c.get("protected_modules") == ["apps.ai_agents.replies"]]
+    assert guard["allowed_importers"] == ["apps.ai_agents.copilot", "apps.ai_agents.api.handoff"]
+    [deep] = [c for c in contracts if c.get("forbidden_modules") == ["apps.ai_agents.replies"]]
+    assert deep["type"] == "forbidden" and not deep.get("allow_indirect_imports")
+    assert not deep.get("ignore_imports")
+    package = importlib.import_module("apps.ai_agents")
+    found = {m.name for m in pkgutil.walk_packages(package.__path__, "apps.ai_agents.")}
+    sources = deep["source_modules"]
+    covered = {
+        name for name in found if any(name == s or name.startswith(s + ".") for s in sources)
+    }
+    runtime = {"apps.ai_agents.copilot", "apps.ai_agents.api", "apps.ai_agents.api.urls",
+               "apps.ai_agents.api.views", "apps.ai_agents.api.handoff"}  # fmt: skip
+    assert found - covered - runtime == {"apps.ai_agents.replies"}

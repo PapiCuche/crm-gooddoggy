@@ -2419,7 +2419,7 @@ export const getAiHandoffReplyUpdateUrl = (orgSlug: string) => {
 };
 
 /**
- * Cambia el texto de traspaso de la organización (`ai.manage` y segundo factor reciente) y lo audita (`ai.handoff_reply.changed`, sin el texto). 400 en `text`: un código y un mensaje por problema (`BODY`, `TOO_LONG`, `SOON`, `FIGURE`, `DELIVERY`, `DISCOUNT`, `AVAILABILITY`, `TERMS`, `LINK`, `MARKUP`); nunca repite lo enviado. 429 `RATE_LIMITED`: el tope por persona de las escrituras, con `Retry-After`.
+ * Cambia el texto de traspaso de la organización (`ai.manage` y segundo factor reciente) y lo audita (`ai.handoff_reply.changed`, sin el texto). 400 en `text`: un código y un mensaje por problema (`BODY`, `TOO_LONG`, `SCRIPT`, `SOON`, `FIGURE`, `DELIVERY`, `DISCOUNT`, `AVAILABILITY`, `TERMS`, `LINK`, `MARKUP`); nunca repite lo enviado. 429 `RATE_LIMITED`: el tope por persona de las escrituras, con `Retry-After`.
  */
 export const aiHandoffReplyUpdate = async (
   orgSlug: string,

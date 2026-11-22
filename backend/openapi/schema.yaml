@@ -823,10 +823,10 @@ paths:
       operationId: ai_handoff_reply_update
       description: 'Cambia el texto de traspaso de la organización (`ai.manage` y
         segundo factor reciente) y lo audita (`ai.handoff_reply.changed`, sin el texto).
-        400 en `text`: un código y un mensaje por problema (`BODY`, `TOO_LONG`, `SOON`,
-        `FIGURE`, `DELIVERY`, `DISCOUNT`, `AVAILABILITY`, `TERMS`, `LINK`, `MARKUP`);
-        nunca repite lo enviado. 429 `RATE_LIMITED`: el tope por persona de las escrituras,
-        con `Retry-After`.'
+        400 en `text`: un código y un mensaje por problema (`BODY`, `TOO_LONG`, `SCRIPT`,
+        `SOON`, `FIGURE`, `DELIVERY`, `DISCOUNT`, `AVAILABILITY`, `TERMS`, `LINK`,
+        `MARKUP`); nunca repite lo enviado. 429 `RATE_LIMITED`: el tope por persona
+        de las escrituras, con `Retry-After`.'
       parameters:
       - in: path
         name: org_slug
