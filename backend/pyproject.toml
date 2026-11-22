@@ -283,6 +283,14 @@ source_modules = ["apps.ai_agents.tools", "apps.ai_agents.registry", "apps.ai_ag
 forbidden_modules = ["apps.ai_agents.replies"]
 
 [[tool.importlinter.contracts]]
+# F8-08l2 (revisión de #1063): el texto vigente solo lo leen `replies`, su ruta (por `Reply`) y el
+# arranque, que lo sirve a la solicitud de atención humana; ni una tool ni el guard lo importan.
+name = "Solo replies, su ruta y el arranque importan handoff_text (F8-08l2)"
+type = "protected"
+protected_modules = ["apps.ai_agents.handoff_text"]
+allowed_importers = ["apps.ai_agents.replies", "apps.ai_agents.api.handoff", "apps.ai_agents.apps"]
+
+[[tool.importlinter.contracts]]
 name = "Fronteras de alta: solo provisioning importa los bootstrap.py de L2 (F2-06)"
 type = "protected"
 protected_modules = ["apps.access.bootstrap", "apps.accounts.bootstrap", "apps.organizations.bootstrap"]

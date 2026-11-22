@@ -346,7 +346,8 @@ Cómo reparte ADR-034 entre ellos:
   - **Dónde:** `attention.handoff_reply(ctx, text)` lo pide a `apps.conversations.handoff`, un punto de enganche que `ai_agents` sirve desde su `AppConfig.ready` con `apps.ai_agents.handoff_text.in_scope` (como `provisioning.seeds`: `conversations`, L3, no importa `ai_agents`, L4). Se lee en el `tenant_scope` activo, el de la conversación, bajo su RLS; nunca del cuerpo de la petición. Un solo servidor; sin él, falla en vez de comparar con otro texto. `handoff_text` es la lectura que antes estaba en `replies` (sin permiso ni auditoría); `replies` la usa igual.
   - **Enviarlo** no cierra la solicitud; **uno anterior**, enviado después de que la organización lo cambiara, sí (se compara con el de ahora; no hay historial). Con un texto guardado que ya no pasa, el que no cierra es el inicial.
   - **Hook del copiloto:** «una persona respondió después de que empezara el run» ya no cuenta los mensajes que son el texto de traspaso (ni, como antes, las notas ni los del sistema); si además una persona envió otra cosa, no se abre.
-  - **Contratos (solo se estrechan):** `apps.conversations.handoff` es `protected` (lo importan solo `attention` y `apps.ai_agents.apps`); `handoff_text` entra en los `forbidden` del arranque, de `records` y del texto de traspaso (con los indirectos).
+  - **Contratos (solo se estrechan):** `apps.conversations.handoff` es `protected` (lo importan solo `attention` y `apps.ai_agents.apps`); `handoff_text` entra en los `forbidden` del arranque, de `records` y del texto de traspaso (con los indirectos) y es `protected` (solo lo importan `replies`, su ruta y el arranque; revisión de #1063).
+  - **Coste:** el texto se lee solo al enviar en una conversación con una solicitud abierta; los demás envíos no tocan `ai_handoff_replies` (revisión de #1063).
 
 ## Qué necesita el propietario (sin ningún valor real)
 
