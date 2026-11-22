@@ -29,7 +29,7 @@ from core.tenancy.scope import tenant_scope
 from tests.ai_queries import captured, writes
 from tests.conftest import migrator_conninfo
 from tests.test_ai_copilot_context import say
-from tests.test_ai_copilot_runtime import PLAIN, desk, run
+from tests.test_ai_copilot_runtime import PLAIN, SHARED, desk, run
 from tests.test_ai_gateway import world
 from tests.test_conversations_api import BASE, UNAUTHENTICATED, crm, inbox, real_stack, stamp
 from tests.test_conversations_assign_api import assign, duel
@@ -215,7 +215,8 @@ def test_a_handoff_the_copilot_detects_is_recorded_once_without_sending_anything
         answer = send(ana, "post", COPILOT.format(desk.convo), {})
     assert answer.status_code == 201 and answer.json()["handoff"]["reason"] == "ASKED_FOR_PERSON"
     tables = "ai_runs|ai_actions|ai_suggestions|audit_logs|login_throttles"
-    ai = rf'\s*((INSERT INTO|UPDATE) "?({tables})"? |SELECT pg_advisory_xact_lock_shared\()'
+    locks = rf"SELECT pg_advisory_xact_lock_shared\(|{SHARED}"  # F8-13c: y la conversación
+    ai = rf'\s*((INSERT INTO|UPDATE) "?({tables})"? |{locks})'
     left = [s for s in writes(seen) if not re.match(ai, s)]
     columns = ", ".join(f'"{c}" = [^,]+' for c in (*attention.FIELDS, "updated_at"))
     allowed = (
