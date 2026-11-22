@@ -39,7 +39,8 @@ import { cn } from "@/lib/utils";
 
 import { Assignee, AssignmentActions } from "./assignment";
 import { ChannelMark } from "./attention";
-import { Composer, messagesKey, writableModes } from "./composer";
+import { Composer, type Inserter, messagesKey, writableModes } from "./composer";
+import { AI_USE, useCopilot } from "./copilot";
 import { MediaFile } from "./media-file";
 import { Plain } from "./plain";
 
@@ -84,6 +85,16 @@ export function ChatPanel({
   });
   const conversation = detail.data ?? row;
   const modes = writableModes(permissions, conversation, user.id);
+  // El copiloto solo inserta en «Responder»: sin `ai.use`, sin poder responder o cerrada, no se ofrece.
+  const offered =
+    modes.reply &&
+    conversation.status !== "CLOSED" &&
+    permissions.some(({ code }) => code === AI_USE);
+  const inserter = useRef<Inserter | null>(null);
+  const copilot = useCopilot({
+    conversationId: conversation.id,
+    onInsert: (text) => inserter.current?.(text),
+  });
   const scroller = useRef<HTMLDivElement>(null);
   const kept = useRef<number | null>(null); // lo que faltaba por desplazar al pedir los anteriores
   const placed = useRef(false);
@@ -274,8 +285,11 @@ export function ChatPanel({
         ) : null}
         {body}
       </div>
+      {offered ? copilot.panel : null}
       {modes.reply || modes.note ? (
         <Composer
+          inserter={inserter}
+          tools={offered ? copilot.trigger : null}
           conversation={conversation}
           modes={modes}
           onQueued={() => (toBottom.current = true)}
