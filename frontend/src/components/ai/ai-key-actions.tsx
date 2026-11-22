@@ -29,12 +29,13 @@ export function toLogin(error: ApiError) {
 export function aiError(
   error: ApiError,
   t: (key: string, values?: Record<string, number>) => string,
-): { field?: "api_key"; text: string } | null {
+): { text: string } | null {
   switch (error.code) {
     case "NOT_FOUND": // otra persona la borró
     case "AI_ACCOUNT_EXISTS":
     case "AI_ACCOUNT_CONFLICT":
     case "STEP_UP_REQUIRED":
+    case "AI_DISABLED": // probar la conexión con `AI_ENABLED` apagado: no es la clave (#1065)
       return { text: t(error.code) };
     case "RATE_LIMITED": // el tope por persona: `Retry-After` en minutos, hacia arriba; una
       // espera de más de una hora no es la de este tope y se dice sin cifra
@@ -138,6 +139,86 @@ export function KeyForm({
           {done ? t("rotate.done") : ""}
         </p>
       ) : null}
+      {stepUp}
+    </div>
+  );
+}
+
+const MODEL_ID = /^[a-z0-9][a-z0-9._-]*$/; // la forma que la base exige al modelo de la cuenta
+
+// Elegir el modelo de la cuenta (F8-12a). La API no publica la lista permitida (`AI_MODELS`): se
+// escribe el identificador y la API decide; fuera de la lista vuelve un 400 en `model`, que se dice
+// con nuestro texto. El mismo modelo no se envía (no cambia nada y gastaría el tope).
+export function ModelForm({
+  model,
+  send,
+  onDone,
+  onGone,
+}: {
+  model: string;
+  send: (model: string) => Promise<AiProviderAccount>;
+  onDone: (account: AiProviderAccount) => void;
+  onGone: () => void; // 404: la cuenta ya no está (la página lo dice)
+}) {
+  const t = useTranslations("ai.model");
+  const ai = useTranslations("ai");
+  const errors = useTranslations("ai.errors");
+  const { write, run, stepUp } = useChannelWrite();
+  const [open, setOpen] = useState(false);
+  const [said, setSaid] = useState<string | null>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const close = (text: string | null) => {
+    setSaid(text);
+    setOpen(false);
+    setTimeout(() => trigger.current?.focus());
+  };
+
+  return (
+    <div className="flex min-w-0 flex-col items-start gap-3">
+      {open ? (
+        <FieldsForm
+          title={t("title")}
+          heading={<h3 className="font-medium">{t("title")}</h3>}
+          className="border-border bg-surface flex w-full max-w-xl flex-col gap-4 rounded-lg border p-4"
+          fields={[
+            {
+              ...{ name: "model", max: 64, label: t("label"), hint: t("hint") },
+              ...{ invalid: t("invalid"), required: t("required"), literal: true },
+              ...{ defaultValue: model, valid: (value: string) => MODEL_ID.test(value) },
+            },
+          ]}
+          write={write}
+          send={(values) =>
+            values.model === model
+              ? close(t("unchanged"))
+              : run(
+                  () => send(values.model).then(onDone),
+                  () => close(t("done")),
+                  (error) => toLogin(error) || (error.status === 404 && onGone()),
+                )
+          }
+          taken={(error) => aiError(error, errors)}
+          denied={errors("denied")}
+          labels={{ submit: t("submit"), busy: t("busy"), cancel: ai("cancel") }}
+          onCancel={() => close(null)}
+        />
+      ) : (
+        <Button
+          ref={trigger}
+          variant="ghost"
+          className={OUTLINE}
+          onClick={() => {
+            write.reset();
+            setSaid(null);
+            setOpen(true);
+          }}
+        >
+          {t("open")}
+        </Button>
+      )}
+      <p role="status" className={said ? "text-sm" : "sr-only"}>
+        {said ?? ""}
+      </p>
       {stepUp}
     </div>
   );

@@ -14,6 +14,7 @@ import {
   aiProviderAccountsDestroy,
   aiProviderAccountsList,
   aiProviderAccountsRotateKey,
+  aiProviderAccountsSetModel,
   aiProviderAccountsTest,
   getAiProviderAccountsListQueryKey,
 } from "@/lib/api/client";
@@ -22,7 +23,7 @@ import { apiErrorKey } from "@/lib/api-errors";
 import type { ApiError } from "@/lib/http";
 import { cn } from "@/lib/utils";
 
-import { AccountAction, aiError, KeyForm } from "./ai-key-actions";
+import { AccountAction, aiError, KeyForm, ModelForm } from "./ai-key-actions";
 import { KILL_SWITCH, MANAGE } from "./ai-switch";
 
 const STATUS = {
@@ -226,6 +227,8 @@ function Account({
       <dl className="grid gap-x-4 gap-y-1 text-sm sm:grid-cols-[auto_minmax(0,1fr)]">
         <dt className="text-muted">{t("fields.key")}</dt>
         <dd className="font-mono">…{account.key_last_four}</dd>
+        <dt className="text-muted">{t("fields.model")}</dt>
+        <dd className="font-mono break-all">{account.model}</dd>
         {dates.map(([name, value]) =>
           value ? (
             <div key={name} className="contents">
@@ -247,6 +250,12 @@ function Account({
             done={({ result }) => ({
               ...{ text: label("test", AiProviderTestResultEnum, result), ok: result === "OK" },
             })}
+            onGone={() => lost(account)}
+          />
+          <ModelForm
+            model={account.model}
+            send={(model) => aiProviderAccountsSetModel(slug, account.id, { model })}
+            onDone={put}
             onGone={() => lost(account)}
           />
           <KeyForm
