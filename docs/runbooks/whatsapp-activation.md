@@ -2,7 +2,7 @@
 
 Cómo encender el canal de WhatsApp en producción **con un solo número de prueba**, en orden y sin adivinar: qué se configura en Meta, qué va en el entorno del servidor y cómo se comprueba. La ejecución es F7-12b ([#763](https://github.com/PapiCuche/crm-gooddoggy/issues/763)); este documento no activa nada.
 
-- **Diseño:** [ADR-029](../adr/ADR-029-whatsapp-cloud-api-channel.md) (`Proposed`), [ADR-022](../adr/ADR-022-secrets-at-rest.md) (token cifrado), [ADR-010](../adr/ADR-010-messaging-policy.md) (ventana y baja), ADR-033 (`Proposed`, [#752](https://github.com/PapiCuche/crm-gooddoggy/issues/752): servidor y almacén de secretos). Plan: [phase-7.md](../phases/phase-7.md) (F7-12 y «Qué necesita el propietario»).
+- **Diseño:** [ADR-029](../adr/ADR-029-whatsapp-cloud-api-channel.md) (`Proposed`), [ADR-022](../adr/ADR-022-secrets-at-rest.md) (token cifrado), [ADR-010](../adr/ADR-010-messaging-policy.md) (ventana y baja), ADR-033 ([#752](https://github.com/PapiCuche/crm-gooddoggy/issues/752): servidor y almacén de secretos) y, en el servidor compartido, [ADR-046](../adr/ADR-046-shared-host-variant.md) con su runbook [production-shared-host.md](production-shared-host.md): CDN delante, borde público de otra aplicación y órdenes con `infra/prod/compose.sh`. Instagram y Messenger usan la misma app y el mismo webhook: [social-activation.md](social-activation.md). Plan: [phase-7.md](../phases/phase-7.md) (F7-12 y «Qué necesita el propietario»).
 - **Repositorio público.** Aquí solo hay marcadores (`<DOMINIO>`, `<WABA_ID>`, `<PHONE_NUMBER_ID>`, `<SLUG>`…). Ningún id real, dominio, número, token, PIN ni secreto se escribe en el repositorio, en un issue, en un PR, en el chat ni en un registro.
 - **«Verificar en Meta»** marca cada paso de la interfaz de Meta que no se pudo confirmar en su documentación oficial: los menús de Meta cambian, y manda lo que se vea en pantalla.
 
@@ -36,10 +36,10 @@ No se empieza sin todo esto. Cada punto se comprueba, no se supone.
 
 **Del producto (código y despliegue):**
 
-- [ ] **R0 en vivo** ([#760](https://github.com/PapiCuche/crm-gooddoggy/issues/760)): el CRM responde en `https://crm.<DOMINIO>/` con un certificado válido (Meta no acepta certificados autofirmados) y el Owner entra con su segundo factor.
+- [ ] **R0 en vivo** ([#760](https://github.com/PapiCuche/crm-gooddoggy/issues/760)): el CRM responde en `https://crm.<DOMINIO>/` con un certificado válido (Meta no acepta certificados autofirmados; en el servidor compartido lo emite el borde público, detrás de la CDN) y el Owner entra con su segundo factor.
 - [ ] Fusionados en `main` y desplegados: F7-03c ([#600](https://github.com/PapiCuche/crm-gooddoggy/issues/600), purga a 90 días y vaciado del payload), F7-02e ([#592](https://github.com/PapiCuche/crm-gooddoggy/issues/592), tope de las rutas de la cuenta), F7-04b ([#607](https://github.com/PapiCuche/crm-gooddoggy/issues/607), tipos no soportados y ventana) y F7-08b ([#623](https://github.com/PapiCuche/crm-gooddoggy/issues/623), palabras de baja). Lo están a 2026-11-13; comprobarlo con `git log` en el commit desplegado.
-- [ ] **El proxy de producción** ([`infra/prod`](../../infra/prod/README.md), #754) para `/webhooks/*`: limita el cuerpo (`request_body { max_size 4MB }`), limita la tasa por IP (`caddy-ratelimit`) y **no registra la query** (el GET de Meta trae el verify token en `hub.verify_token`). El proxy local (`infra/docker/proxy/Caddyfile`) solo limita el cuerpo: no sirve para producción. Comprobarlo leyendo la configuración desplegada y un registro de acceso de prueba (paso 5).
-- [ ] Corren `web`, `worker`, `worker-media`, `ws` y `beat`, con Redis (`CELERY_BROKER_URL`). Sin `worker` no se procesa la ingesta; sin `beat` no hay barridos ni comprobación de salud.
+- [ ] **El proxy de producción** ([`infra/prod`](../../infra/prod/README.md), #754) para `/webhooks/*`: limita el cuerpo (`request_body { max_size 4MB }`), limita la tasa por IP (`caddy-ratelimit`) y **no registra la query** (el GET de Meta trae el verify token en `hub.verify_token`). El proxy local (`infra/docker/proxy/Caddyfile`) solo limita el cuerpo: no sirve para producción. Comprobarlo leyendo la configuración desplegada y un registro de acceso de prueba (paso 5). **En el servidor compartido** (ADR-046) hay además: la CDN, con la regla de tasa de 50 peticiones cada 10 s por IP en `/webhooks/*` (por /64 en IPv6) y sin desafíos, antibots ni caché en esa ruta (Meta no los resuelve); y el borde público, que repite los topes de cuerpo y no registra la query. El `proxy` del CRM (`Caddyfile.shared`) cuenta la tasa por `{client_ip}`, la IP que le pasa el borde. Detalle en [social-activation.md](social-activation.md) §4.4.
+- [ ] Corren `web` (el servicio `backend` de `infra/prod/compose.yaml`), `worker`, `worker-media`, `ws` y `beat`, con Redis (`CELERY_BROKER_URL`). Sin `worker` no se procesa la ingesta; sin `beat` no hay barridos ni comprobación de salud.
 - [ ] `SECRETS_KEKS` configurada (producción no arranca sin ella; sin ella no se puede guardar el token cifrado).
 - [ ] `APP_ORIGIN=https://crm.<DOMINIO>` (o el origen en `DJANGO_CSRF_TRUSTED_ORIGINS`): el WebSocket del Inbox solo acepta ese origen.
 
@@ -108,10 +108,10 @@ Todas las `META_*` del código (`backend/config/settings/base.py`; comprobado co
 | `META_GRAPH_HOST`           | **Código** (`graph.facebook.com`)  | Con `META_ENABLED=true` se añade solo a `HTTP_ALLOWED_HOSTS`; no hace falta ponerlo                                                                       |
 | `META_MEDIA_HOSTS`          | **Código** (`lookaside.fbsbx.com`) | Solo para bajar medios; no entra en `HTTP_ALLOWED_HOSTS`                                                                                                  |
 
-Generar el verify token **en el servidor** y escribirlo directamente en el almacén, sin que pase por la pantalla ni por el historial (64 caracteres hexadecimales: dentro del rango 16–128). Con el archivo de entorno de ADR-033 (`<runtime.env>`, de `root` y modo `0600`):
+Generar el verify token **en el servidor** y escribirlo directamente en el almacén, sin que pase por la pantalla ni por el historial (64 caracteres hexadecimales: dentro del rango 16–128). Con el archivo de entorno de ADR-033 (`/etc/crm/runtime.env`, de `root` y modo `0600`):
 
 ```bash
-printf 'META_WEBHOOK_VERIFY_TOKEN=%s\n' "$(openssl rand -hex 32)" | sudo tee -a <runtime.env> >/dev/null
+printf 'META_WEBHOOK_VERIFY_TOKEN=%s\n' "$(openssl rand -hex 32)" | sudo tee -a /etc/crm/runtime.env >/dev/null
 ```
 
 Con el gestor de secretos de un proveedor, el equivalente que lea el valor de la entrada estándar. Para pegarlo en Meta (paso 5) se copia del almacén, nunca de un chat.
@@ -125,12 +125,13 @@ Con el gestor de secretos de un proveedor, el equivalente que lea el valor de la
 ### 4.2 Arrancar con el canal encendido
 
 1. Escribir las tres variables en el almacén de secretos del servidor.
-2. Redeploy del backend con el procedimiento de producción (`deploy.sh`, [#756](https://github.com/PapiCuche/crm-gooddoggy/issues/756), cuando exista; mientras, recrear los cinco procesos con el entorno nuevo). Si un proceso no arranca, el error solo nombra la variable, nunca su valor: corregirla y repetir.
-3. Comprobar que el webhook existe y rechaza lo que no es de Meta (desde cualquier máquina):
+2. Redeploy con el mismo release: `sudo infra/prod/deploy.sh /etc/crm/release.env` (lee `/etc/crm/host-mode` y, en el servidor compartido, añade `compose.shared.yaml`). Nunca `docker compose` solo con `compose.yaml`: para una orden a mano, `sudo infra/prod/compose.sh …`. Si un proceso no arranca, el error solo nombra la variable, nunca su valor: corregirla y repetir.
+3. Comprobar que el webhook existe y rechaza lo que no es de Meta (desde cualquier máquina de fuera, a través de la CDN):
 
    ```bash
    curl -s -o /dev/null -w '%{http_code}\n' 'https://crm.<DOMINIO>/webhooks/meta/?hub.mode=subscribe&hub.verify_token=incorrecto&hub.challenge=123'
    # 403: la ruta existe y el token no coincide. 404: META_ENABLED sigue apagado en ese proceso.
+   # Otro código o una página HTML: la CDN o el borde público la paran (desafío, caché o regla).
    curl -s -o /dev/null -w '%{http_code}\n' -X POST -H 'Content-Type: application/json' -d '{}' 'https://crm.<DOMINIO>/webhooks/meta/'
    # 401: sin firma válida no entra nada.
    ```
@@ -142,7 +143,7 @@ Con el gestor de secretos de un proveedor, el equivalente que lea el valor de la
 `NEXT_PUBLIC_INBOX_WS` es una variable de **build** del frontend: se incrusta al hacer `next build` (`frontend/Dockerfile`, `ARG NEXT_PUBLIC_INBOX_WS=on` desde F6-09: la imagen que publica `images.yml` ya la lleva encendida; en compose, `INBOX_WS` → `NEXT_PUBLIC_INBOX_WS`). Cambiarla exige **reconstruir la imagen del frontend**, no basta con reiniciarla:
 
 1. `INBOX_WS=on` (el valor por omisión) en el entorno con el que se construye la imagen (no es un secreto).
-2. Reconstruir y desplegar la imagen del frontend (en local: `docker compose -f infra/docker/compose.yaml --env-file infra/env/.env up -d --build frontend`; en producción, el build de imágenes de #756).
+2. Reconstruir y desplegar la imagen del frontend (en local: `docker compose -f infra/docker/compose.yaml --env-file infra/env/.env up -d --build frontend`; en producción, la imagen que publica `images.yml` y su `deploy.sh`).
 3. Comprobar que el servicio `ws` corre y que el proxy lleva `/ws/*` a él. Sin esto el Inbox funciona, pero hay que actualizar a mano para ver un mensaje nuevo.
 
 ## 5. Webhook en Meta
@@ -152,7 +153,7 @@ Con el gestor de secretos de un proveedor, el equivalente que lea el valor de la
 3. **Verify token:** el mismo valor de `META_WEBHOOK_VERIFY_TOKEN`, copiado del almacén.
 4. **Verify and save.** Meta envía `GET …?hub.mode=subscribe&hub.verify_token=…&hub.challenge=…`; el CRM compara el token en tiempo constante y devuelve solo el `hub.challenge` (letras y dígitos, hasta 128). Si Meta no guarda la URL, ver el paso 10.
 5. En **Webhook fields**, **Subscribe** al campo **`messages`** (mensajes entrantes y estados de los enviados). Los demás campos no hacen falta para esta prueba: el CRM los guarda como `other` y no los procesa todavía.
-6. **Registro del proxy:** buscar la línea de ese GET en el registro de acceso. Si la query aparece entera (con `hub.verify_token`), el proxy no cumple el requisito del paso 1: **rotar el verify token** (paso 9.4) después de corregir el proxy.
+6. **Registro del proxy:** buscar la línea de ese GET en el registro de acceso (`sudo infra/prod/compose.sh logs --since 10m proxy | grep -c 'hub.verify_token'` tiene que dar `0`; en el servidor compartido, también el registro del borde público). Si la query aparece entera (con `hub.verify_token`), el proxy no cumple el requisito del paso 1: **rotar el verify token** (paso 9.4) después de corregir el proxy. La CDN puede guardar la URL completa en sus registros (sin verificar): su cuenta se trata como sensible.
 
 Meta también admite mTLS para los webhooks; el CRM no lo usa (fuera de alcance).
 
@@ -239,12 +240,12 @@ Con una persona que tenga uno de los **teléfonos destinatarios autorizados** de
 3. **Inbox.** En `/o/<SLUG>/inbox` aparece la conversación con el mensaje, sin actualizar la página si `INBOX_WS=on`.
 4. **Respuesta.** Responder desde el Inbox antes de 24 h. El teléfono la recibe. En la burbuja, el estado avanza **Enviado → Entregado → Leído** (al abrir el chat en el teléfono). Si queda «No se pudo enviar», ver el motivo y el paso 10.
 5. **Baja y alta.** Desde el teléfono, «STOP» (o «BAJA», «CANCELAR»: las de la organización): llega la confirmación fija y el registro `meta.webhook.consent_keyword` dice que cambió algo (la baja aún no tiene pantalla en la ficha del cliente). Después «ALTA» la restituye. Una respuesta dentro de la ventana sigue permitida tras una baja; un seguimiento no (`CONSENT_REVOKED`).
-6. **Reinicio.** Reiniciar `web` y `worker` mientras el teléfono envía dos mensajes seguidos: los dos llegan una sola vez (Meta reintenta lo que no recibe con 200; la ingesta deduplica por `wa:msg:<id>`).
+6. **Reinicio.** Reiniciar `web` y `worker` (`sudo infra/prod/compose.sh restart backend worker`) mientras el teléfono envía dos mensajes seguidos: los dos llegan una sola vez (Meta reintenta lo que no recibe con 200; la ingesta deduplica por `wa:msg:<id>`).
 7. **Registros** (JSON, sin teléfonos ni textos): `meta.webhook.received` con `items` y `new`; ninguno de `meta.webhook.invalid`, `meta.webhook.rejected` ni `meta.webhook.store_failed`.
 8. **Mensajes sin teléfono (BSUID).** Con F7-14 ([#749](https://github.com/PapiCuche/crm-gooddoggy/issues/749)) desplegado, un entrante sin `from` queda `IGNORED` con `NO_PHONE` (antes, `BAD_PHONE`). Contarlos **nunca con `crm_migrator`** (ADR-002 §1: solo el job de migraciones; ADR-033, `Proposed`, propone alertar ante cualquier conexión suya fuera de un despliegue). Dos formas, ninguna lee el payload:
 
    - **Registros:** filtrar los JSON por `"event": "meta.webhook.no_phone"` (solo cuenta, tipo y `user_id_seen`).
-   - **Metadatos de la ingesta**, con `crm_app` y la función `webhook_ingress_list` (sin payload; la del panel de F7-11), desde un contenedor del runtime (`web` o `worker`):
+   - **Metadatos de la ingesta**, con `crm_app` y la función `webhook_ingress_list` (sin payload; la del panel de F7-11), desde un contenedor del runtime (`backend` o `worker`, con `sudo infra/prod/compose.sh exec backend …`):
 
      ```bash
      python manage.py shell -c "from apps.conversations import ingress; rows = ingress.listing('IGNORED', 200); print(sum(r[7] == 'NO_PHONE' for r in rows), 'de', len(rows))"
@@ -260,7 +261,7 @@ La prueba la firma el propietario (casilla en [#763](https://github.com/PapiCuch
 
 ### 9.1 Apagar el canal (rápido y reversible)
 
-1. `META_ENABLED=false` en el almacén y redeploy de los cinco procesos.
+1. `META_ENABLED=false` en el almacén y `sudo infra/prod/deploy.sh /etc/crm/release.env`.
 2. Efecto: `/webhooks/meta/` da **404**; conectar y rotar dan 409; los envíos fallan con `CHANNEL_UNAVAILABLE`; la comprobación de salud no hace nada. Nada se borra.
 3. Meta reintenta durante **7 días** lo que no recibe con 200 y después lo descarta, y puede desactivar un webhook que falla mucho (verificar en Meta el umbral). Para pararlo del todo: `curl -s -X DELETE -H @<(auth) "$G/<WABA_ID>/subscribed_apps"` (efecto inmediato según Meta). Volver a encender es repetir 4.2 y 6.1.
 
@@ -290,10 +291,11 @@ En `/canales`, **Desconectar** (sin MFA): la cuenta queda `DISCONNECTED`, su cre
 
 | Síntoma                                                                                   | Causa probable                                                                                                                                                                                                                                                                                                                 | Qué hacer                                                                                                                                                         |
 | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Meta no guarda la Callback URL                                                            | `META_ENABLED` apagado (404); verify token distinto (403); certificado no válido o autofirmado; la URL sin la barra final o con otro dominio; el proxy no llega a Django                                                                                                                                                       | Paso 4.2 punto 3; comparar el token copiándolo de nuevo del almacén; revisar el certificado con un navegador                                                      |
+| Meta no guarda la Callback URL                                                            | `META_ENABLED` apagado (404); verify token distinto (403); certificado no válido o autofirmado; la URL sin la barra final o con otro dominio; el proxy no llega a Django; la CDN desafía, bloquea o cachea `/webhooks/*`                                                                                                       | Paso 4.2 punto 3; comparar el token copiándolo de nuevo del almacén; revisar el certificado con un navegador                                                      |
 | 404 en `/webhooks/meta/`                                                                  | `META_ENABLED=false` en el proceso `web` (la ruta no existe a propósito)                                                                                                                                                                                                                                                       | Comprobar el entorno de `web` y redeploy                                                                                                                          |
 | Muchos 401 en el registro del proxy                                                       | **Firma inválida:** `META_APP_SECRETS` no tiene el app secret vigente (rotado en Meta sin redeploy, o el de otra app), o algo entre Meta y Django cambia el cuerpo                                                                                                                                                             | Comparar con **Basic settings**; paso 9.4. Si nadie rotó nada y siguen, puede ser alguien probando la URL: la firma los frena; avisar si es mucho volumen         |
-| 413                                                                                       | Cuerpo de más de 1 MiB (tope de la vista) o de más de 2 MB (proxy)                                                                                                                                                                                                                                                             | Raro con mensajes de texto; anotar y abrir un issue                                                                                                               |
+| 413 (502 en el servidor compartido)                                                       | Cuerpo de más de 3 MiB (tope de la vista) o de más de 4 MB (proxy); un 502 indica que el borde público no repite la tabla de topes (ADR-046 §6)                                                                                                                                                                                | Raro con mensajes de texto; anotar y abrir un issue                                                                                                               |
+| 429 en la CDN o en el `proxy`                                                             | Regla de tasa de `/webhooks/*` (50 cada 10 s por IP del cliente, ADR-046)                                                                                                                                                                                                                                                      | Meta reintenta; anotar hora y volumen y decidir con el propietario. Nunca quitar la regla sin decisión                                                            |
 | `meta.webhook.invalid` con `reason=items`                                                 | Meta envió más de 500 ítems en un cuerpo: se responde 200 y **no se guarda nada** del lote. Meta: «POST requests are aggregated and sent in a batch with a maximum of 1000 updates.» ([Create a webhook endpoint](https://developers.facebook.com/documentation/business-messaging/whatsapp/webhooks/create-webhook-endpoint)) | Con un número de prueba no debería pasar. Lo corrige [#789](https://github.com/PapiCuche/crm-gooddoggy/issues/789) (F7-11b); anotar la hora y avisar en ese issue |
 | `meta.webhook.rejected` con `reasons` que incluye `messages` o `statuses`                 | Un cambio traía más de 100 mensajes o estados (`MAX_ROWS`): ese cambio se descarta, el resto del lote se guarda y se responde 200, así que Meta **no reintenta** lo descartado                                                                                                                                                 | Igual que la fila anterior: [#789](https://github.com/PapiCuche/crm-gooddoggy/issues/789); anotar la hora y avisar en ese issue                                   |
 | La cuenta sigue «Falta recibir el primer mensaje de Meta»                                 | Falta `subscribed_apps` (6.1) o el campo `messages` (5.5); el teléfono no es destinatario autorizado; app en modo desarrollo sin acceso a eventos reales (verificar en Meta); el WABA del evento no es el de la cuenta (`WABA_MISMATCH`)                                                                                       | 6.1 con el GET de comprobación; revisar destinatarios en API Setup; revisar el WABA en `/canales`                                                                 |
