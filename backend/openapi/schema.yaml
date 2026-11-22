@@ -3811,10 +3811,9 @@ paths:
   /api/v1/o/{org_slug}/conversations/{conversation_id}/human-request/:
     post:
       operationId: conversation_human_request_create
-      description: 'Pide que una persona atienda la conversación (`conversations.view`
-        sobre ella; motivo `AGENT`). Si ya hay una abierta, la devuelve sin cambiarla.
-        No envía nada al cliente ni la asigna. 409 `CONVERSATION_CLOSED`. 404: no
-        existe o fuera del alcance.'
+      description: 'Pide que una persona la atienda (`AGENT`); una abierta no cambia.
+        Nada sale al cliente. 409 `CONVERSATION_CLOSED`; 404: no existe o fuera del
+        alcance.'
       parameters:
       - in: path
         name: conversation_id
@@ -3864,8 +3863,8 @@ paths:
           description: ''
     delete:
       operationId: conversation_human_request_close
-      description: 'Cierra la solicitud (`conversations.view` sobre la conversación).
-        Sin solicitud abierta no cambia nada. 404: no existe o fuera del alcance.'
+      description: 'Cierra la solicitud; sin una abierta no cambia nada. 404: no existe
+        o fuera del alcance.'
       parameters:
       - in: path
         name: conversation_id
@@ -14222,13 +14221,12 @@ components:
       - to_stage
     HumanRequest:
       type: object
-      description: La solicitud abierta, o `null` si no hay ninguna.
       properties:
         reason:
           allOf:
           - $ref: '#/components/schemas/HumanRequestReasonEnum'
           description: |-
-            Lo detectó el copiloto: `ASKED_FOR_PERSON` (el cliente pidió una persona), `UPSET` (está molesto) o `MODEL` (lo pidió el modelo); `AGENT`: quien atiende.
+            Del copiloto: `ASKED_FOR_PERSON`, `UPSET` o `MODEL`; `AGENT`: quien atiende.
 
             * `ASKED_FOR_PERSON` - Asked For Person
             * `UPSET` - Upset
@@ -14240,7 +14238,6 @@ components:
         requested_by_user_id:
           type: string
           format: uuid
-          description: Quien la pidió, o quien usaba el copiloto cuando lo detectó.
       required:
       - reason
       - requested_at

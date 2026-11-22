@@ -7689,7 +7689,7 @@ export const getConversationHumanRequestCreateUrl = (orgSlug: string, conversati
 };
 
 /**
- * Pide que una persona atienda la conversación (`conversations.view` sobre ella; motivo `AGENT`). Si ya hay una abierta, la devuelve sin cambiarla. No envía nada al cliente ni la asigna. 409 `CONVERSATION_CLOSED`. 404: no existe o fuera del alcance.
+ * Pide que una persona la atienda (`AGENT`); una abierta no cambia. Nada sale al cliente. 409 `CONVERSATION_CLOSED`; 404: no existe o fuera del alcance.
  */
 export const conversationHumanRequestCreate = async (
   orgSlug: string,
@@ -7779,7 +7779,7 @@ export const getConversationHumanRequestCloseUrl = (orgSlug: string, conversatio
 };
 
 /**
- * Cierra la solicitud (`conversations.view` sobre la conversación). Sin solicitud abierta no cambia nada. 404: no existe o fuera del alcance.
+ * Cierra la solicitud; sin una abierta no cambia nada. 404: no existe o fuera del alcance.
  */
 export const conversationHumanRequestClose = async (
   orgSlug: string,

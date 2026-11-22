@@ -7,12 +7,9 @@
  */
 import type { HumanRequestReasonEnum } from "./humanRequestReasonEnum";
 
-/**
- * La solicitud abierta, o `null` si no hay ninguna.
- */
 export interface HumanRequest {
   /**
-   * Lo detectó el copiloto: `ASKED_FOR_PERSON` (el cliente pidió una persona), `UPSET` (está molesto) o `MODEL` (lo pidió el modelo); `AGENT`: quien atiende.
+   * Del copiloto: `ASKED_FOR_PERSON`, `UPSET` o `MODEL`; `AGENT`: quien atiende.
    *
    * * `ASKED_FOR_PERSON` - Asked For Person
    * * `UPSET` - Upset
@@ -21,6 +18,5 @@ export interface HumanRequest {
    */
   reason: HumanRequestReasonEnum;
   requested_at: string;
-  /** Quien la pidió, o quien usaba el copiloto cuando lo detectó. */
   requested_by_user_id: string;
 }

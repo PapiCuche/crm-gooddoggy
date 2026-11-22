@@ -1,13 +1,7 @@
-"""La solicitud de atención humana de una conversación (F8-08n; ADR-034 §8, ADR-011).
-
-Quien atiende, con `conversations.view` y su alcance, la pide (`AGENT`) o la cierra; el copiloto la
-deja al detectar un traspaso (`ASKED_FOR_PERSON`, `UPSET` o `MODEL`), a nombre de la persona que lo
-usó. Se cierra sola cuando una persona responde al cliente (`record_outbound`), la toma o se la
-pasan (`commands._assign`) o la conversación se resuelve o se cierra (`commands._status`). Pedirla
-abierta o cerrarla sin abrir no cambia nada (idempotente). La organización sale del contexto. Audita
-solo ids y códigos y deja `conversation.updated` en el outbox de eventos para que la lista del Inbox
-se actualice; nunca un mensaje: nada sale al cliente. No usa `attention_mode` (ADR-034 §12: este
-corte no lo cambia) ni la asignación (una persona puede tenerla y aun así hacer falta otra)."""
+"""La solicitud de atención humana (F8-08n; ADR-034 §8, ADR-011): la pide quien atiende (`AGENT`)
+o el copiloto al detectar un traspaso, a nombre de su persona; se cierra a mano, al responder una
+persona, al tomarla o pasarla, o al resolverla o cerrarla. Idempotente; organización del contexto.
+Audita ids y códigos y deja `conversation.updated` para el Inbox; nada sale al cliente."""
 
 from datetime import datetime
 from typing import Any

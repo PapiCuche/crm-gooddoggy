@@ -1,10 +1,6 @@
-"""Pedir o cerrar la solicitud de atención humana de una conversación (F8-08n; ADR-034 §8).
-
-`POST …/conversations/{id}/human-request/` la pide (motivo `AGENT`) y `DELETE` la cierra. Las dos
-con `conversations.view` y la conversación en su alcance (si no, el mismo 404 que una desconocida o
-ajena); la organización sale de la sesión. Idempotentes: pedir una abierta o cerrar una que no hay
-devuelve el estado sin cambiarlo. No envía nada al cliente ni asigna la conversación.
-"""
+"""`POST`/`DELETE …/conversations/{id}/human-request/` (F8-08n; ADR-034 §8): pedir (`AGENT`) o
+cerrar la solicitud de atención humana, con `conversations.view` y su alcance (si no, el mismo 404);
+idempotentes. No envía nada al cliente ni asigna la conversación."""
 
 from typing import Any
 from uuid import UUID
@@ -25,19 +21,13 @@ CLOSED = "La conversación está cerrada: ya no se puede pedir que la atienda un
 
 
 class HumanRequestSerializer(serializers.Serializer[Any]):
-    """La solicitud abierta, o `null` si no hay ninguna."""
-
     reason = serializers.ChoiceField(
         source="human_request_reason",
         choices=HumanRequest.choices,
-        help_text="Lo detectó el copiloto: `ASKED_FOR_PERSON` (el cliente pidió una persona), "
-        "`UPSET` (está molesto) o `MODEL` (lo pidió el modelo); `AGENT`: quien atiende.",
+        help_text="Del copiloto: `ASKED_FOR_PERSON`, `UPSET` o `MODEL`; `AGENT`: quien atiende.",
     )
     requested_at = serializers.DateTimeField(source="human_requested_at")
-    requested_by_user_id = serializers.UUIDField(
-        source="human_requested_by_user_id",
-        help_text="Quien la pidió, o quien usaba el copiloto cuando lo detectó.",
-    )
+    requested_by_user_id = serializers.UUIDField(source="human_requested_by_user_id")
 
     def to_representation(self, instance: Conversation) -> dict[str, Any] | None:
         if instance.human_requested_at is None:
@@ -65,16 +55,15 @@ class HumanRequestStateSerializer(serializers.Serializer[Any]):
         tags=["conversations"],
         request=None,
         responses={200: HumanRequestStateSerializer, **errors(401, 403, 404, 409)},
-        description="Pide que una persona atienda la conversación (`conversations.view` sobre "
-        "ella; motivo `AGENT`). Si ya hay una abierta, la devuelve sin cambiarla. No envía nada al "
-        "cliente ni la asigna. 409 `CONVERSATION_CLOSED`. 404: no existe o fuera del alcance.",
+        description="Pide que una persona la atienda (`AGENT`); una abierta no cambia. Nada sale "
+        "al cliente. 409 `CONVERSATION_CLOSED`; 404: no existe o fuera del alcance.",
     ),
     delete=extend_schema(
         operation_id="conversation_human_request_close",
         tags=["conversations"],
         responses={200: HumanRequestStateSerializer, **errors(401, 403, 404)},
-        description="Cierra la solicitud (`conversations.view` sobre la conversación). Sin "
-        "solicitud abierta no cambia nada. 404: no existe o fuera del alcance.",
+        description="Cierra la solicitud; sin una abierta no cambia nada. 404: no existe o fuera "
+        "del alcance.",
     ),
 )
 class HumanRequestView(APIView):

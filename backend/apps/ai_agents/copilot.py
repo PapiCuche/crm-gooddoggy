@@ -251,10 +251,8 @@ def _save(
 def _request_human(
     ctx: TenantContext, conversation_id: UUID, reason: str, run_id: UUID, after: datetime
 ) -> None:
-    """F8-08n: el traspaso detectado queda en la conversación (a nombre de la persona, con el run),
-    en su propio scope y tras guardar el run; nada sale al cliente. En una cerrada o ya respondida
-    desde `after` no queda nada; si ya no la ve, el mismo `NotFound`. Cualquier otro fallo (la
-    base) solo va al log con códigos: el borrador ya está guardado y el aviso sale igual."""
+    """F8-08n: el traspaso queda en la conversación, en su scope y tras guardar el run. Cerrada o
+    respondida desde `after`: nada; sin acceso, `NotFound`; otro fallo, al log con códigos."""
     try:
         with tenant_scope(ctx):
             attention.request_human(ctx, conversation_id=conversation_id, reason=reason,
