@@ -1,12 +1,7 @@
-"""El texto de traspaso de cada organización (F8-08l, #1046; ADR-034 §8; decisión del propietario
-del 2026-11-21 en #771): lo que el copiloto propone cuando el cliente pide una persona. Sin texto
-guardado, el inicial (`AI_HANDOFF_REPLY`). Leerlo y cambiarlo piden `ai.manage` antes de nada (el
-segundo factor reciente lo pone la ruta y el tope de escrituras, el middleware, como en las
-cuentas); el cambio se audita (`ai.handoff_reply.changed`) con su longitud, nunca con el texto.
-
-Se valida al guardar y al usarlo (`detectors.reply_problems`): uno inválido no se guarda, y uno
-guardado que ya no vale (los detectores cambiaron después) no se propone: se propone el inicial y
-el log lo avisa con los códigos, sin el texto. La organización, siempre la del contexto."""
+"""El texto de traspaso de cada organización (F8-08l, #1046; ADR-034 §8; #771); sin él, el inicial
+(`AI_HANDOFF_REPLY`). Leerlo y cambiarlo piden `ai.manage`; el cambio se audita sin el texto. Se
+valida al guardar y al usarlo: uno guardado que ya no vale no se propone (el inicial, y un aviso
+en el log con los códigos). La organización, siempre la del contexto."""
 
 from dataclasses import dataclass
 from datetime import datetime

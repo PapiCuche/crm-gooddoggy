@@ -1,9 +1,6 @@
-"""F8-08l (#1046; ADR-034 §8, decisión del propietario del 2026-11-21 en #771): el texto de traspaso
-de cada organización. `GET`/`PUT …/ai/handoff-reply/` y `apps.ai_agents.replies`: primero
-`ai.manage`, después el segundo factor reciente; el `PUT` en el tope de escrituras; auditoría
-`ai.handoff_reply.changed` sin el texto; la organización, la de la ruta. Validado al guardar y al
-usarlo (`detectors.reply_problems`); sin texto guardado, el inicial del propietario. Y el runtime y
-la ruta de sugerir proponen el de la organización. PostgreSQL con `crm_app`; datos ficticios."""
+"""F8-08l (#1046; ADR-034 §8; #771): el texto de traspaso de cada organización, su ruta (permiso,
+segundo factor, tope, auditoría sin el texto), su validación al guardar y al usarlo, y el runtime
+y la ruta de sugerir que lo proponen. PostgreSQL con `crm_app`; datos ficticios."""
 
 import importlib
 import logging
@@ -67,11 +64,11 @@ def put(client: Client, text: Any, org: str = "org-a", **over: Any) -> Any:
 
 
 def test_the_owner_text_is_the_initial_one_and_passes_every_check() -> None:
-    assert detectors.handoff_reply() == OWNER and detectors.reply_problems(OWNER) == ()
+    fine = (OWNER, "Ñuñoa, Perú, pingüino, acción, ª", "Zoë o Çağla")  # tildes sí
+    assert detectors.handoff_reply() == OWNER and not any(map(detectors.reply_problems, fine))
     # la frase de la conversación es la única excepción de los detectores; sin ella, se marca
-    assert detectors.reply_problems(OWNER.replace("conversación quedará", "sesión estará")) == (
-        "AVAILABILITY",
-    )
+    swapped = OWNER.replace("conversación quedará", "sesión estará")
+    assert detectors.reply_problems(swapped) == ("AVAILABILITY",)
 
 
 def test_the_owner_reads_the_initial_text_then_saves_one_and_it_is_audited_without_it(
@@ -98,6 +95,9 @@ def test_the_owner_reads_the_initial_text_then_saves_one_and_it_is_audited_witho
     logged = caplog.text + str([r.__dict__ for r in caplog.records])
     everything = str(migrator.execute("SELECT a::text FROM audit_logs a").fetchall())
     assert "Good Doggy" not in logged + everything and "Entiendo" not in everything
+    give(crm.a, crm.m["sam"], {"ai.manage": None})  # otra administradora: el cambio es suyo
+    assert put(signed(crm.sam), MINE).status_code == 200
+    assert migrator.execute(ROWS).fetchall() == [(crm.a, MINE, crm.sam.pk)]
 
 
 def test_the_permission_goes_before_the_second_factor_and_nothing_changes_without_both(
@@ -136,7 +136,7 @@ def test_each_organization_has_its_own_text(crm: SimpleNamespace, migrator: DB) 
         assert cursor.fetchall() == [(crm.a,)]
 
 
-CASES = [  # revisión de #1054: más prisas, la frase anclada y solo letras latinas
+CASES = [  # revisión de #1054: más prisas, la frase anclada y solo letras latinas básicas
     ("Te atendemos en 24 horas", ["DELIVERY"]), ("Somos un equipo de 3 personas", ["FIGURE"]),
     ("Te atendemos en 5 minutos", ["FIGURE", "SOON"]), ("Te escribimos mañana", ["DELIVERY"]),
     ("Una persona te atiende de inmediato", ["DELIVERY"]),
@@ -149,11 +149,15 @@ CASES = [  # revisión de #1054: más prisas, la frase anclada y solo letras lat
     ("En un ratito te escriben", ["SOON"]), ("Prontito te escribe una persona", ["SOON"]),
     ("Te atienden sin esperas", ["SOON"]), ("Te atienden de una", ["SOON"]),
     ("Luego luego te atienden", ["SOON"]), ("ASAP te atienden", ["SOON"]),
+    ("Te escriben sin falta", ["SOON"]), ("Seguro te atienden", ["SOON"]),
+    ("Te atienden de volada", ["SOON"]), ("Te escriben en un toque", ["SOON"]),
     # la excepción, solo con su sujeto al empezar una frase
     ("El producto de tu conversación quedará disponible", ["AVAILABILITY"]),
     ("Tu pedido y tu conversación quedará disponible", ["AVAILABILITY"]),
     ("El collar quedará disponible", ["AVAILABILITY"]),
     ("Gracias. Conversación quedará disponible", ["AVAILABILITY"]),
+    ("Tu collar quedará disponible", ["AVAILABILITY"]),
+    ("Una persona te atiende h\u1d0fy.", ["SCRIPT"]),  # una versalita latina
     ("Te escribimos h\u043ey", ["SCRIPT"]), ("Ho\u200bla", ["BODY"]), ("\u202eHola", ["BODY"]),
     ("x" * (HANDOFF_MAX + 1), ["TOO_LONG"]),
 ]  # fmt: skip
@@ -205,6 +209,7 @@ def test_crm_app_writes_only_the_text_who_and_when_of_its_own_row(
         ("UPDATE ai_handoff_replies SET organization_id = %s", [crm.b]),
         ("UPDATE ai_handoff_replies SET id = uuidv7()", []),
         (STORE, [crm.b, MINE]),  # la de otra organización: RLS
+        ("UPDATE ai_handoff_replies SET changed_by_user_id = %s", [crm.luis.pk]),  # no es de A
     ):  # fmt: skip
         with tenant_scope(ctx(crm.a)), pytest.raises(DatabaseError):
             connection.cursor().execute(statement, args)

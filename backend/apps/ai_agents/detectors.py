@@ -157,6 +157,7 @@ SOON = re.compile(
     r"|\b(?:un|unos|pocos)\s+momentos?\b|\burgen\w*|\binstantes?\b|\brat(?:it)?os?\b"
     r"|\ben\s+(?:este|ese)\s+momento\b|\bya\s+(?:te|le|les|lo|la|los|las)\b|\bsin\s+esperas?\b"
     r"|\bluego\s+luego\b|\basap\b|\bde\s+una\b|\ben\s+nada\b|\bsin\s+falta\b|\bseguro\b"
+    r"|\bde\s+volada\b|\ben\s+un\s+toque\b"
 )
 # La única frase que los detectores marcan y el texto de traspaso admite: la del propietario sobre
 # la conversación («Tu conversación quedará disponible…», #771), con su sujeto al empezar una frase
@@ -330,12 +331,15 @@ def handoff(customer: Sequence[str], wants_handoff: bool) -> Handoff:
     return Handoff(False)
 
 
+def _latin(c: str) -> bool:  # ñ, ü, ç, ª sí; versalitas, IPA y otros alfabetos, no
+    base = "".join(d for d in unicodedata.normalize("NFKD", c) if not unicodedata.combining(d))
+    return base.isascii() and base.isalpha()
+
+
 def reply_problems(reply: object) -> tuple[str, ...]:
-    """Por qué `reply` no vale como texto de traspaso; vacío si vale. `TOO_LONG`: más de
-    `HANDOFF_MAX`; `BODY`: no es un cuerpo que `clean_body` acepta tal cual (sin controles de
-    dirección ni caracteres ocultos); `SCRIPT`: una letra que no es latina; si no, los tipos de
-    lo que detectan los detectores (cifras, plazos, promesas, enlaces, la marca), salvo `KEPT`, y
-    `SOON` (una prisa). Solo códigos."""
+    """Por qué `reply` no vale como texto de traspaso (vacío: vale), solo códigos: `TOO_LONG`,
+    `BODY` (no es un cuerpo que `clean_body` acepta tal cual), `SCRIPT` (una letra no latina) o
+    lo que marcan los detectores (salvo `KEPT`) y `SOON`."""
     if not isinstance(reply, str):
         return ("BODY",)
     if len(reply) > HANDOFF_MAX:
@@ -345,10 +349,8 @@ def reply_problems(reply: object) -> tuple[str, ...]:
             return ("BODY",)
     except ValueError:
         return ("BODY",)
-    if not all(unicodedata.name(c, "").startswith("LATIN ") for c in reply if c.isalpha()):
-        return (
-            "SCRIPT",
-        )  # una letra parecida de otro alfabeto: «hoy» con la «o» cirílica (U+043E)
+    if not all(_latin(c) for c in reply if c.isalpha()):  # «hoy» con «o» cirílica o versalita
+        return ("SCRIPT",)
     key, origin = _fold(reply)
     owned, pos = [], 0
     for kept in KEPT.finditer(key):

@@ -1,10 +1,7 @@
-"""El texto de traspaso de la organización (F8-08l, #1046; ADR-034 §8): `GET` y `PUT
-…/ai/handoff-reply/`. Como las cuentas del proveedor (F8-03c, F8-05b6): `ai.manage` y, después,
-el segundo factor de hace 15 minutos como mucho (sin el permiso, 403 `PERMISSION_DENIED`, nunca
-`STEP_UP_REQUIRED`); el `PUT` cuenta en el tope por persona de las escrituras
-(`apps.ai_gateway.throttle`, 429). La organización es la de la ruta: el cuerpo solo aporta `text`.
-Un texto inválido es un 400 en `text` con un código y un mensaje por problema; ningún mensaje
-repite lo enviado."""
+"""`GET` y `PUT …/ai/handoff-reply/` (F8-08l, #1046), como el modelo de la cuenta (F8-05b6):
+`ai.manage` y después el segundo factor reciente; el `PUT`, en el tope de escrituras (429). La
+organización, la de la ruta. Un texto inválido: 400 en `text`, un código y un mensaje por
+problema, sin repetir lo enviado."""
 
 from typing import Any
 
