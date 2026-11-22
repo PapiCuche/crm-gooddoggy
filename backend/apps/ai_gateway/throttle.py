@@ -49,9 +49,10 @@ from django.http import HttpRequest, HttpResponse
 from core.api.errors import error_response
 
 # Encender la IA cuenta (F8-06); apagarla, nunca (`…/ai/switch/off/`, ADR-034 §5). Marcar qué
-# listas de precios cita la IA (F8-07b) cuenta también; las demás rutas de precios, no.
+# listas de precios cita la IA (F8-07b) y cambiar el texto de traspaso del copiloto (F8-08l)
+# cuentan también; las demás rutas de precios, no.
 PATH = re.compile(
-    r"^/api/v1/o/[^/]+/(ai/(provider-accounts/|budget/|switch/on/)"
+    r"^/api/v1/o/[^/]+/(ai/(provider-accounts/|budget/|switch/on/|handoff-reply/$)"
     r"|pricing/price-lists/[^/]+/ai-exposable/$)"
 )
 COPILOT = re.compile(r"^/api/v1/o/[^/]+/conversations/[^/]+/copilot/(suggest|summary)/$")

@@ -67,6 +67,7 @@ def test_schema_endpoint_serves_the_contract_without_internal_routes() -> None:
         "/api/v1/o/{org_slug}/conversations/{conversation_id}/attachments/{attachment_id}/url/",
         "/api/v1/o/{org_slug}/conversations/{conversation_id}/media/",  # F7-09b2
         "/api/v1/o/{org_slug}/conversations/{conversation_id}/assign/",
+        "/api/v1/o/{org_slug}/conversations/{conversation_id}/human-request/",  # F8-08n
         "/api/v1/o/{org_slug}/conversations/{conversation_id}/quick-replies/",  # F6-08a2
         "/api/v1/o/{org_slug}/conversations/{conversation_id}/quick-replies/{quick_reply_id}/render/",
         "/api/v1/o/{org_slug}/quick-replies/",  # F6-08a3
@@ -77,6 +78,7 @@ def test_schema_endpoint_serves_the_contract_without_internal_routes() -> None:
         "/api/v1/o/{org_slug}/ai/switch/",  # F8-06
         "/api/v1/o/{org_slug}/ai/switch/off/",
         "/api/v1/o/{org_slug}/ai/switch/on/",
+        "/api/v1/o/{org_slug}/ai/handoff-reply/",  # F8-08l
         "/api/v1/o/{org_slug}/ai/provider-accounts/",  # F8-03c
         "/api/v1/o/{org_slug}/ai/provider-accounts/{account_id}/",
         "/api/v1/o/{org_slug}/ai/provider-accounts/{account_id}/key/",

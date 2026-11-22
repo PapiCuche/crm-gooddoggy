@@ -15,20 +15,22 @@ término o un enlace sin evidencia.
 - `substitute` (sugerencia): cada tramo pasa a `VERIFY_MARK`; el hallazgo da tipo y posición de su
   marca, nunca el tramo. `mark` (resumen, §7): los mismos tramos, con su posición, sin sustituir.
 - `handoff` (§8): palabras clave en los últimos mensajes del cliente **o** `wants_handoff`, más una
-  señal de enfado. Con traspaso, `suggestion` devuelve el texto fijo `AI_HANDOFF_REPLY`, nunca el
-  del modelo. No asigna nada.
+  señal de enfado. Con traspaso, `suggestion` devuelve el texto de traspaso (el de la organización,
+  F8-08l; si no, el inicial `AI_HANDOFF_REPLY`), nunca el del modelo. No asigna nada.
+- `reply_problems` (F8-08l): por qué un texto de traspaso no vale, al guardarlo y al usarlo.
 
 Posiciones en code points (F8-09 las convierte para JavaScript). Puro: sin base de datos ni logs."""
 
 import re
 import unicodedata
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 
 from apps.ai_agents.guard import Finding, Problem, Rendered
+from apps.ai_agents.models import HANDOFF_MAX
 from apps.conversations.models import BODY_MAX
 from apps.conversations.text import clean_body
 from core.confusables import PROTOTYPES
@@ -146,6 +148,23 @@ HAPPY = re.compile(
     r"|\bbuenaz\w*|\blo\s+quiero\b|\bsi\b"
 )
 REASONS = ("ASKED_FOR_PERSON", "UPSET", "MODEL")
+# F8-08l (#1046): el texto de traspaso de una organización. Nunca promete atención inmediata
+# (decisión del propietario, #771): además de los detectores (`inmediat…`, `ahorita`, `hoy`,
+# `horas`…), estas prisas, sobre la clave y solo en ese texto.
+SOON = re.compile(
+    r"\benseguid\w*|\bpront\w*|\bbrevedad\b|\ben\s+breve\b|\bya\s+mismo\b|\bminutos?\b"
+    r"|\bsegundos?\b|\bal\s+(?:instante|momento|tiro)\b|\brapid\w*|\bvolando\b|\bpriorid\w*"
+    r"|\b(?:un|unos|pocos)\s+momentos?\b|\burgen\w*|\binstantes?\b|\brat(?:it)?os?\b"
+    r"|\ben\s+(?:este|ese)\s+momento\b|\bya\s+(?:te|le|les|lo|la|los|las)\b|\bsin\s+esperas?\b"
+    r"|\bluego\s+luego\b|\basap\b|\bde\s+una\b|\ben\s+nada\b|\bsin\s+falta\b|\bseguro\b"
+    r"|\bde\s+volada\b|\ben\s+un\s+toque\b"
+)
+# La única frase que los detectores marcan y el texto de traspaso admite: la del propietario sobre
+# la conversación («Tu conversación quedará disponible…», #771), con su sujeto al empezar una frase
+# (no «el producto de tu conversación…»). `disponib…` es de AVAILABILITY (el stock de un
+# producto); aquí no habla de stock. Solo esa frase y solo en ese texto: el del modelo se sigue
+# marcando igual. Lo que vaya pegado a ella («… disponible 2 días») sí se detecta.
+KEPT = re.compile(r"(?:^|[.!?¿¡]\s*)((?:tu|la)\s+conversacion\s+quedara\s+disponible)\b")
 
 
 @dataclass(frozen=True)
@@ -312,26 +331,53 @@ def handoff(customer: Sequence[str], wants_handoff: bool) -> Handoff:
     return Handoff(False)
 
 
-def handoff_reply() -> str:
-    """`AI_HANDOFF_REPLY`; `ImproperlyConfigured` si no es un cuerpo que `clean_body` acepta tal
-    cual (sin controles de dirección ni caracteres ocultos) o si lleva algo que detectar (cifras,
-    plazos, enlaces, la marca)."""
-    reply = settings.AI_HANDOFF_REPLY
+def _latin(c: str) -> bool:  # ñ, ü, ç, ª sí; versalitas, IPA y otros alfabetos, no
+    base = "".join(d for d in unicodedata.normalize("NFKD", c) if not unicodedata.combining(d))
+    return base.isascii() and base.isalpha()
+
+
+def reply_problems(reply: object) -> tuple[str, ...]:
+    """Por qué `reply` no vale como texto de traspaso (vacío: vale), solo códigos: `TOO_LONG`,
+    `BODY` (no es un cuerpo que `clean_body` acepta tal cual), `SCRIPT` (una letra no latina) o
+    lo que marcan los detectores (salvo `KEPT`) y `SOON`."""
+    if not isinstance(reply, str):
+        return ("BODY",)
+    if len(reply) > HANDOFF_MAX:
+        return ("TOO_LONG",)
     try:
-        valid = clean_body(reply) == reply
+        if clean_body(reply) != reply:
+            return ("BODY",)
     except ValueError:
-        valid = False
-    if not valid or _parts(reply, [(0, len(reply))]):
+        return ("BODY",)
+    if not all(_latin(c) for c in reply if c.isalpha()):  # «hoy» con «o» cirílica o versalita
+        return ("SCRIPT",)
+    key, origin = _fold(reply)
+    owned, pos = [], 0
+    for kept in KEPT.finditer(key):
+        owned.append((pos, origin[kept.start(1)]))
+        pos = origin[kept.end(1) - 1] + 1
+    found = [kind for kind, _, _ in _parts(reply, [*owned, (pos, len(reply))])]
+    return tuple(dict.fromkeys(found + (["SOON"] if SOON.search(key) else [])))
+
+
+def handoff_reply() -> str:
+    """El texto de traspaso inicial, `AI_HANDOFF_REPLY` (el de una organización sin el suyo);
+    `ImproperlyConfigured` si no vale (`reply_problems`). Al arrancar y en cada uso."""
+    reply = settings.AI_HANDOFF_REPLY
+    if not isinstance(reply, str) or reply_problems(reply):
         raise ImproperlyConfigured("AI_HANDOFF_REPLY")
     return reply
 
 
-def suggestion(rendered: Rendered, customer: Sequence[str]) -> tuple[Rendered, Handoff]:
-    """La sugerencia que se guarda: con traspaso, el texto fijo (sin hallazgos ni problemas: no hay
-    nada que reintentar); si no, `substitute`."""
+def suggestion(
+    rendered: Rendered, customer: Sequence[str], reply: Callable[[], str] = handoff_reply
+) -> tuple[Rendered, Handoff]:
+    """La sugerencia que se guarda: con traspaso, el texto de traspaso que da `reply` (sin
+    hallazgos ni problemas: no hay nada que reintentar; solo entonces se pide); si no,
+    `substitute`."""
     found = handoff(customer, rendered.wants_handoff)
     if not found.requested:
         return substitute(rendered), found
-    text = handoff_reply()
+    text = reply()
     fixed = Rendered(text, (), (), rendered.wants_handoff, None, ((0, len(text)),))
     return fixed, found

@@ -6,6 +6,7 @@ from django.urls.resolvers import RoutePattern
 
 from apps.conversations.api import (
     assignment,
+    attention,
     channels,
     conversations,
     media,
@@ -99,6 +100,11 @@ urlpatterns = [
         "conversations/<uuid:conversation_id>/assign/",
         assignment.AssignView.as_view(),
         name="conversation-assign",
+    ),
+    path(
+        "conversations/<uuid:conversation_id>/human-request/",
+        attention.HumanRequestView.as_view(),
+        name="conversation-human-request",
     ),
     path("quick-replies/", ManagedRepliesView.as_view(), name="quick-replies"),
     path("quick-replies/<uuid:quick_reply_id>/", ManagedReplyView.as_view(), name="quick-reply"),

@@ -778,6 +778,108 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/ai/handoff-reply/:
+    get:
+      operationId: ai_handoff_reply_retrieve
+      description: 'El texto de traspaso que propone el copiloto (`ai.manage` y segundo
+        factor reciente): el de la organización o, sin él, el inicial. No cuenta en
+        el tope por persona de las escrituras.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - ai
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AiHandoffReply'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+    put:
+      operationId: ai_handoff_reply_update
+      description: 'Cambia el texto de traspaso de la organización (`ai.manage` y
+        segundo factor reciente) y lo audita (`ai.handoff_reply.changed`, sin el texto).
+        400 en `text`: un código y un mensaje por problema (`BODY`, `TOO_LONG`, `SCRIPT`,
+        `SOON`, `FIGURE`, `DELIVERY`, `DISCOUNT`, `AVAILABILITY`, `TERMS`, `LINK`,
+        `MARKUP`); nunca repite lo enviado. 429 `RATE_LIMITED`: el tope por persona
+        de las escrituras, con `Retry-After`.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - ai
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AiHandoffReplyWriteRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AiHandoffReply'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/ai/provider-accounts/:
     get:
       operationId: ai_provider_accounts_list
@@ -3805,6 +3907,104 @@ paths:
                 $ref: '#/components/schemas/Error'
           description: ''
         '504':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/conversations/{conversation_id}/human-request/:
+    post:
+      operationId: conversation_human_request_create
+      description: 'Pide que una persona la atienda (`AGENT`); una abierta no cambia.
+        Nada sale al cliente. 409 `CONVERSATION_CLOSED`; 404: no existe o fuera del
+        alcance.'
+      parameters:
+      - in: path
+        name: conversation_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - conversations
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanRequestState'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+    delete:
+      operationId: conversation_human_request_close
+      description: 'Cierra la solicitud; sin una abierta no cambia nada. 404: no existe
+        o fuera del alcance.'
+      parameters:
+      - in: path
+        name: conversation_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - conversations
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanRequestState'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
           content:
             application/json:
               schema:
@@ -12414,6 +12614,35 @@ components:
       required:
       - daily_usd
       - monthly_usd
+    AiHandoffReply:
+      type: object
+      properties:
+        text:
+          type: string
+          description: Lo que el copiloto propone cuando piden una persona.
+        initial:
+          type: boolean
+          description: 'true: el inicial del propietario (sin texto guardado, o el
+            guardado ya no vale).'
+        changed_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: 'Último cambio; null: nunca.'
+      required:
+      - changed_at
+      - initial
+      - text
+    AiHandoffReplyWriteRequest:
+      type: object
+      properties:
+        text:
+          type: string
+          minLength: 1
+          description: De 1 a 500 caracteres, sin cifras, plazos, prisas, promesas,
+            enlaces ni la marca.
+      required:
+      - text
     AiProviderAccount:
       type: object
       properties:
@@ -13551,6 +13780,12 @@ components:
           description: 'Instagram o Messenger: desde cuándo otra app controla el hilo
             (`standby`); `null` si no. Mientras tanto nada responde solo (ADR-035
             §4).'
+        human_request:
+          allOf:
+          - $ref: '#/components/schemas/HumanRequest'
+          nullable: true
+          description: Alguien pidió que una persona la atienda; `null` si no. Se
+            cierra cuando una persona responde al cliente o la toma, o a mano.
         version:
           type: integer
       required:
@@ -13560,6 +13795,7 @@ components:
       - attention_mode
       - channel
       - contact
+      - human_request
       - id
       - last_inbound_at
       - last_message_at
@@ -13635,6 +13871,12 @@ components:
           description: 'Instagram o Messenger: desde cuándo otra app controla el hilo
             (`standby`); `null` si no. Mientras tanto nada responde solo (ADR-035
             §4).'
+        human_request:
+          allOf:
+          - $ref: '#/components/schemas/HumanRequest'
+          nullable: true
+          description: Alguien pidió que una persona la atienda; `null` si no. Se
+            cierra cuando una persona responde al cliente o la toma, o a mano.
         version:
           type: integer
         assigned_at:
@@ -13668,6 +13910,7 @@ components:
       - closed_at
       - contact
       - created_at
+      - human_request
       - id
       - last_inbound_at
       - last_message_at
@@ -14109,6 +14352,56 @@ components:
       - id
       - seconds_in_previous_stage
       - to_stage
+    HumanRequest:
+      type: object
+      properties:
+        reason:
+          allOf:
+          - $ref: '#/components/schemas/HumanRequestReasonEnum'
+          description: |-
+            Del copiloto: `ASKED_FOR_PERSON`, `UPSET` o `MODEL`; `AGENT`: quien atiende.
+
+            * `ASKED_FOR_PERSON` - Asked For Person
+            * `UPSET` - Upset
+            * `MODEL` - Model
+            * `AGENT` - Agent
+        requested_at:
+          type: string
+          format: date-time
+        requested_by_user_id:
+          type: string
+          format: uuid
+      required:
+      - reason
+      - requested_at
+      - requested_by_user_id
+    HumanRequestReasonEnum:
+      enum:
+      - ASKED_FOR_PERSON
+      - UPSET
+      - MODEL
+      - AGENT
+      type: string
+      description: |-
+        * `ASKED_FOR_PERSON` - Asked For Person
+        * `UPSET` - Upset
+        * `MODEL` - Model
+        * `AGENT` - Agent
+    HumanRequestState:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        human_request:
+          allOf:
+          - $ref: '#/components/schemas/HumanRequest'
+          nullable: true
+          description: Alguien pidió que una persona la atienda; `null` si no. Se
+            cierra cuando una persona responde al cliente o la toma, o a mano.
+      required:
+      - human_request
+      - id
     ImportRowActionEnum:
       enum:
       - CREATE

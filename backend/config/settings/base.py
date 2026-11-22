@@ -370,6 +370,7 @@ SPECTACULAR_SETTINGS = {
         # El catálogo (F3-06, F3-06b): el estado de un producto y el de una variante son listas
         # distintas con valores en común.
         "ConversationStatusEnum": "apps.conversations.models.Status",  # F6-02
+        "HumanRequestReasonEnum": "apps.conversations.models.HumanRequest",  # F8-08n
         "AiProviderEnum": "apps.ai_gateway.models.Provider",  # F8-03c
         "AiProviderAccountStatusEnum": "apps.ai_gateway.models.AccountStatus",
         "QuickReplyVariableEnum": "apps.conversations.quick_replies.VARIABLES",  # F6-08a2
@@ -478,13 +479,14 @@ AI_COPILOT_DEADLINE = 50
 # F8-08e (ADR-034 §9): segundos que vale la evidencia de precio y stock para el Output Guard; un
 # valor fijo en configuración, entero de 1 a 600 (10 minutos como mucho), o el guard falla cerrado.
 AI_EVIDENCE_TTL = 600
-# F8-08f (ADR-034 §8): con traspaso, la sugerencia es siempre este texto, nunca el del modelo.
-# PENDIENTE DEL PROPIETARIO (#771): redacción neutra propuesta por el programa, sin plazos ni
-# promesas; el propietario la cambia por PR. Con una cifra, un plazo, un enlace o la marca, no
-# arranca.
+# F8-08f (ADR-034 §8): con traspaso, la sugerencia es siempre el texto de traspaso, nunca el del
+# modelo. Este es el inicial, decidido por el propietario el 2026-11-21 (#771): el de toda
+# organización que no guardó el suyo (F8-08l, `…/ai/handoff-reply/`). Nunca promete atención
+# inmediata; con una cifra, un plazo, una prisa, un enlace o la marca, no arranca.
 AI_HANDOFF_REPLY = (
-    "Gracias por escribirnos. Una persona de nuestro equipo va a continuar con tu consulta por "
-    "este medio."
+    "Entiendo. Voy a solicitar que una persona de nuestro equipo continúe contigo para ayudarte "
+    "directamente. Tu conversación quedará disponible para que pueda revisar el contexto y no "
+    "tengas que repetir toda la información"
 )
 # F8-08j (D-F8-05, ADR-034 §13): días que se guarda el texto de una sugerencia o un resumen; después
 # la purga diaria lo pone a NULL (los hallazgos y los ids quedan).

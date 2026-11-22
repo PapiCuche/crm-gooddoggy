@@ -2,12 +2,17 @@
 (migrations/0001): `ai_runs` y `ai_actions`, de solo inserción y particionadas por mes, y
 `ai_suggestions`, cuyo texto solo puede pasar a NULL (la purga de D-F8-05). Estos modelos no las
 gestionan (`managed = False`): existen para leerlas y para que se emita `post_migrate`. Se
-escriben solo con `apps.ai_agents.records.save()`, que redacta los argumentos y audita."""
+escriben solo con `apps.ai_agents.records.save()`, que redacta los argumentos y audita.
+
+`ai_handoff_replies` (F8-08l) sí la gestiona Django (0004): el texto de traspaso de cada
+organización."""
 
 from typing import Any, NoReturn
 
 from django.contrib.postgres.fields import ArrayField
 from django.db import models
+from django.db.models.functions import Length
+from django.db.models.lookups import GreaterThanOrEqual, LessThanOrEqual
 
 from core.db.models import TenantManager, TenantModel, uuid7_primary_key
 
@@ -87,3 +92,29 @@ class AISuggestion(_Record):
     class Meta:
         managed = False
         db_table = "ai_suggestions"
+
+
+HANDOFF_MAX = 500  # el texto de traspaso: el CHECK de la tabla y `detectors.reply_problems`
+
+
+class AIHandoffReply(TenantModel):
+    """El texto de traspaso de la organización (F8-08l; ADR-034 §8): una fila como mucho; sin
+    ella, el inicial (`AI_HANDOFF_REPLY`). Lo escribe `apps.ai_agents.replies` como `crm_app` bajo
+    RLS: inserta la de su organización y cambia solo el texto, quién y cuándo (0004); nunca la
+    borra."""
+
+    id = uuid7_primary_key()
+    text = models.TextField()
+    changed_by_user_id = models.UUIDField(null=True)  # FK compuesta a las membresías (0004)
+    changed_at = models.DateTimeField()
+
+    class Meta:
+        db_table = "ai_handoff_replies"
+        constraints = [
+            models.UniqueConstraint(fields=["organization_id"], name="ai_handoff_replies_org_uq"),
+            models.CheckConstraint(
+                condition=models.Q(GreaterThanOrEqual(Length("text"), 1))
+                & models.Q(LessThanOrEqual(Length("text"), HANDOFF_MAX)),
+                name="ai_handoff_replies_text_ck",
+            ),
+        ]

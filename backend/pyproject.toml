@@ -196,10 +196,17 @@ forbidden_modules = [
 # clave y mira el interruptor. `ignore_imports` quita esa arista de todo el grafo: el contrato
 # `protected` de F8-08g impide que otro módulo llegue al gateway a través del runtime, y una prueba
 # fija que el runtime solo usa `complete` y `GatewayError` del gateway. Los demás no cambian.
+# F8-08l (#1046): el texto de traspaso de la organización audita su cambio
+# (`ai.handoff_reply.changed`, sin el texto); que solo el runtime y su ruta lleguen a `replies` (y
+# así a la auditoría) lo sostiene el contrato `protected` de F8-08l.
+# F8-08n (#1048): el runtime deja la solicitud de atención humana con `conversations.attention`,
+# que audita y lee la política del Inbox; quién más la importa lo cierra su contrato `protected`.
 ignore_imports = [
     "apps.ai_agents.records -> apps.audit.services",
+    "apps.ai_agents.replies -> apps.audit.services",
     "apps.ai_agents.context -> apps.conversations.selectors",
     "apps.ai_agents.copilot -> apps.ai_gateway.gateway",
+    "apps.ai_agents.copilot -> apps.conversations.attention",
 ]
 
 [[tool.importlinter.contracts]]
@@ -218,7 +225,7 @@ allowed_importers = ["apps.ai_agents.apps", "apps.ai_agents.copilot"]
 # vistas de sugerir (F8-08h) y resumir (F8-08i), que comparten módulo.
 name = "Ningún módulo de ai_agents importa su arranque (F8-08d)"
 type = "forbidden"
-source_modules = ["apps.ai_agents.tools", "apps.ai_agents.registry", "apps.ai_agents.fields", "apps.ai_agents.models", "apps.ai_agents.migrations", "apps.ai_agents.records", "apps.ai_agents.context", "apps.ai_agents.guard", "apps.ai_agents.detectors", "apps.ai_agents.copilot", "apps.ai_agents.api", "apps.ai_agents.drafts", "apps.ai_agents.tasks"]
+source_modules = ["apps.ai_agents.tools", "apps.ai_agents.registry", "apps.ai_agents.fields", "apps.ai_agents.models", "apps.ai_agents.migrations", "apps.ai_agents.records", "apps.ai_agents.context", "apps.ai_agents.guard", "apps.ai_agents.detectors", "apps.ai_agents.copilot", "apps.ai_agents.api", "apps.ai_agents.drafts", "apps.ai_agents.tasks", "apps.ai_agents.replies"]
 forbidden_modules = ["apps.ai_agents.apps"]
 
 [[tool.importlinter.contracts]]
@@ -243,7 +250,7 @@ ignore_imports = ["apps.ai_agents.api.views -> apps.ai_gateway.throttle"]
 # tarea (`tasks`, que llega por `drafts`) tampoco están en la lista.
 name = "Solo el runtime del copiloto y sus borradores importan su registro (F8-08b, F8-08j)"
 type = "forbidden"
-source_modules = ["apps.ai_agents.tools", "apps.ai_agents.registry", "apps.ai_agents.fields", "apps.ai_agents.models", "apps.ai_agents.apps", "apps.ai_agents.migrations", "apps.ai_agents.context", "apps.ai_agents.guard", "apps.ai_agents.detectors"]
+source_modules = ["apps.ai_agents.tools", "apps.ai_agents.registry", "apps.ai_agents.fields", "apps.ai_agents.models", "apps.ai_agents.apps", "apps.ai_agents.migrations", "apps.ai_agents.context", "apps.ai_agents.guard", "apps.ai_agents.detectors", "apps.ai_agents.replies"]
 forbidden_modules = ["apps.ai_agents.records"]
 
 [[tool.importlinter.contracts]]
@@ -255,6 +262,23 @@ protected_modules = ["apps.ai_agents.copilot"]
 # F8-08h (#771): a propósito, solo el módulo de las vistas del copiloto; nada más llega al runtime.
 # F8-08i (#1025): la vista de resumir vive en ese mismo módulo, así que la lista no crece.
 allowed_importers = ["apps.ai_agents.api.views"]
+
+[[tool.importlinter.contracts]]
+# F8-08l (#1046): la arista `replies -> audit.services` está ignorada arriba; si otro módulo (una
+# tool, el guard) importara `replies`, llegaría por él al escritor de la auditoría sin que nadie lo
+# viera. Solo el runtime (lee el texto al proponer el traspaso) y su ruta de administración.
+name = "Solo el runtime y su ruta importan el texto de traspaso (F8-08l)"
+type = "protected"
+protected_modules = ["apps.ai_agents.replies"]
+allowed_importers = ["apps.ai_agents.copilot", "apps.ai_agents.api.handoff"]
+
+[[tool.importlinter.contracts]]
+# F8-08l (revisión de #1054): el `protected` de arriba mira solo los imports directos; este mira
+# también los indirectos (una tool que importara `api.handoff` llegaría a la auditoría).
+name = "Nada salvo el runtime y su ruta llega al texto de traspaso, ni indirectamente (F8-08l)"
+type = "forbidden"
+source_modules = ["apps.ai_agents.tools", "apps.ai_agents.registry", "apps.ai_agents.fields", "apps.ai_agents.models", "apps.ai_agents.apps", "apps.ai_agents.migrations", "apps.ai_agents.context", "apps.ai_agents.guard", "apps.ai_agents.detectors", "apps.ai_agents.records", "apps.ai_agents.drafts", "apps.ai_agents.tasks"]
+forbidden_modules = ["apps.ai_agents.replies"]
 
 [[tool.importlinter.contracts]]
 name = "Fronteras de alta: solo provisioning importa los bootstrap.py de L2 (F2-06)"
@@ -384,6 +408,14 @@ name = "Comandos de tareas: solo su API los importa (F5-08a)"
 type = "protected"
 protected_modules = ["apps.tasks.commands"]
 allowed_importers = ["apps.tasks.api"]
+
+[[tool.importlinter.contracts]]
+# F8-08n (#1048): la solicitud de atención humana; a propósito también el runtime del copiloto, que
+# la deja al detectar un traspaso, y los comandos, que la cierran al responder o asignar.
+name = "Solicitud de atención humana: solo la API, los comandos y el runtime del copiloto (F8-08n)"
+type = "protected"
+protected_modules = ["apps.conversations.attention"]
+allowed_importers = ["apps.conversations.api", "apps.conversations.commands", "apps.ai_agents.copilot"]
 
 [[tool.importlinter.contracts]]
 name = "Comandos del Inbox: solo su API y sus tareas los importan (F6-01c, F6-04b, F6-08a1, F7-02b, F7-02c, F7-04)"
