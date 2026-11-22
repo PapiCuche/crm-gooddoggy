@@ -4,6 +4,7 @@ persona, de punta a punta con middleware, sesión, CSRF, motor de autorización 
 anónimo, un 403, un 404 o el tope por persona no lo gastan; el presupuesto sigue siendo el tope
 final. Datos ficticios."""
 
+import ast
 from types import SimpleNamespace
 from typing import Any
 from uuid import UUID, uuid4
@@ -11,6 +12,8 @@ from uuid import UUID, uuid4
 import pytest
 from django.test import Client
 
+from apps.ai_agents import copilot
+from apps.ai_gateway import throttle
 from tests.factories import make_user
 from tests.test_ai_copilot_context import conversation
 from tests.test_ai_copilot_runtime import PLAIN, desk
@@ -19,6 +22,7 @@ from tests.test_ai_copilot_suggest_api import ask as suggest
 from tests.test_ai_copilot_summary_api import ask as summary
 from tests.test_ai_copilot_summary_api import said
 from tests.test_ai_gateway import world
+from tests.test_ai_tools_hardening import BACKEND
 from tests.test_authorization import give
 from tests.test_memberships import join
 from tests.test_self_context import real_stack
@@ -96,6 +100,32 @@ def test_anonymous_refused_and_out_of_scope_requests_spend_nothing_of_the_organi
     assert counted(migrator, PEOPLE)[f"aic:usr:{eva.pk}"] == 1  # el de la persona, sí
 
 
+def test_a_runtime_404_gives_back_exactly_its_own_request(
+    desk: SimpleNamespace, migrator: DB
+) -> None:
+    desk.fake.replies = [PLAIN]
+    assert suggest(desk).status_code == 201
+    assert suggest(desk, convo=uuid4()).status_code == 404
+    assert counted(migrator) == {f"aio:org:{desk.a}": 1}  # el servido sigue contado
+
+
+def test_a_request_given_back_never_comes_off_a_newer_window(
+    desk: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real = copilot.suggest
+    aged = "UPDATE login_throttles SET updated_at = updated_at - interval '601 seconds'"
+
+    def late(ctx: Any, conversation_id: UUID) -> Any:
+        """Mientras esta sigue en el runtime, su ventana vence y otra petición abre una nueva."""
+        migrator.execute(f"{aged} WHERE key LIKE 'aio:%'")
+        assert throttle.organization_wait(ctx.organization_id)[0] == 0
+        return real(ctx, conversation_id)
+
+    monkeypatch.setattr(copilot, "suggest", late)
+    assert suggest(desk, convo=uuid4()).status_code == 404
+    assert counted(migrator) == {f"aio:org:{desk.a}": 1}  # la nueva ventana conserva su pedido
+
+
 def test_a_person_over_their_own_limit_never_reaches_the_organization_counter(
     desk: SimpleNamespace, migrator: DB, settings: Any
 ) -> None:
@@ -116,3 +146,14 @@ def test_the_budget_is_still_the_final_cap_under_both_limits(
     ] * 2
     assert desk.fake.calls == []
     assert counted(migrator) == {f"aio:org:{desk.a}": 2}  # llegaron al runtime: cuentan
+
+
+def test_the_counter_module_imports_nothing_from_apps() -> None:
+    """La vista del copiloto lo importa por una excepción del contrato de su ruta (pyproject.toml):
+    sin otro módulo de `apps`, no llega al gateway, la clave ni el interruptor. `core` ya no importa
+    `apps` (su contrato), así que basta con sus imports directos."""
+    tree = ast.parse((BACKEND / "apps/ai_gateway/throttle.py").read_text())
+    relative = [node for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) and node.level]
+    found = {node.module or "" for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)}
+    found |= {a.name for node in ast.walk(tree) if isinstance(node, ast.Import) for a in node.names}
+    assert found and not relative and not [n for n in found if n.split(".")[0] == "apps"]

@@ -89,14 +89,15 @@ def drafted(
     de la organización (F8-08m): DRF ya miró el permiso, así que un 403 no lo gasta; el runtime
     devuelve el pedido que rechaza sin llamar (`NotFound`)."""
     organization = request.tenant.organization_id  # la de la sesión, nunca la del cuerpo
-    if wait := throttle.organization_wait(organization):
+    wait, window = throttle.organization_wait(organization)
+    if wait:
         limited = ApiError(ORG_LIMITED, 429)
         limited.wait = wait  # el manejador de errores lo pasa a `Retry-After`
         raise limited
     try:
         return run(request.tenant, conversation_id)
     except copilot.NotFound:
-        throttle.organization_refund(organization)  # fuera de alcance: no cuenta
+        throttle.organization_refund(organization, window)  # fuera de alcance: no cuenta
         raise NotFound from None  # el mismo 404 que una conversación que no existe
     except copilot.CopilotError as stop:
         status = STATUS.get(stop.code, 500)
