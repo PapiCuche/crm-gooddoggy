@@ -189,6 +189,27 @@ describe("exclusión de la IA en el Inbox (F8-13b)", () => {
     expect(screen.queryByText("Excluida de la IA")).toBeNull();
   });
 
+  it("si la marca cambia con el código abierto, la pregunta sigue siendo la leída", async () => {
+    const s = server({ ai_excluded_at: "2026-11-21T10:00:00Z" }, STEP);
+    show(MANAGER);
+    await openChat();
+    fireEvent.click(await ask("Volver a incluir en la IA"));
+    const dialog = await screen.findByRole("dialog");
+    s.other(false); // otra persona la vuelve a incluir mientras se pide el código
+    fireEvent.click(screen.getByRole("button", { name: "Actualizar mensajes" }));
+    await waitFor(() => expect(screen.queryByText("Excluida de la IA")).toBeNull());
+    const group = screen.getByRole("group", { name: "Volver a incluir en la IA" });
+    expect(group).toHaveTextContent("¿Volver a incluir esta conversación en la IA?");
+    expect(group).not.toHaveTextContent("¿Excluir");
+    // Al cancelar el código, lo leído ya no vale: se cierra sin enviar nada más.
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancelar" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Otra persona cambió esta conversación",
+    );
+    expect(screen.queryByRole("group", { name: "Volver a incluir en la IA" })).toBeNull();
+    expect(s.calls(PUT)).toEqual([{ excluded: false, version: 1 }]);
+  });
+
   it("cancelar el segundo factor no cambia nada ni lo trata como un fallo", async () => {
     const s = server({ ai_excluded_at: "2026-11-21T10:00:00Z" }, STEP);
     show(MANAGER);
