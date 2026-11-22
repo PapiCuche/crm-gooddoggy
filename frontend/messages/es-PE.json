@@ -2626,7 +2626,8 @@
       "stale": "Otra persona cambió esta conversación. Actualiza y vuelve a intentarlo.",
       "denied": "No puedes cambiar esta conversación. Puede que ya no esté en tu alcance.",
       "stepUp": "Confirma tu identidad con un código de segundo factor para volver a incluirla.",
-      "busy": "La IA sigue respondiendo en esta conversación. No se cambió nada: vuelve a intentarlo en un momento."
+      "busy": "La IA sigue respondiendo en esta conversación. No se cambió nada: vuelve a intentarlo en un momento.",
+      "rowBusy": "La conversación está ocupada. No se cambió nada: vuelve a intentarlo en un momento."
     },
     "copilot": {
       "label": "Copiloto de IA",

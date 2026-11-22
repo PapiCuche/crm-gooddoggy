@@ -78,6 +78,7 @@ export function useAiExclusion(conversation: Conversation) {
     if (failure?.code === "CONVERSATION_VERSION_CONFLICT") return t("stale");
     if (failure?.code === STEP_UP_REQUIRED) return t("stepUp"); // la repetición también lo pidió
     if (failure?.code === "AI_CALL_IN_PROGRESS") return t("busy"); // F8-13c: nada cambió
+    if (failure?.code === "CONVERSATION_BUSY") return t("rowBusy"); // F8-13d: nada cambió
     if (failure?.status === 403 || failure?.status === 404) return t("denied");
     return errors(`api.${apiErrorKey(error)}`);
   };

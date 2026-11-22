@@ -455,15 +455,77 @@ def test_a_call_waits_for_an_exclusion_no_longer_than_its_run_and_the_row_wait_i
     assert desk.fake.calls == [] and migrator.execute(RUNS).fetchall() == [("AI_DEADLINE", 0)]
     gate.set()
     stopping.join(10)
-    monkeypatch.setattr(attention, "record", audit_record)
-    settings.AI_EXCLUSION_WAIT_SECONDS = 1  # el `lock_timeout` sigue para la fila
-    mark(desk, on=False)
-    with migrator.transaction(), pytest.raises(OperationalError):  # el 500, sin esperar sin fin
+
+
+AUDITED = "SELECT count(*) FROM audit_logs WHERE action = 'conversation.ai_excluded'"
+
+
+def test_the_row_gets_only_what_is_left_of_the_wait_and_a_busy_row_is_a_retryable_409(
+    desk: SimpleNamespace, migrator: DB, settings: Any
+) -> None:
+    """F8-13d: tras esperar 1,5 s a la llamada, la fila espera solo lo que queda de los 2 s
+    (nunca dos esperas enteras); si sigue bloqueada, 409 `CONVERSATION_BUSY` y nada cambia."""
+    settings.AI_EXCLUSION_WAIT_SECONDS = 2
+    held = threading.Event()
+
+    def hold() -> None:
+        with attention.ai_call(ctx(desk.a, desk.ana), desk.convo, 5):
+            held.set()
+            threading.Event().wait(1.5)  # `desk` sustituye `time.sleep`
+
+    version = migrator_version(desk)
+    with migrator.transaction():
         migrator.execute("SELECT 1 FROM conversations WHERE id = %s FOR UPDATE", [desk.convo])
+        holder = later(hold)
+        assert held.wait(10)
         started = time.monotonic()
-        put(desk)
-    assert time.monotonic() - started < 5
-    assert excluded_at(migrator, desk) is None
+        answer = put(desk)
+        took = time.monotonic() - started
+    holder.join(10)
+    assert (answer.status_code, answer.json()["code"]) == (409, "CONVERSATION_BUSY")
+    assert 1.4 < took < 2.8  # una espera de 2 s, no 1,5 + 2
+    assert excluded_at(migrator, desk) is None and migrator_version(desk) == version
+    assert migrator.execute(AUDITED).fetchone() == (0,)
+    assert put(desk).status_code == 200  # reintentar, ya libre
+
+
+def test_a_stale_version_is_refused_before_waiting_and_takes_no_waiting_slot(
+    desk: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F8-13d: con una llamada en curso, una versión vieja es 409 enseguida (sin esperar ni ocupar
+    el único hueco de espera)."""
+    w, outcome = in_flight(desk, monkeypatch), list[str]()
+    desk.fake.replies = [PLAIN]
+    asking = later(lambda: asked(desk, outcome))
+    assert w.inside.wait(10)
+    started = time.monotonic()
+    answer = send(signed(desk.ana), "put", f"{BASE}{desk.convo}/ai-exclusion/",
+                  {"excluded": True, "version": migrator_version(desk) + 1})  # fmt: skip
+    assert (answer.status_code, answer.json()["code"]) == (409, "CONVERSATION_VERSION_CONFLICT")
+    assert time.monotonic() - started < 1 and migrator.execute(WAITING).fetchone() == (0,)
+    w.gate.set()
+    asking.join(20)
+    assert outcome == ["OK"] and excluded_at(migrator, desk) is None
+
+
+def test_a_call_lock_whose_short_transaction_fails_after_taking_it_closes_the_connection(
+    desk: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F8-13d: el candado es de sesión; si su transacción corta falla después de tomarlo, la
+    conexión se cierra (la base lo suelta) y no queda retenido."""
+    real = attention._locked
+
+    def broken(*args: Any) -> None:
+        real(*args)
+        raise OperationalError("tras tomarlo")
+
+    monkeypatch.setattr(attention, "_locked", broken)
+    with pytest.raises(OperationalError), attention.ai_call(ctx(desk.a, desk.ana), desk.convo, 5):
+        pytest.fail("no entra")
+    assert connection.connection is None
+    assert migrator.execute(
+        "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory'"
+    ).fetchone() == (0,)
 
 
 def test_every_gateway_call_in_the_apps_passes_its_check() -> None:

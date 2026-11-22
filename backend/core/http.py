@@ -1,6 +1,7 @@
 """HTTP saliente anti-SSRF (B9): allowlist https, IP pública validada al conectar y fijada, sin
 redirects ni proxies. Único módulo con urllib3. Diseño: docs/architecture/storage-http.md. Única
-excepción (ADR-041): en el stack local, Graph va al simulador (`_simulated`)."""
+excepción (ADR-041): en el stack local, Graph va al simulador (`_simulated`). F8-13d: `before_send`,
+una comprobación del llamador ya conectado y antes de escribir nada (solo puede negar el envío)."""
 
 import contextvars
 import io
@@ -10,14 +11,14 @@ import socket
 import ssl
 import threading
 import time
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from typing import IO, Any
 from urllib.parse import urlsplit
 
 import urllib3
 from django.conf import settings
-from urllib3.connection import HTTPSConnection
+from urllib3.connection import HTTPConnection, HTTPSConnection
 from urllib3.connectionpool import HTTPConnectionPool, HTTPSConnectionPool
 
 HTTPError = urllib3.exceptions.HTTPError  # lo que lanza una petición que no llegó a respuesta
@@ -140,7 +141,47 @@ def _watch(sock: socket.socket) -> None:
         dog.watch(sock)
 
 
+class Withheld(Exception):  # noqa: N818 — la negativa del llamador, no un fallo de red
+    """`before_send` no dio `True` o falló: la conexión se abrió, pero no se escribió nada. No es
+    `HTTPError` ni `OSError`: urllib3 no la reintenta."""
+
+
+_before_send: contextvars.ContextVar[Callable[[], bool] | None] = contextvars.ContextVar(
+    "http_before_send", default=None
+)
+
+
+def _checked(conn: HTTPConnection) -> None:
+    """F8-13d: con la conexión abierta (TCP y TLS; la de http se abre aquí) y antes de la primera
+    línea de la petición, `before_send()`; en cada intento, también en una conexión reusada. Otra
+    cosa que `True`, o un error (sin su mensaje), es `Withheld`: no sale nada."""
+    if (check := _before_send.get()) is None:
+        return
+    if conn.sock is None:
+        conn.connect()
+    try:
+        passed = check() is True
+    except Exception:
+        passed = False
+    if not passed:
+        raise Withheld from None
+
+
+class _CheckedHTTPConnection(HTTPConnection):  # la del simulador local (ADR-041)
+    def request(self, *args: Any, **kwargs: Any) -> None:
+        _checked(self)
+        super().request(*args, **kwargs)
+
+
+class _SimulatorPool(HTTPConnectionPool):
+    ConnectionCls = _CheckedHTTPConnection
+
+
 class _GuardedHTTPSConnection(HTTPSConnection):
+    def request(self, *args: Any, **kwargs: Any) -> None:
+        _checked(self)
+        super().request(*args, **kwargs)
+
     def _new_conn(self) -> socket.socket:
         name = self._dns_host  # en urllib3, `host` (SNI, certificado, Host:) deriva de _dns_host
         self._dns_host = resolve_public(name, self.port)
@@ -176,7 +217,7 @@ _manager = urllib3.PoolManager(**_LIMITS)
 _manager.pool_classes_by_scheme = {"https": _GuardedPool}
 # ADR-041: el gestor del simulador local de Graph: solo http, con los mismos tiempos y reintentos.
 _simulator = urllib3.PoolManager(**_LIMITS)
-_simulator.pool_classes_by_scheme = {"http": HTTPConnectionPool}
+_simulator.pool_classes_by_scheme = {"http": _SimulatorPool}
 
 
 def _simulated(url: str) -> str | None:
@@ -203,7 +244,7 @@ def never_connected(error: BaseException) -> bool:
         inner = error.args[0] if error.args else None
         return isinstance(inner, ssl.SSLCertVerificationError)
     connect = (
-        BlockedDestination, urllib3.exceptions.ConnectTimeoutError,
+        BlockedDestination, Withheld, urllib3.exceptions.ConnectTimeoutError,
         urllib3.exceptions.NewConnectionError,
     )  # fmt: skip
     return isinstance(error, connect)
@@ -252,11 +293,13 @@ MAX_READ_SECONDS = 120.0
 def request(
     method: str, url: str, *, headers: dict[str, str] | None = None, body: bytes | None = None,
     json: Any = None, retry: bool = True, read_seconds: float | None = None,
+    before_send: Callable[[], bool] | None = None,
 ) -> urllib3.BaseHTTPResponse:  # fmt: skip
     """Sin `**kwargs`: no se pueden quitar timeouts ni el bloqueo de redirects. `retry=False` solo
     **quita** los reintentos (y la espera de `Retry-After`): para quien no puede esperar, como una
     prueba dentro de una petición web (F8-03b). `read_seconds` alarga la espera de lectura (un
-    modelo de IA responde en segundos, F8-05), como mucho hasta `MAX_READ_SECONDS`."""
+    modelo de IA responde en segundos, F8-05), como mucho hasta `MAX_READ_SECONDS`. `before_send`
+    (F8-13d): ver `_checked`; no quita ninguna comprobación, solo puede negar el envío."""
     check_url(url)
     _check_headers(headers)  # los nombres originales se envían tal cual: ya no hay prohibidos
     extra: dict[str, Any] = {} if retry else {"retries": NO_RETRY}
@@ -264,10 +307,14 @@ def request(
         read = min(max(read_seconds, 1.0), MAX_READ_SECONDS)
         extra["timeout"] = urllib3.Timeout(connect=5.0, read=read)
     target = _simulated(url)  # después de `check_url`: la URL de Graph cumple la política
-    reply = (_simulator if target else _manager).request(
-        method, target or url, headers=headers, body=body, json=json, redirect=False,
-        preload_content=False, **extra,
-    )  # fmt: skip
+    token = _before_send.set(before_send)
+    try:
+        reply = (_simulator if target else _manager).request(
+            method, target or url, headers=headers, body=body, json=json, redirect=False,
+            preload_content=False, **extra,
+        )  # fmt: skip
+    finally:
+        _before_send.reset(token)
     data = reply.read(MAX_RESPONSE + 1)  # nunca más de `MAX_RESPONSE` + 1 bytes en memoria
     reply.release_conn()
     if len(data) > MAX_RESPONSE:

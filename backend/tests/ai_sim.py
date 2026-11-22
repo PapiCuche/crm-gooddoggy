@@ -90,6 +90,10 @@ class FakeAnthropic:
         return status, json.dumps({"type": "error", "error": error}).encode()
 
 
+class Connected:
+    sock = object()  # ya conectada: `before_send` corre sin abrir nada
+
+
 class _Manager:
     def __init__(self, fake: FakeAnthropic) -> None:
         self.fake = fake
@@ -101,6 +105,7 @@ class _Manager:
             raise AssertionError(f"el simulador no atiende {urlsplit(url).hostname}")
         self.fake.retries.append(options.get("retries", "default"))  # el gestor real reintentaría
         self.fake.timeouts.append(options.get("timeout"))
+        http._checked(Connected())  # type: ignore[arg-type]  # F8-13d: como la conexión real
         self.fake.body = options.get("body")
         status, body = self.fake.handle(method, url, dict(headers or {}))
         reply_headers = {"request-id": self.fake.request_id, "content-type": "application/json"}

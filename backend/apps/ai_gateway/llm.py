@@ -124,6 +124,6 @@ class ProviderError(Exception):  # noqa: N818 — solo el código y si pudo fact
 class LLMProviderAdapter(Protocol):
     def encode(self, request: LLMRequest, params: dict[str, Any]) -> bytes: ...  # lo que se envía
 
-    def send(  # o ProviderError; `proceed()` antes de cada reintento: si no, no reenvía (F8-13c)
+    def send(  # o ProviderError; `proceed()` justo antes de cada envío: si no, nada sale (F8-13d)
         self, key: str, body: bytes, seconds: float, proceed: Callable[[], bool]
     ) -> LLMResponse: ...

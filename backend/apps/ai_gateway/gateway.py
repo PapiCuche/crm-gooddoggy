@@ -14,7 +14,8 @@ con tools (F8-05b7) se valida antes de todo; la cota suma lo que sus bytes no ac
 razonamiento reenviado y las imágenes (`turns.surplus`). Kill switch (F8-06, `AI_DISABLED`): el
 global antes de validar; el de la organización, primero en el scope. El ajuste no lo mira.
 F8-13c: `admit`, la comprobación opaca de quien llama, corre en la transacción de la reserva tras
-el interruptor y, en su scope, antes de cada reintento; `False` o error: ni reserva ni reenvío."""
+el interruptor y, en su scope, antes de cada envío (F8-13d: en `core.http`, ya conectado y antes de
+escribir nada; también el primero y cada reintento); `False` o error: ni reserva ni envío."""
 
 import time
 from collections.abc import Callable
@@ -134,7 +135,7 @@ def _settled(ctx: TenantContext, held: UUID, *args: Any) -> None:
 
 
 def _again(ctx: TenantContext, admit: Callable[[], bool] | None) -> Callable[[], bool]:
-    """Antes de cada reintento: `admit` en su propio scope; un error no reenvía (falla cerrado)."""
+    """Antes de cada envío: `admit` en su propio scope; un error no envía nada (falla cerrado)."""
 
     def proceed() -> bool:
         if admit is None:
