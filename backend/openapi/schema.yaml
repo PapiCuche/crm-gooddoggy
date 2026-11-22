@@ -778,6 +778,108 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/ai/handoff-reply/:
+    get:
+      operationId: ai_handoff_reply_retrieve
+      description: 'El texto de traspaso que propone el copiloto (`ai.manage` y segundo
+        factor reciente): el de la organización o, sin él, el inicial. No cuenta en
+        el tope por persona de las escrituras.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - ai
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AiHandoffReply'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+    put:
+      operationId: ai_handoff_reply_update
+      description: 'Cambia el texto de traspaso de la organización (`ai.manage` y
+        segundo factor reciente) y lo audita (`ai.handoff_reply.changed`, sin el texto).
+        400 en `text`: un código y un mensaje por problema (`BODY`, `TOO_LONG`, `SCRIPT`,
+        `SOON`, `FIGURE`, `DELIVERY`, `DISCOUNT`, `AVAILABILITY`, `TERMS`, `LINK`,
+        `MARKUP`); nunca repite lo enviado. 429 `RATE_LIMITED`: el tope por persona
+        de las escrituras, con `Retry-After`.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - ai
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AiHandoffReplyWriteRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AiHandoffReply'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/ai/provider-accounts/:
     get:
       operationId: ai_provider_accounts_list
@@ -12512,6 +12614,35 @@ components:
       required:
       - daily_usd
       - monthly_usd
+    AiHandoffReply:
+      type: object
+      properties:
+        text:
+          type: string
+          description: Lo que el copiloto propone cuando piden una persona.
+        initial:
+          type: boolean
+          description: 'true: el inicial del propietario (sin texto guardado, o el
+            guardado ya no vale).'
+        changed_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: 'Último cambio; null: nunca.'
+      required:
+      - changed_at
+      - initial
+      - text
+    AiHandoffReplyWriteRequest:
+      type: object
+      properties:
+        text:
+          type: string
+          minLength: 1
+          description: De 1 a 500 caracteres, sin cifras, plazos, prisas, promesas,
+            enlaces ni la marca.
+      required:
+      - text
     AiProviderAccount:
       type: object
       properties:

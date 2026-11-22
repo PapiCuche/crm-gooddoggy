@@ -25,6 +25,8 @@ import type {
   AddStageRequest,
   AiBudget,
   AiBudgetWriteRequest,
+  AiHandoffReply,
+  AiHandoffReplyWriteRequest,
   AiProviderAccount,
   AiProviderAccountCreateRequest,
   AiProviderKeyRequest,
@@ -2279,6 +2281,246 @@ export const useAiBudgetUpdate = <TError = ErrorType<Error>, TContext = unknown>
   TContext
 > => {
   return useMutation(getAiBudgetUpdateMutationOptions(options), queryClient);
+};
+
+export const getAiHandoffReplyRetrieveUrl = (orgSlug: string) => {
+  return `/api/v1/o/${orgSlug}/ai/handoff-reply/`;
+};
+
+/**
+ * El texto de traspaso que propone el copiloto (`ai.manage` y segundo factor reciente): el de la organización o, sin él, el inicial. No cuenta en el tope por persona de las escrituras.
+ */
+export const aiHandoffReplyRetrieve = async (
+  orgSlug: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<AiHandoffReply> => {
+  return apiFetch<AiHandoffReply>(getAiHandoffReplyRetrieveUrl(orgSlug), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getAiHandoffReplyRetrieveQueryKey = (orgSlug: string) => {
+  return [`/api/v1/o/${orgSlug}/ai/handoff-reply/`] as const;
+};
+
+export const getAiHandoffReplyRetrieveQueryOptions = <
+  TData = Awaited<ReturnType<typeof aiHandoffReplyRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof aiHandoffReplyRetrieve>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getAiHandoffReplyRetrieveQueryKey(orgSlug);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof aiHandoffReplyRetrieve>>> = ({ signal }) =>
+    aiHandoffReplyRetrieve(orgSlug, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: orgSlug !== null && orgSlug !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof aiHandoffReplyRetrieve>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type AiHandoffReplyRetrieveQueryResult = NonNullable<
+  Awaited<ReturnType<typeof aiHandoffReplyRetrieve>>
+>;
+export type AiHandoffReplyRetrieveQueryError = ErrorType<Error>;
+
+export function useAiHandoffReplyRetrieve<
+  TData = Awaited<ReturnType<typeof aiHandoffReplyRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof aiHandoffReplyRetrieve>>, TError, TData>
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof aiHandoffReplyRetrieve>>,
+          TError,
+          Awaited<ReturnType<typeof aiHandoffReplyRetrieve>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useAiHandoffReplyRetrieve<
+  TData = Awaited<ReturnType<typeof aiHandoffReplyRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof aiHandoffReplyRetrieve>>, TError, TData>
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof aiHandoffReplyRetrieve>>,
+          TError,
+          Awaited<ReturnType<typeof aiHandoffReplyRetrieve>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useAiHandoffReplyRetrieve<
+  TData = Awaited<ReturnType<typeof aiHandoffReplyRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof aiHandoffReplyRetrieve>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function useAiHandoffReplyRetrieve<
+  TData = Awaited<ReturnType<typeof aiHandoffReplyRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof aiHandoffReplyRetrieve>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getAiHandoffReplyRetrieveQueryOptions(orgSlug, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+export const getAiHandoffReplyUpdateUrl = (orgSlug: string) => {
+  return `/api/v1/o/${orgSlug}/ai/handoff-reply/`;
+};
+
+/**
+ * Cambia el texto de traspaso de la organización (`ai.manage` y segundo factor reciente) y lo audita (`ai.handoff_reply.changed`, sin el texto). 400 en `text`: un código y un mensaje por problema (`BODY`, `TOO_LONG`, `SCRIPT`, `SOON`, `FIGURE`, `DELIVERY`, `DISCOUNT`, `AVAILABILITY`, `TERMS`, `LINK`, `MARKUP`); nunca repite lo enviado. 429 `RATE_LIMITED`: el tope por persona de las escrituras, con `Retry-After`.
+ */
+export const aiHandoffReplyUpdate = async (
+  orgSlug: string,
+  aiHandoffReplyWriteRequest: AiHandoffReplyWriteRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<AiHandoffReply> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<AiHandoffReply>(getAiHandoffReplyUpdateUrl(orgSlug), {
+    ...options,
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(aiHandoffReplyWriteRequest),
+  });
+};
+
+export const getAiHandoffReplyUpdateMutationKey = () => ["aiHandoffReplyUpdate"] as const;
+
+export const getAiHandoffReplyUpdateMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof aiHandoffReplyUpdate>>,
+    TError,
+    AiHandoffReplyUpdateMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof aiHandoffReplyUpdate>>,
+  TError,
+  AiHandoffReplyUpdateMutationVariables,
+  TContext
+> => {
+  const mutationKey = getAiHandoffReplyUpdateMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof aiHandoffReplyUpdate>>,
+    AiHandoffReplyUpdateMutationVariables
+  > = (props) => {
+    const { orgSlug, data } = props ?? {};
+
+    return aiHandoffReplyUpdate(orgSlug, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type AiHandoffReplyUpdateMutationResult = NonNullable<
+  Awaited<ReturnType<typeof aiHandoffReplyUpdate>>
+>;
+export type AiHandoffReplyUpdateMutationBody = AiHandoffReplyWriteRequest;
+export type AiHandoffReplyUpdateMutationError = ErrorType<Error>;
+export type AiHandoffReplyUpdateMutationVariables = {
+  orgSlug: string;
+  data: AiHandoffReplyWriteRequest;
+};
+
+export const useAiHandoffReplyUpdate = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof aiHandoffReplyUpdate>>,
+      TError,
+      AiHandoffReplyUpdateMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof aiHandoffReplyUpdate>>,
+  TError,
+  AiHandoffReplyUpdateMutationVariables,
+  TContext
+> => {
+  return useMutation(getAiHandoffReplyUpdateMutationOptions(options), queryClient);
 };
 
 export const getAiProviderAccountsListUrl = (orgSlug: string) => {

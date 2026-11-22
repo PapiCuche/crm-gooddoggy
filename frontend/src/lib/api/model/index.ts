@@ -12,6 +12,8 @@ export * from "./addStageRequest";
 export * from "./addStageRequestRequiresFields";
 export * from "./aiBudget";
 export * from "./aiBudgetWriteRequest";
+export * from "./aiHandoffReply";
+export * from "./aiHandoffReplyWriteRequest";
 export * from "./aiProviderAccount";
 export * from "./aiProviderAccountCreateRequest";
 export * from "./aiProviderAccountStatusEnum";

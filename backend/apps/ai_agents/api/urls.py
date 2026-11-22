@@ -1,6 +1,6 @@
 from django.urls import path
 
-from apps.ai_agents.api import views
+from apps.ai_agents.api import handoff, views
 
 urlpatterns = [
     path(  # sin el scope de la petición: `UNSCOPED` en `core.tenancy.middleware` (F8-08h)
@@ -18,4 +18,6 @@ urlpatterns = [
         views.InsertView.as_view(),
         name="copilot-suggestion-insert",
     ),
+    # F8-08l: el texto de traspaso, en el scope de la petición como cualquier ruta de tenant
+    path("ai/handoff-reply/", handoff.HandoffReplyView.as_view(), name="ai-handoff-reply"),
 ]

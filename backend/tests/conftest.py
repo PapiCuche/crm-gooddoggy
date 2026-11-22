@@ -91,6 +91,7 @@ TENANT_TABLES = (*TENANT_TABLES[:2], "ai_budget_daily_usage", *TENANT_TABLES[2:]
 TENANT_TABLES = ("ai_switches", *TENANT_TABLES)  # F8-06: a la organización y las membresías
 # F8-08b: el registro del copiloto, delante de las conversaciones y las membresías
 TENANT_TABLES = ("ai_suggestions", "ai_actions", "ai_runs", *TENANT_TABLES)
+TENANT_TABLES = ("ai_handoff_replies", *TENANT_TABLES)  # F8-08l: a la organización y membresías
 PLATFORM_AUDIT = "platform_audit_logs"  # F2-10: platform-owned, la limpia el migrador
 
 

@@ -22,7 +22,7 @@ from django.conf import settings
 from django.db import connections
 
 from apps.access.selectors import AccessDenied, execution_context, has_permission, scoped
-from apps.ai_agents import context, detectors, guard, records, registry
+from apps.ai_agents import context, detectors, guard, records, registry, replies
 from apps.ai_agents.context import Purpose
 from apps.ai_agents.registry import Evidence
 from apps.ai_gateway import gateway
@@ -179,8 +179,9 @@ def _verdict(
         rendered = guard.Rendered(VERIFY_MARK, (guard.Finding("MALFORMED", *WHOLE),), (), False,
                                   None, (WHOLE,))  # fmt: skip
         why = guard.Malformed.FEEDBACK
-    draft, handoff = detectors.suggestion(rendered, customer)
-    if handoff.requested:  # el texto fijo: nada que reintentar
+    # con traspaso, el texto de la organización (F8-08l), leído solo entonces en su scope corto
+    draft, handoff = detectors.suggestion(rendered, customer, lambda: replies.current(ctx))
+    if handoff.requested:  # el texto de traspaso: nada que reintentar
         return draft, handoff, ""
     hits = [f"{f.type} {f.start}-{f.end}" for f in draft.findings if f.type in detectors.PATTERNS]
     lines = (why, draft.feedback(), HITS.format(", ".join(hits)) if hits else "")
