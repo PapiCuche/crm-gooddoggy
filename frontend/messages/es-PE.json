@@ -68,6 +68,11 @@
       "label": "Secciones de clientes",
       "list": "Clientes",
       "tags": "Etiquetas"
+    },
+    "ai": {
+      "label": "Secciones de inteligencia artificial",
+      "provider": "Proveedor y estado",
+      "handoff": "Texto de traspaso"
     }
   },
   "audit": {
@@ -2837,6 +2842,43 @@
     "verify": "Confirmar con mi código",
     "empty": "Todavía no hay ninguna clave guardada.",
     "missing": "No encontramos el proveedor de IA de esta organización. Recarga la página.",
+    "handoff": {
+      "title": "Texto de traspaso",
+      "intro": "Lo que el copiloto propone a quien atiende cuando un cliente de {organization} pide hablar con una persona. Quien atiende lo revisa y lo envía; nunca sale solo.",
+      "loading": "Cargando el texto de traspaso…",
+      "stepUp": "Para ver o cambiar el texto de traspaso, confirma tu identidad con un código de segundo factor.",
+      "label": "Texto que propone el copiloto",
+      "initial": "Texto inicial",
+      "custom": "Texto propio",
+      "initialNote": "Es el texto inicial de Good Doggy: el copiloto lo propone mientras la organización no guarde uno propio.",
+      "invalidNote": "El texto guardado ya no cumple las reglas: el copiloto propone el inicial hasta que guardes uno nuevo.",
+      "customNote": "El copiloto propone este texto de la organización.",
+      "changed": "Último cambio:",
+      "count": "{count} de {max} caracteres",
+      "over": "{count} de {max} caracteres: sobran {over}",
+      "note": "Nunca prometas atención inmediata ni rápida (como «enseguida», «pronto» o «en unos minutos»): una persona continuará la conversación cuando pueda. Tampoco incluyas cifras, plazos, precios, ofertas, stock, condiciones ni enlaces.",
+      "save": "Guardar texto",
+      "busy": "Guardando…",
+      "discard": "Descartar cambios",
+      "saved": "El texto quedó guardado. El copiloto lo propondrá desde ahora.",
+      "unchanged": "No hay cambios que guardar.",
+      "problemsTitle": "Corrige el texto antes de guardarlo:",
+      "problems": {
+        "EMPTY": "Escribe el texto de traspaso.",
+        "BODY": "Usa solo texto visible, sin caracteres ocultos ni de control.",
+        "TOO_LONG": "Usa como mucho {max} caracteres.",
+        "SCRIPT": "Usa solo letras del alfabeto latino.",
+        "SOON": "No prometas atención inmediata ni rápida (como «enseguida», «pronto» o «en unos minutos»).",
+        "FIGURE": "Quita las cifras, importes y monedas.",
+        "DELIVERY": "Quita los plazos, fechas, horarios y entregas.",
+        "DISCOUNT": "Quita los descuentos, ofertas y comparaciones de precio.",
+        "AVAILABILITY": "No hables de stock ni de disponibilidad de productos.",
+        "TERMS": "Quita las condiciones de pago, garantías, cambios y devoluciones.",
+        "LINK": "Quita los enlaces, dominios y correos.",
+        "MARKUP": "Quita las llaves y la marca [verificar].",
+        "OTHER": "El texto lleva algo que el copiloto no puede proponer. Revísalo."
+      }
+    },
     "switch": {
       "title": "Estado de la IA",
       "intro": "Apagarla corta las siguientes llamadas de {organization} al proveedor de IA; la que ya estaba en curso termina. No afecta a los canales ni al Inbox.",

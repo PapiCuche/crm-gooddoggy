@@ -48,7 +48,7 @@ export const NAVIGATION: readonly NavigationItem[] = [
       (code) => `prices.${code}`,
     ),
   },
-  { key: "ai", path: "/ia", anyOf: ["ai.manage", "ai.kill_switch"] }, // el Supervisor solo apaga
+  { key: "ai", path: "/ia", section: "/ia", anyOf: ["ai.manage", "ai.kill_switch"] }, // el Supervisor solo apaga
   { key: "audit", path: "/auditoria", permission: "audit.view" },
 ];
 
