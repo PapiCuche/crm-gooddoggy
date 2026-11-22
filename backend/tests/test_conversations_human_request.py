@@ -286,3 +286,18 @@ def test_resolving_or_closing_the_conversation_closes_the_request(
                          resolved_at=timezone.now())  # fmt: skip
     assert state(inbox.a, other) == (None, None, None)
     assert trail(migrator)[-1][3] == {"cause": "CLOSED"}
+
+
+@pytest.mark.usefixtures("real_stack")
+def test_a_handoff_found_while_summarizing_is_recorded_too(
+    desk: SimpleNamespace, migrator: DB
+) -> None:
+    say(desk, "quiero hablar con una persona")
+    desk.fake.replies = [[{"type": "text", "text": "Pide hablar con una persona."}]]
+    summary = send(
+        signed(desk.ana), "post", COPILOT.replace("suggest", "summary").format(desk.convo), {}
+    )
+    assert summary.status_code == 201, summary.content
+    run = migrator.execute("SELECT id FROM ai_runs WHERE purpose = 'SUMMARY'").fetchone()
+    assert run is not None and state(desk.a, desk.convo)[:2] == ("ASKED_FOR_PERSON", desk.ana.pk)
+    assert trail(migrator)[0][3] == {"reason": "ASKED_FOR_PERSON", "ai_run_id": str(run[0])}
