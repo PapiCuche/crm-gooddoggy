@@ -8,7 +8,7 @@ nunca texto del modelo ni del cliente); `records.save` al final. Un error a mita
 su código y sin borrador; cualquier otro fallo (la base, su `statement_timeout`, una tool o un
 error nuestro), como `INTERNAL_ERROR` con sus reservas (F8-08g2): ninguna llamada pagada sin su
 run. Tools fijadas por el código; organización y persona de `ctx`; el log lleva solo el
-`ai_run_id`, códigos y duraciones."""
+`ai_run_id`, códigos y duraciones. «Resumir» (`summarize`, F8-08i) es lo mismo sin tools."""
 
 import json
 import re
@@ -43,6 +43,9 @@ LIMITED = '{"error":{"code":"TOOL_LIMIT"},"ok":false}'  # el sobre de error de `
 FINISH = "Ya no quedan llamadas a herramientas: responde ahora con la salida estructurada."
 HITS = "Tramos sin evidencia del texto renderizado (tipo y posición); quítalos o usa claims: {}"
 WHOLE = (0, len(VERIFY_MARK))
+SUMMARY_CALLS = 2  # el resumen, sin tools: una llamada y su reintento
+SHORTER = (f"El resumen llegó vacío, con caracteres de control o con más de {TEXT_MAX} caracteres: "
+           "responde solo con un resumen más corto, en texto plano.")  # fmt: skip
 TOOL_USE_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")  # el CHECK de `ai_actions.tool_use_id`
 
 
@@ -79,7 +82,9 @@ class _State:  # lo que se registra, también si la invocación se corta
     retried: bool = False
 
 
-def _prepare(ctx: TenantContext, conversation_id: UUID) -> tuple[LLMRequest, tuple[str, ...]]:
+def _prepare(
+    ctx: TenantContext, conversation_id: UUID, purpose: Purpose
+) -> tuple[LLMRequest, tuple[str, ...]]:
     """El scope corto de preparación: la persona, sus permisos, el alcance y el contexto."""
     with tenant_scope(ctx):
         try:
@@ -89,7 +94,7 @@ def _prepare(ctx: TenantContext, conversation_id: UUID) -> tuple[LLMRequest, tup
         mine = scoped(ectx, "conversations.view", Conversation.objects.filter(pk=conversation_id))
         if not has_permission(ectx, "ai.use") or not mine.exists():
             raise NotFound
-        request = context.build(ctx, conversation_id, Purpose.SUGGEST)
+        request = context.build(ctx, conversation_id, purpose)
         return request, context.customer_since_reply(ctx, conversation_id)
 
 
@@ -226,8 +231,9 @@ def _save(
     _reconnect()
     ms = int((time.monotonic() - started) * 1000)
     counts = Counter(finding.type for finding in kept.findings) if kept else Counter[str]()
-    run = records.Run("SUGGEST", state.conversation_id, outcome, ms, counts,
-                      tuple(state.reservations), state.retried, handoff)  # fmt: skip
+    summary = state.request.purpose == Purpose.SUMMARY
+    run = records.Run("SUMMARY" if summary else "SUGGEST", state.conversation_id, outcome, ms,
+                      counts, tuple(state.reservations), state.retried, handoff)  # fmt: skip
     try:
         records.save(ctx, run, state.actions, kept)
     except Exception as error:  # nunca su mensaje: puede llevar valores de la fila
@@ -240,25 +246,67 @@ def _save(
     return run.id
 
 
+def _suggested(
+    ctx: TenantContext, state: _State, customer: tuple[str, ...]
+) -> tuple[records.Suggestion, str | None]:
+    draft, handoff = _answer(ctx, state, customer)
+    return _kept(draft), handoff.reason
+
+
+def _summarized(
+    ctx: TenantContext, state: _State, customer: tuple[str, ...]
+) -> tuple[records.Suggestion, str | None]:
+    """El resumen (§7): sin tools ni esquema. Un texto vacío, con lo que la base no guarda o más
+    largo que `TEXT_MAX` se pide **una** vez más (la misma petición con el motivo fijo, nunca su
+    texto); dos veces, `AI_MALFORMED`. Se marca con `detectors.mark`, sin sustituir nada, y el
+    traspaso sale solo de lo que escribió el cliente: el resumen no tiene `wants_handoff`."""
+    [asked] = state.request.turns
+    while True:
+        text = _call(ctx, state).text.strip()
+        if text and len(text) <= TEXT_MAX and not guard.UNSTORABLE.search(text):
+            break
+        if state.retried:
+            raise CopilotError("AI_MALFORMED")
+        state.retried = True  # una sola vez, con su propia reserva
+        state.request = replace(
+            state.request, turns=(Turn("user", f"{asked.content}\n\n{SHORTER}"),)
+        )
+    marks = tuple(records.Finding(f.type, f.start, f.end) for f in detectors.mark(text))
+    return records.Suggestion(text, marks), detectors.handoff(customer, False).reason
+
+
+def _invoke(ctx: TenantContext, conversation_id: UUID, purpose: Purpose) -> Draft:
+    if connections["default"].in_atomic_block:
+        raise RuntimeError(f"{purpose.lower()}() abre scopes cortos: ninguna transacción abierta")
+    started = time.monotonic()
+    tool_calls, seconds = context.caps()
+    request, customer = _prepare(ctx, conversation_id, purpose)
+    summary = purpose == Purpose.SUMMARY
+    tools = 0 if summary else tool_calls
+    state = _State(conversation_id, request, started + seconds, tools,
+                   SUMMARY_CALLS if summary else tools + EXTRA_CALLS)  # fmt: skip
+    try:
+        answer = _summarized if summary else _suggested
+        kept, handoff = answer(ctx, state, customer)
+        run_id = _save(ctx, state, "OK", started, kept, handoff)
+    except CopilotError as stop:
+        raise CopilotError(stop.code, _save(ctx, state, stop.code, started)) from None
+    except Exception:  # la base, una tool o un error nuestro: el run sin borrador, con sus reservas
+        raise CopilotError("INTERNAL_ERROR", _save(ctx, state, "INTERNAL_ERROR", started)) from None
+    return Draft(run_id, kept.id, kept.text, kept.findings, handoff,
+                 kept.evidence_expires_at)  # fmt: skip
+
+
 def suggest(ctx: TenantContext, conversation_id: UUID) -> Draft:
     """Sugiere la respuesta de quien atiende `conversation_id`. Se llama **fuera** de toda
     transacción. `NotFound` sin escribir ni llamar; `CopilotError` con el código del gateway,
     `AI_DEADLINE`, `AI_TURN_INVALID` o `INTERNAL_ERROR`, con el run ya registrado; si ni ese
     registro se puede guardar, el error de la base."""
-    if connections["default"].in_atomic_block:
-        raise RuntimeError("suggest() abre scopes cortos: ninguna transacción puede estar abierta")
-    started = time.monotonic()
-    tool_calls, seconds = context.caps()
-    request, customer = _prepare(ctx, conversation_id)
-    state = _State(conversation_id, request, started + seconds, tool_calls,
-                   tool_calls + EXTRA_CALLS)  # fmt: skip
-    try:
-        draft, handoff = _answer(ctx, state, customer)
-        kept = _kept(draft)
-        run_id = _save(ctx, state, "OK", started, kept, handoff.reason)
-    except CopilotError as stop:
-        raise CopilotError(stop.code, _save(ctx, state, stop.code, started)) from None
-    except Exception:  # la base, una tool o un error nuestro: el run sin borrador, con sus reservas
-        raise CopilotError("INTERNAL_ERROR", _save(ctx, state, "INTERNAL_ERROR", started)) from None
-    return Draft(run_id, kept.id, kept.text, kept.findings, handoff.reason,
-                 kept.evidence_expires_at)  # fmt: skip
+    return _invoke(ctx, conversation_id, Purpose.SUGGEST)
+
+
+def summarize(ctx: TenantContext, conversation_id: UUID) -> Draft:
+    """Resume `conversation_id` para quien atiende (F8-08i), con los mismos scopes, permisos,
+    plazo, errores y registro que `suggest`; sin tools. El texto es el del modelo con sus marcas
+    (`findings`: tipo y tramo), nunca para insertar; `expires_at` siempre es `None`."""
+    return _invoke(ctx, conversation_id, Purpose.SUMMARY)

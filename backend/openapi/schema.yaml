@@ -3601,8 +3601,8 @@ paths:
         404: fuera de alcance, de otra organización o inexistente. 409 `AI_DISABLED`,
         `AI_NOT_CONFIGURED`, `AI_BUDGET_NOT_SET` o `AI_BUDGET_EXHAUSTED`. 502 `PROVIDER_UNAVAILABLE`,
         `PROVIDER_ERROR`, `CREDENTIALS_REJECTED`, `PROVIDER_BILLING`, `AI_MALFORMED`
-        o `AI_TURN_INVALID`. 504 `AI_DEADLINE`. 429 `RATE_LIMITED`: el tope por persona,
-        con `Retry-After`.'
+        o `AI_TURN_INVALID`. 504 `AI_DEADLINE`. 429 `RATE_LIMITED`: el tope por persona
+        (uno para sugerir y resumir), con `Retry-After`.'
       parameters:
       - in: path
         name: conversation_id
@@ -3625,6 +3625,84 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CopilotSuggestion'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '502':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '504':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/conversations/{conversation_id}/copilot/summary/:
+    post:
+      operationId: conversations_copilot_summary
+      description: 'Pide al copiloto un resumen de la conversación para quien atiende
+        (`conversations.view` con su alcance y `ai.use`; 403 `PERMISSION_DENIED` sin
+        uno de los dos), sin herramientas. Se muestra «Generado por IA», con sus cifras,
+        términos y enlaces marcados «sin verificar» (`marks`), y no se inserta en
+        el compositor. No envía nada: se guarda y se audita (`ai.summary.created`).
+        404: fuera de alcance, de otra organización o inexistente. 409 `AI_DISABLED`,
+        `AI_NOT_CONFIGURED`, `AI_BUDGET_NOT_SET` o `AI_BUDGET_EXHAUSTED`. 502 `PROVIDER_UNAVAILABLE`,
+        `PROVIDER_ERROR`, `CREDENTIALS_REJECTED`, `PROVIDER_BILLING`, `AI_MALFORMED`
+        o `AI_TURN_INVALID`. 504 `AI_DEADLINE`. 429 `RATE_LIMITED`: el tope por persona
+        (uno para sugerir y resumir), con `Retry-After`.'
+      parameters:
+      - in: path
+        name: conversation_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - ai
+      security:
+      - sessionCookie: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CopilotSummary'
           description: ''
         '401':
           content:
@@ -13571,7 +13649,8 @@ components:
       properties:
         requested:
           type: boolean
-          description: 'El cliente pide una persona: `text` es fijo.'
+          description: El cliente pide una persona; en la sugerencia, `text` es el
+            texto fijo.
         reason:
           type: string
           nullable: true
@@ -13579,6 +13658,22 @@ components:
       required:
       - reason
       - requested
+    CopilotMark:
+      type: object
+      properties:
+        type:
+          type: string
+          description: Qué se marca «sin verificar» (`FIGURE`, `LINK`…).
+        start:
+          type: integer
+          description: Índice del tramo en `text` (code points).
+        end:
+          type: integer
+          description: Fin (exclusivo) del tramo.
+      required:
+      - end
+      - start
+      - type
     CopilotPosition:
       type: object
       properties:
@@ -13617,6 +13712,31 @@ components:
       - findings
       - handoff
       - id
+      - text
+    CopilotSummary:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: El resumen guardado.
+        text:
+          type: string
+          description: El resumen, sin sustituir nada; no se inserta.
+        marks:
+          type: array
+          items:
+            $ref: '#/components/schemas/CopilotMark'
+        handoff:
+          $ref: '#/components/schemas/CopilotHandoff'
+        generated_by_ai:
+          type: boolean
+          description: 'Siempre true: «Generado por IA».'
+      required:
+      - generated_by_ai
+      - handoff
+      - id
+      - marks
       - text
     Cost:
       type: object
