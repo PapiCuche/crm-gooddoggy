@@ -320,6 +320,7 @@ def test_only_the_context_may_reach_the_message_selector_past_the_import_contrac
         "apps.ai_agents.records -> apps.audit.services",
         "apps.ai_agents.context -> apps.conversations.selectors",
         "apps.ai_agents.copilot -> apps.ai_gateway.gateway",  # F8-08g: el modelo, por el gateway
+        "apps.ai_agents.copilot -> apps.conversations.attention",  # F8-08n: el traspaso
     ]
     # y como esa excepción vale para todo el grafo, solo el arranque importa `context`
     [guard] = [c for c in contracts if c.get("protected_modules") == ["apps.ai_agents.context"]]

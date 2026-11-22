@@ -23,6 +23,7 @@ from apps.access.permissions import ScopeFilter, request_context
 from apps.access.selectors import scoped
 from apps.contacts.selectors import contacts
 from apps.conversations import selectors
+from apps.conversations.api.attention import human_request
 from apps.conversations.models import Conversation, Platform, Status
 from core.api.pagination import RecencyPagination
 from core.api.schema import errors
@@ -73,6 +74,7 @@ class ConversationSerializer(serializers.Serializer[Any]):
         help_text="Instagram o Messenger: desde cuándo otra app controla el hilo (`standby`); "
         "`null` si no. Mientras tanto nada responde solo (ADR-035 §4).",
     )
+    human_request = human_request()  # F8-08n
     version = serializers.IntegerField()
 
 

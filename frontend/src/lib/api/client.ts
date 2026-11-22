@@ -69,6 +69,7 @@ import type {
   DiscountPolicySetRequest,
   Error,
   GrantScopeRequest,
+  HumanRequestState,
   InventoryImportsRowsListParams,
   InventoryLevelsListParams,
   InventoryMovementsListParams,
@@ -7488,6 +7489,183 @@ export const useConversationsCopilotSuggest = <TError = ErrorType<Error>, TConte
   TContext
 > => {
   return useMutation(getConversationsCopilotSuggestMutationOptions(options), queryClient);
+};
+
+export const getConversationHumanRequestCreateUrl = (orgSlug: string, conversationId: string) => {
+  return `/api/v1/o/${orgSlug}/conversations/${conversationId}/human-request/`;
+};
+
+/**
+ * Pide que una persona atienda la conversación (`conversations.view` sobre ella; motivo `AGENT`). Si ya hay una abierta, la devuelve sin cambiarla. No envía nada al cliente ni la asigna. 409 `CONVERSATION_CLOSED`. 404: no existe o fuera del alcance.
+ */
+export const conversationHumanRequestCreate = async (
+  orgSlug: string,
+  conversationId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<HumanRequestState> => {
+  return apiFetch<HumanRequestState>(
+    getConversationHumanRequestCreateUrl(orgSlug, conversationId),
+    {
+      ...options,
+      method: "POST",
+    },
+  );
+};
+
+export const getConversationHumanRequestCreateMutationKey = () =>
+  ["conversationHumanRequestCreate"] as const;
+
+export const getConversationHumanRequestCreateMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof conversationHumanRequestCreate>>,
+    TError,
+    ConversationHumanRequestCreateMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof conversationHumanRequestCreate>>,
+  TError,
+  ConversationHumanRequestCreateMutationVariables,
+  TContext
+> => {
+  const mutationKey = getConversationHumanRequestCreateMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof conversationHumanRequestCreate>>,
+    ConversationHumanRequestCreateMutationVariables
+  > = (props) => {
+    const { orgSlug, conversationId } = props ?? {};
+
+    return conversationHumanRequestCreate(orgSlug, conversationId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ConversationHumanRequestCreateMutationResult = NonNullable<
+  Awaited<ReturnType<typeof conversationHumanRequestCreate>>
+>;
+
+export type ConversationHumanRequestCreateMutationError = ErrorType<Error>;
+export type ConversationHumanRequestCreateMutationVariables = {
+  orgSlug: string;
+  conversationId: string;
+};
+
+export const useConversationHumanRequestCreate = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof conversationHumanRequestCreate>>,
+      TError,
+      ConversationHumanRequestCreateMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof conversationHumanRequestCreate>>,
+  TError,
+  ConversationHumanRequestCreateMutationVariables,
+  TContext
+> => {
+  return useMutation(getConversationHumanRequestCreateMutationOptions(options), queryClient);
+};
+
+export const getConversationHumanRequestCloseUrl = (orgSlug: string, conversationId: string) => {
+  return `/api/v1/o/${orgSlug}/conversations/${conversationId}/human-request/`;
+};
+
+/**
+ * Cierra la solicitud (`conversations.view` sobre la conversación). Sin solicitud abierta no cambia nada. 404: no existe o fuera del alcance.
+ */
+export const conversationHumanRequestClose = async (
+  orgSlug: string,
+  conversationId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<HumanRequestState> => {
+  return apiFetch<HumanRequestState>(getConversationHumanRequestCloseUrl(orgSlug, conversationId), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getConversationHumanRequestCloseMutationKey = () =>
+  ["conversationHumanRequestClose"] as const;
+
+export const getConversationHumanRequestCloseMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof conversationHumanRequestClose>>,
+    TError,
+    ConversationHumanRequestCloseMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof conversationHumanRequestClose>>,
+  TError,
+  ConversationHumanRequestCloseMutationVariables,
+  TContext
+> => {
+  const mutationKey = getConversationHumanRequestCloseMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof conversationHumanRequestClose>>,
+    ConversationHumanRequestCloseMutationVariables
+  > = (props) => {
+    const { orgSlug, conversationId } = props ?? {};
+
+    return conversationHumanRequestClose(orgSlug, conversationId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ConversationHumanRequestCloseMutationResult = NonNullable<
+  Awaited<ReturnType<typeof conversationHumanRequestClose>>
+>;
+
+export type ConversationHumanRequestCloseMutationError = ErrorType<Error>;
+export type ConversationHumanRequestCloseMutationVariables = {
+  orgSlug: string;
+  conversationId: string;
+};
+
+export const useConversationHumanRequestClose = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof conversationHumanRequestClose>>,
+      TError,
+      ConversationHumanRequestCloseMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof conversationHumanRequestClose>>,
+  TError,
+  ConversationHumanRequestCloseMutationVariables,
+  TContext
+> => {
+  return useMutation(getConversationHumanRequestCloseMutationOptions(options), queryClient);
 };
 
 export const getConversationMediaSendUrl = (orgSlug: string, conversationId: string) => {
