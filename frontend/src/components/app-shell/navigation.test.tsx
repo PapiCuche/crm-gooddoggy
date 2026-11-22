@@ -316,6 +316,15 @@ describe("navegación del shell", () => {
     },
   );
 
+  it("el texto de traspaso (`/ia/traspaso`) también es de «Inteligencia artificial»", async () => {
+    route.pathname = "/o/acme/ia/traspaso";
+    expect(await links([{ code: "ai.manage", scopes: [] }])).toEqual([
+      ["/o/acme", null],
+      ["/o/acme/ia", "true"],
+    ]);
+    expect(document.title).toBe("Inteligencia artificial · Acme SAC · Good Doggy CRM");
+  });
+
   it("«Precios» sale con cualquiera de los permisos de lectura o `prices.manage`, tras «Inventario»", async () => {
     route.pathname = "/o/acme/precios/listas";
     const without = ["prices.bulk_update", "product_cost.view", "inventory.view"];
