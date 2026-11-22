@@ -226,12 +226,16 @@ forbidden_modules = ["apps.ai_agents.apps"]
 
 [[tool.importlinter.contracts]]
 # F8-08h (#771) y F8-08i (#1025): las rutas llegan al registro, al contexto, a las tools y al gateway
-# solo por el runtime (F8-08j, #1026: y al registro, por `drafts`, que inserta y purga)
+# solo por el runtime (F8-08j, #1026: y al registro, por `drafts`, que inserta y purga). F8-08m
+# (#1047): a propósito, la vista cuenta el tope por organización en `apps.ai_gateway.throttle` (solo
+# el contador de `login_throttles`; no llama al modelo ni lee la clave; que no importe nada de `apps`
+# lo fija una prueba de `tests/test_ai_copilot_org_limit.py`)
 name = "La ruta del copiloto importa el runtime, no lo que el runtime usa (F8-08h)"
 type = "forbidden"
 source_modules = ["apps.ai_agents.api"]
 forbidden_modules = ["apps.ai_agents.records", "apps.ai_agents.context", "apps.ai_agents.registry", "apps.ai_gateway"]
 allow_indirect_imports = true
+ignore_imports = ["apps.ai_agents.api.views -> apps.ai_gateway.throttle"]
 
 [[tool.importlinter.contracts]]
 # `ignore_imports` quita la arista `records -> audit.services` de todo el grafo: sin este contrato,

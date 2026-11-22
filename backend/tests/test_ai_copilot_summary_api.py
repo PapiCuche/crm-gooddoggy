@@ -129,6 +129,17 @@ def test_a_request_for_a_person_flags_the_handoff_and_keeps_the_summary(
     assert scalar(migrator, "SELECT handoff_reason FROM ai_runs") == "ASKED_FOR_PERSON"
 
 
+def test_a_summary_that_mentions_a_person_is_no_handoff_when_the_customer_did_not_ask(
+    desk: SimpleNamespace, migrator: DB
+) -> None:
+    """El traspaso sale solo de lo que escribe el cliente, nunca del resumen (revisión de #1044)."""
+    desk.fake.replies = [said("Quiere hablar con una persona del equipo sobre collares.")]
+    answer = ask(desk)
+    assert answer.status_code == 201
+    assert answer.json()["handoff"] == {"requested": False, "reason": None}
+    assert scalar(migrator, "SELECT handoff_reason FROM ai_runs") is None
+
+
 BAD = ["", " \n ", "hola\x00", "hola\ud800", "x" * (TEXT_MAX + 1)]
 
 
