@@ -27,19 +27,17 @@ from core.tenancy.scope import require_scope
 
 VIEW = "conversations.view"
 MANAGE_AI = "ai.manage"  # F8-13: volver a incluirla en la IA
-# F8-13c: el candado consultivo de las llamadas a la IA de una conversación (organización e id):
-# cada llamada lo tiene compartido, de sesión, de la reserva al fin del envío (`ai_call`); excluirla
-# lo pide exclusivo, de transacción, antes de bloquear la fila: espera a las llamadas en curso y
-# las nuevas esperan detrás. Siempre el consultivo y después la fila.
-CALL = "ai-call:{}:{}"
+# F8-13c: el candado de las llamadas a la IA de una conversación: compartido de sesión en cada una
+# (`ai_call`), exclusivo de transacción al excluirla. Siempre el consultivo y después la fila.
+CALL, WAITER = "ai-call:{}:{}", "ai-call-wait:{}:{}"  # el segundo: como mucho una exclusión espera
 _KEY = "hashtextextended(%s, 0)"
 _CALL_SHARED, _CALL_FREE = (f"SELECT pg_advisory_lock_shared({_KEY})",
                             f"SELECT pg_advisory_unlock_shared({_KEY})")  # fmt: skip
-_CALL_EXCLUSIVE = f"SELECT pg_advisory_xact_lock({_KEY})"
+_CALL_EXCLUSIVE, _ONE = (f"SELECT pg_advisory_xact_lock({_KEY})",
+                         f"SELECT pg_try_advisory_xact_lock({_KEY})")  # fmt: skip
 _WAIT = "SELECT set_config('lock_timeout', %s, true)"
-# La marca, solo si esta sesión tiene el candado de la llamada (si lo perdió, por ejemplo con la
-# conexión, falla cerrado). Sin `FOR SHARE`: excluir pide antes el candado exclusivo, así que la
-# marca no cambia mientras esta sesión lo tenga. Una clave `bigint` va en `classid` y `objid`.
+# La marca, solo con el candado en esta sesión (falla cerrado). Sin `FOR SHARE`: con el candado, la
+# marca no cambia. Una clave `bigint` va en `classid` (alta) y `objid` (baja).
 INCLUDED = """
 WITH k AS (SELECT hashtextextended(%s, 0) AS v)
 SELECT c.ai_excluded_at IS NULL AND EXISTS (
@@ -204,35 +202,51 @@ def _key(ctx: TenantContext, conversation_id: UUID) -> str:
     return CALL.format(ctx.organization_id, conversation_id)
 
 
+def _ms(seconds: float) -> str:
+    return f"{max(int(seconds * 1000), 1)}ms"
+
+
+def _locked(cursor: Any, sql: str, key: str) -> None:
+    """Un candado con el `lock_timeout` ya fijado; si no llega, `AICallInProgress`."""
+    try:
+        cursor.execute(sql, [key])
+    except OperationalError as error:
+        if getattr(error.__cause__, "sqlstate", None) == "55P03":  # lock_not_available
+            raise AICallInProgress from None
+        raise
+
+
 def _wait_for_calls(ctx: TenantContext, alias: str, conversation_id: UUID) -> None:
-    """El candado exclusivo de las llamadas, como mucho `AI_EXCLUSION_WAIT_SECONDS`; si no llega,
-    `AICallInProgress` (el `atomic` de quien llama deshace el resto, también el `lock_timeout`)."""
-    wait = f"{int(settings.AI_EXCLUSION_WAIT_SECONDS * 1000)}ms"
+    """El candado exclusivo de las llamadas, como mucho `AI_EXCLUSION_WAIT_SECONDS`, y una sola
+    exclusión esperando por conversación (otra, `AICallInProgress` enseguida: no retiene una
+    conexión). El `lock_timeout` sigue hasta el fin de la transacción: también acota la fila."""
+    key = _key(ctx, conversation_id)
     with connections[alias].cursor() as cursor:
-        cursor.execute("SELECT current_setting('lock_timeout')")
-        before = cursor.fetchone()[0]
-        cursor.execute(_WAIT, [wait])
-        try:
-            cursor.execute(_CALL_EXCLUSIVE, [_key(ctx, conversation_id)])
-        except OperationalError as error:
-            if getattr(error.__cause__, "sqlstate", None) == "55P03":  # lock_not_available
-                raise AICallInProgress from None
-            raise
-        cursor.execute(_WAIT, [before])
+        cursor.execute(_WAIT, [_ms(settings.AI_EXCLUSION_WAIT_SECONDS)])
+        for one in (key, WAITER.format(ctx.organization_id, conversation_id)):
+            cursor.execute(_ONE, [one])  # libre: sin esperar; si no, ¿hay ya quien espera?
+            if cursor.fetchone()[0] is True:
+                break
+        else:
+            raise AICallInProgress
+        if one != key:
+            _locked(cursor, _CALL_EXCLUSIVE, key)
 
 
 @contextmanager
-def ai_call(ctx: TenantContext, conversation_id: UUID) -> Iterator[None]:
+def ai_call(ctx: TenantContext, conversation_id: UUID, seconds: float) -> Iterator[None]:
     """F8-13c: el candado compartido de una llamada a la IA sobre la conversación, de sesión, en la
     conexión de `ctx` y **fuera** de toda transacción: de antes de la reserva al fin del envío (y
-    sus reintentos). Se suelta al salir, también con un error; si no se puede soltar, se cierra la
-    conexión (la base suelta sus candados)."""
+    sus reintentos). Espera como mucho `seconds` (si no, `AICallInProgress`); se toma en una
+    transacción corta (el `lock_timeout` es suyo) y sigue tras ella. Se suelta al salir, también
+    con un error; si no se puede soltar, se cierra la conexión (la base suelta sus candados)."""
     db = connections["default"]
     if db.in_atomic_block:
         raise RuntimeError("ai_call() es de sesión: ninguna transacción abierta")
     key = _key(ctx, conversation_id)
-    with db.cursor() as cursor:
-        cursor.execute(_CALL_SHARED, [key])
+    with transaction.atomic(using="default"), db.cursor() as cursor:
+        cursor.execute(_WAIT, [_ms(seconds)])
+        _locked(cursor, _CALL_SHARED, key)
     try:
         yield
     finally:

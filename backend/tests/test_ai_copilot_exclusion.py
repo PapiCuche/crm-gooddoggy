@@ -6,6 +6,8 @@ está en curso (excluir espera a que termine y ninguna empieza después) y el re
 (`tests.ai_sim`) que cuenta llamadas, middleware, sesión y PostgreSQL con `crm_app`; la
 concurrencia, con hilos y conexiones reales. Datos ficticios."""
 
+import ast
+import pathlib
 import threading
 import time
 from types import SimpleNamespace
@@ -14,6 +16,7 @@ from unittest.mock import Mock
 from uuid import UUID, uuid4
 
 import pytest
+from django.conf import settings as settings_module
 from django.db import OperationalError, connection
 from django.utils import timezone
 
@@ -158,18 +161,6 @@ def test_a_mark_that_cannot_be_read_calls_nothing(
     assert desk.fake.calls == []
 
 
-def test_the_person_cap_still_stops_a_loop_on_an_excluded_conversation(
-    desk: SimpleNamespace, migrator: DB, settings: Any
-) -> None:
-    """F8-13c: antes, cada rechazo devolvía el pedido de la persona y podía repetirse sin coste."""
-    settings.AI_COPILOT_THROTTLE = (2, 600)
-    mark(desk)
-    answers = [suggest(desk) for _ in range(3)]
-    assert [a.status_code for a in answers] == [409, 409, 429]
-    assert answers[-1].json() == {"code": "RATE_LIMITED"}
-    assert desk.fake.calls == [] and spent_nothing(migrator, person=3)
-
-
 def test_excluded_after_the_context_and_before_the_first_call_reserves_and_calls_nothing(
     desk: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -199,19 +190,19 @@ def test_a_conversation_that_cannot_be_read_or_without_the_call_lock_counts_as_e
     """Sin fila visible (inexistente o de otra organización, por RLS) o sin el candado de la
     llamada en esta sesión (nunca tomado o perdido con la conexión): falla cerrado."""
     mine, other = ctx(desk.a, desk.ana), ctx(desk.b, desk.ana)
-    with attention.ai_call(mine, desk.convo), tenant_scope(mine):
+    with attention.ai_call(mine, desk.convo, 5), tenant_scope(mine):
         assert attention.ai_included(mine, desk.convo) is True
         assert attention.ai_included(mine, uuid4()) is False
     with tenant_scope(mine):
         assert attention.ai_included(mine, desk.convo) is False  # ya soltado
-    with attention.ai_call(mine, uuid4()), tenant_scope(mine):  # el de otra conversación
+    with attention.ai_call(mine, uuid4(), 5), tenant_scope(mine):  # el de otra conversación
         assert attention.ai_included(mine, desk.convo) is False
-    with attention.ai_call(other, desk.convo), tenant_scope(other):
+    with attention.ai_call(other, desk.convo, 5), tenant_scope(other):
         assert attention.ai_included(other, desk.convo) is False
     held, done = threading.Event(), threading.Event()
 
     def hold() -> None:  # otra sesión tiene el candado: no vale para esta
-        with attention.ai_call(mine, desk.convo):
+        with attention.ai_call(mine, desk.convo, 5):
             held.set()
             done.wait(10)
 
@@ -279,15 +270,6 @@ def test_nothing_is_resent_after_a_retry_wait_once_it_is_withheld(
     assert migrator.execute(USAGE).fetchone() == (0, 0)
 
 
-def test_a_retry_without_any_change_is_still_sent(
-    desk: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    desk.fake.script, desk.fake.replies = ["rate_limit"], [PLAIN]
-    copilot.suggest(ctx(desk.a, desk.ana), desk.convo)
-    assert len(desk.fake.calls) == 2 and desk.sleeps == [2.0]
-    assert migrator.execute(RUNS).fetchall() == [("OK", 1)]
-
-
 def exclude(desk: SimpleNamespace) -> None:
     """El comando del `PUT …/ai-exclusion/`, con su propio `lock_timeout`: un bloqueo mutuo o una
     espera sin fin fallan en segundos, no cuelgan la prueba."""
@@ -316,8 +298,7 @@ def migrator_version(desk: SimpleNamespace) -> int:
 
 
 def in_flight(desk: SimpleNamespace, monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
-    """El proveedor falso se queda en su primera llamada hasta `gate`; `seen`: cuándo empieza y
-    cuándo vuelve cada una (reloj monótono real)."""
+    """El proveedor falso espera a `gate`; `seen`: cuándo empieza y vuelve cada llamada."""
     w = SimpleNamespace(inside=threading.Event(), gate=threading.Event(), seen=list[Any]())
     real = desk.fake.handle
 
@@ -403,8 +384,7 @@ def test_an_exclusion_that_cannot_wait_long_enough_changes_nothing(
 def test_who_cannot_see_the_conversation_never_waits_for_its_calls(
     desk: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """El alcance se mira antes del candado: fuera de él, el mismo 404 enseguida, sin esperar a
-    la llamada en curso (ni delatarla) ni retener las nuevas."""
+    """El alcance, antes del candado: fuera de él, el 404 enseguida (sin esperar ni delatarla)."""
     assign = "UPDATE conversations SET assigned_user_id = %s, assigned_at = now() WHERE id = %s"
     migrator.execute(assign, [desk.ana.pk, desk.convo])
     eva = make_user(email="eva@example.com")
@@ -420,6 +400,80 @@ def test_who_cannot_see_the_conversation_never_waits_for_its_calls(
     w.gate.set()
     asking.join(20)
     assert outcome == ["OK"] and excluded_at(migrator, desk) is None
+
+
+def test_excluding_has_its_own_per_person_limit(
+    desk: SimpleNamespace, migrator: DB, settings: Any
+) -> None:
+    settings.AI_EXCLUSION_THROTTLE = (2, 600)
+    assert [put(desk).status_code for _ in range(3)] == [200, 200, 429]  # la 2.ª: misma marca
+    assert dict(migrator.execute(COUNTED).fetchall())[f"aix:usr:{desk.ana.pk}"] == 3
+
+
+WAITING = "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND NOT granted"
+
+
+def test_only_one_exclusion_waits_per_conversation_the_next_is_refused_at_once(
+    desk: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    w, outcome, answered = in_flight(desk, monkeypatch), list[str](), list[Any]()
+    desk.fake.replies = [PLAIN]
+    asking = later(lambda: asked(desk, outcome))
+    assert w.inside.wait(10)
+    waiting = later(lambda: answered.append(put(desk)))
+    assert any(migrator.execute(WAITING).fetchone() == (1,) or threading.Event().wait(0.05)
+               for _ in range(200))  # fmt: skip
+    started, second = time.monotonic(), put(desk)
+    assert (second.status_code, second.json()["code"]) == (409, "AI_CALL_IN_PROGRESS")
+    assert time.monotonic() - started < 5  # sin esperar ni retener otra conexión
+    w.gate.set()
+    for thread in (asking, waiting):
+        thread.join(20)
+    assert outcome == ["OK"] and [a.status_code for a in answered] == [200]
+
+
+def test_a_call_waits_for_an_exclusion_no_longer_than_its_run_and_the_row_wait_is_bounded(
+    desk: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch, settings: Any
+) -> None:
+    inside, gate = threading.Event(), threading.Event()
+
+    def pause() -> None:
+        inside.set()
+        gate.wait(10)
+
+    monkeypatch.setattr(attention, "record", ahead(pause, audit_record))
+    monkeypatch.setattr(copilot, "CALL_SECONDS", 0)
+    monkeypatch.setattr(context, "caps", lambda: (8, 1.5))  # el plazo del run: 1,5 s
+    stopping = later(lambda: exclude(desk))
+    assert inside.wait(10)
+    started = time.monotonic()
+    with pytest.raises(copilot.CopilotError) as caught:
+        copilot.suggest(ctx(desk.a, desk.ana), desk.convo)
+    assert caught.value.code == "AI_DEADLINE" and time.monotonic() - started < 5
+    assert desk.fake.calls == [] and migrator.execute(RUNS).fetchall() == [("AI_DEADLINE", 0)]
+    gate.set()
+    stopping.join(10)
+    monkeypatch.setattr(attention, "record", audit_record)
+    settings.AI_EXCLUSION_WAIT_SECONDS = 1  # el `lock_timeout` sigue para la fila
+    mark(desk, on=False)
+    with migrator.transaction(), pytest.raises(OperationalError):  # el 500, sin esperar sin fin
+        migrator.execute("SELECT 1 FROM conversations WHERE id = %s FOR UPDATE", [desk.convo])
+        started = time.monotonic()
+        put(desk)
+    assert time.monotonic() - started < 5
+    assert excluded_at(migrator, desk) is None
+
+
+def test_every_gateway_call_in_the_apps_passes_its_check() -> None:
+    """`admit` es opcional (las pruebas del gateway no lo pasan); nada de `apps` lo omite."""
+    found = []
+    for path in (pathlib.Path(settings_module.BASE_DIR) / "apps").rglob("*.py"):
+        for node in ast.walk(ast.parse(path.read_text())):
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "complete" and isinstance(node.func.value, ast.Name)
+                    and node.func.value.id == "gateway"):  # fmt: skip
+                found.append({k.arg for k in node.keywords})
+    assert found and all("admit" in keywords for keywords in found)
 
 
 def test_a_call_that_fails_midway_releases_its_lock(

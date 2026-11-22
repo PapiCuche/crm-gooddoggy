@@ -569,7 +569,7 @@ USES = {  # módulo importado → sus atributos: exactamente estos
     "json": "loads",
     "re": "compile", "records": "Action Finding Run Suggestion save",
     "registry": "invoke_read_only", "replies": "current", "time": "monotonic",
-    "attention": "ai_call ai_included request_human",  # F8-13c: el candado de cada llamada
+    "attention": "AICallInProgress ai_call ai_included request_human",  # F8-13c: el candado
 }  # fmt: skip
 DYNAMIC = {"globals", "locals", "vars", "eval", "exec", "compile", "getattr", "setattr", "delattr",
            "breakpoint"}  # fmt: skip

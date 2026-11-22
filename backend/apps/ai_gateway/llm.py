@@ -27,8 +27,7 @@ class Outcome(StrEnum):  # los siete primeros quedan en `ai_llm_calls.outcome`
     # F8-08g2: el ajuste falló (la base) y la reserva queda abierta: el barrido la cierra como
     # gastada. Solo para quien llama, con el id de la reserva; nunca en el registro.
     INTERNAL_ERROR = "INTERNAL_ERROR"
-    # F8-13c: la comprobación de quien llama (`admit`) lo negó o falló, antes de reservar o de un
-    # reintento: nada más salió. Solo para quien llama; el registro lleva lo que pasó antes.
+    # F8-13c: `admit` lo negó o falló (nada más salió). Solo para quien llama, nunca en el registro.
     AI_WITHHELD = "AI_WITHHELD"
 
 

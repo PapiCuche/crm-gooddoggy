@@ -13,10 +13,8 @@ uno sin precio (fuera de `AI_MODELS`) falla cerrado antes de abrir la clave y de
 con tools (F8-05b7) se valida antes de todo; la cota suma lo que sus bytes no acotan: el
 razonamiento reenviado y las imágenes (`turns.surplus`). Kill switch (F8-06, `AI_DISABLED`): el
 global antes de validar; el de la organización, primero en el scope. El ajuste no lo mira.
-F8-13c: `admit`, la comprobación opaca de quien llama (la exclusión de la conversación), corre en
-la transacción de la reserva, tras el interruptor: lo que bloquee lo retiene hasta confirmarla; y
-otra vez, en su propio scope, antes de cada reintento del adaptador. `False`: no se reserva o no se
-reenvía (`AI_WITHHELD`); si falla al reintentar, tampoco (falla cerrado)."""
+F8-13c: `admit`, la comprobación opaca de quien llama, corre en la transacción de la reserva tras
+el interruptor y, en su scope, antes de cada reintento; `False` o error: ni reserva ni reenvío."""
 
 import time
 from collections.abc import Callable

@@ -123,6 +123,9 @@ AI_COPILOT_THROTTLE = (20, 10 * 60)
 # propuesto por el programa (seis personas a tope), pendiente de confirmación del propietario; se
 # cambia por PR. El presupuesto sigue siendo el tope duro.
 AI_COPILOT_ORG_THROTTLE = (120, 10 * 60)
+# F8-13c: excluir una conversación de la IA (el PUT), por persona y ventana (segundos): puede
+# esperar a una llamada en curso. PROVISIONAL: el valor propuesto por el programa; se cambia por PR.
+AI_EXCLUSION_THROTTLE = (30, 10 * 60)
 # Subidas de medios (F7-09b2): peticiones de una persona por ventana (< su calma). Pendiente del PO.
 MEDIA_UPLOAD_THROTTLE = (30, 10 * 60)
 # Rutas que miden el suelo de costo de una cotización (F5-09e2): peticiones por persona y

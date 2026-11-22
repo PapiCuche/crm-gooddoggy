@@ -11,11 +11,9 @@ run. Tools fijadas por el código; organización y persona de `ctx`; el log llev
 `ai_run_id`, códigos y duraciones. «Resumir» (`summarize`, F8-08i) es lo mismo sin tools.
 Una conversación excluida de la IA (F8-13) se rechaza con `AI_EXCLUDED` antes de leer su contexto
 y otra vez antes de cada llamada pagada; si la marca no se puede leer, no se llama (falla cerrado).
-F8-13c: cada llamada tiene el candado compartido de la conversación (`attention.ai_call`) de antes
-de su reserva al fin del envío y sus reintentos; excluirla lo pide exclusivo: espera a las llamadas
-en curso y las nuevas esperan detrás. La comprobación (que exige ese candado) corre en la
-transacción de la reserva (`admit`) y antes de cada reintento: tras una exclusión confirmada no
-empieza ninguna llamada nueva."""
+F8-13c: cada llamada tiene el candado compartido de la conversación (`attention.ai_call`) hasta el
+fin de su envío; excluirla lo pide exclusivo. La comprobación (que exige el candado) corre en la
+transacción de la reserva (`admit`) y antes de cada reintento."""
 
 import json
 import re
@@ -155,7 +153,7 @@ def _call(ctx: TenantContext, state: _State) -> LLMResponse:
         raise CopilotError(Outcome.AI_TURN_INVALID)  # su respuesta ya no se podría contestar
     state.calls_left -= 1
     try:  # F8-13c: con el candado de la llamada, de antes de la reserva al fin del envío
-        with attention.ai_call(ctx, state.conversation_id):
+        with attention.ai_call(ctx, state.conversation_id, state.deadline - time.monotonic()):
             reply = gateway.complete(ctx, state.request, deadline=state.deadline,
                                      admit=lambda: _admits(ctx, state))  # fmt: skip
     except GatewayError as error:  # sin tiempo ya ni para enviar, o cortado en el plazo
@@ -164,6 +162,8 @@ def _call(ctx: TenantContext, state: _State) -> LLMResponse:
             raise CopilotError(state.refused or "INTERNAL_ERROR") from None
         late = time.monotonic() >= state.deadline - MARGIN  # o liberada por falta de tiempo
         raise CopilotError("AI_DEADLINE" if late else error.outcome) from None
+    except attention.AICallInProgress:  # F8-13c: una exclusión retuvo el candado todo el plazo
+        raise CopilotError("AI_DEADLINE") from None
     except AccessDenied:  # la membresía cayó entre la comprobación y la reserva: no reservó
         raise CopilotError("ACCESS_DENIED") from None
     state.reservations += [reply.reservation_id] if reply.reservation_id else []
