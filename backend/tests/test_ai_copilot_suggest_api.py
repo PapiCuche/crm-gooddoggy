@@ -34,6 +34,7 @@ from tests.test_ai_copilot_runtime import (
     NOTE,
     PLAIN,
     SEARCH,
+    SHARED,
     SUGGEST,
     desk,
     final,
@@ -119,7 +120,9 @@ def test_an_injection_in_the_customer_text_changes_no_tool_and_writes_nothing_el
     assert [sorted(t["name"] for t in b["tools"]) for b in desk.fake.bodies()] == [SUGGEST] * 2
     # el contador del tope y el candado compartido del interruptor de cada reserva
     tables = "ai_runs|ai_actions|ai_suggestions|audit_logs|login_throttles"
-    allowed = rf'\s*((INSERT INTO|UPDATE) "?({tables})"? |SELECT pg_advisory_xact_lock_shared\()'
+    allowed = (
+        rf'\s*((INSERT INTO|UPDATE) "?({tables})"? |SELECT pg_advisory_xact_lock_shared\(|{SHARED})'
+    )
     assert [s for s in writes(seen) if not re.match(allowed, s)] == []
 
 
@@ -218,7 +221,13 @@ def test_the_runtime_not_found_is_the_404_of_an_unknown_conversation(
 
 def test_every_gateway_refusal_is_mapped_and_unknown_codes_fail_closed() -> None:
     """Un `Outcome` nuevo que el runtime pueda devolver se mapea aquí a propósito."""
-    internal = {Outcome.OK, Outcome.ORPHANED, Outcome.PROVIDER_UNCERTAIN, Outcome.INTERNAL_ERROR}
+    internal = {
+        Outcome.OK,
+        Outcome.ORPHANED,
+        Outcome.PROVIDER_UNCERTAIN,
+        Outcome.INTERNAL_ERROR,
+        Outcome.AI_WITHHELD,
+    }  # F8-13c: el runtime lo cambia por su código
     assert set(Outcome) - internal <= set(STATUS)
     assert set(STATUS) == {code for code, _, _ in SHOWN} | {"ACCESS_DENIED"}
 

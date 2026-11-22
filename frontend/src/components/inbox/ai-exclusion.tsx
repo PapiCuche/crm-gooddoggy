@@ -77,6 +77,7 @@ export function useAiExclusion(conversation: Conversation) {
     const failure = error instanceof ApiError ? error : null;
     if (failure?.code === "CONVERSATION_VERSION_CONFLICT") return t("stale");
     if (failure?.code === STEP_UP_REQUIRED) return t("stepUp"); // la repetición también lo pidió
+    if (failure?.code === "AI_CALL_IN_PROGRESS") return t("busy"); // F8-13c: nada cambió
     if (failure?.status === 403 || failure?.status === 404) return t("denied");
     return errors(`api.${apiErrorKey(error)}`);
   };

@@ -7373,7 +7373,7 @@ export const getConversationAiExclusionSetUrl = (orgSlug: string, conversationId
 };
 
 /**
- * Excluye la conversación de la IA (`conversations.view` y su alcance): el copiloto ya no la lee ni la manda a un proveedor (409 `AI_EXCLUDED`). Volver a incluirla pide además `ai.manage` y el segundo factor reciente (403 `STEP_UP_REQUIRED`). La misma marca no cambia nada. 409 `CONVERSATION_VERSION_CONFLICT`; 404: no existe o fuera del alcance.
+ * Excluye la conversación de la IA (`conversations.view` y su alcance): el copiloto ya no la lee ni la manda a un proveedor (409 `AI_EXCLUDED`). Volver a incluirla pide además `ai.manage` y el segundo factor reciente (403 `STEP_UP_REQUIRED`). La misma marca no cambia nada. Excluir espera a que terminen las llamadas a la IA en curso sobre ella (ninguna empieza después): si no terminan a tiempo, 409 `AI_CALL_IN_PROGRESS` sin cambiar nada (reintentar). 409 `CONVERSATION_VERSION_CONFLICT`; 404: no existe o fuera del alcance.
  */
 export const conversationAiExclusionSet = async (
   orgSlug: string,
@@ -7765,7 +7765,7 @@ export const getConversationsCopilotSuggestUrl = (orgSlug: string, conversationI
 };
 
 /**
- * Pide al copiloto una sugerencia de respuesta (`conversations.view` con su alcance y `ai.use`; 403 `PERMISSION_DENIED` sin uno de los dos). No envía nada: la sugerencia se guarda y se audita (`ai.suggestion.created`). 404: fuera de alcance, de otra organización o inexistente. 409 `AI_DISABLED`, `AI_NOT_CONFIGURED`, `AI_BUDGET_NOT_SET` o `AI_BUDGET_EXHAUSTED`. 502 `PROVIDER_UNAVAILABLE`, `PROVIDER_ERROR`, `CREDENTIALS_REJECTED`, `PROVIDER_BILLING`, `AI_MALFORMED` o `AI_TURN_INVALID`. 409 `AI_EXCLUDED`: la conversación está excluida de la IA (no se lee ni cuenta). 504 `AI_DEADLINE`. 429 `RATE_LIMITED`: el tope por persona (uno para sugerir y resumir), con `Retry-After`. 429 `AI_ORG_RATE_LIMITED`: el de la organización (uno para sugerir y resumir; tras el permiso), con `Retry-After`.
+ * Pide al copiloto una sugerencia de respuesta (`conversations.view` con su alcance y `ai.use`; 403 `PERMISSION_DENIED` sin uno de los dos). No envía nada: la sugerencia se guarda y se audita (`ai.suggestion.created`). 404: fuera de alcance, de otra organización o inexistente. 409 `AI_DISABLED`, `AI_NOT_CONFIGURED`, `AI_BUDGET_NOT_SET` o `AI_BUDGET_EXHAUSTED`. 502 `PROVIDER_UNAVAILABLE`, `PROVIDER_ERROR`, `CREDENTIALS_REJECTED`, `PROVIDER_BILLING`, `AI_MALFORMED` o `AI_TURN_INVALID`. 409 `AI_EXCLUDED`: la conversación está excluida de la IA (no se lee ni cuenta en el tope de la organización; sí en el de la persona). 504 `AI_DEADLINE`. 429 `RATE_LIMITED`: el tope por persona (uno para sugerir y resumir), con `Retry-After`. 429 `AI_ORG_RATE_LIMITED`: el de la organización (uno para sugerir y resumir; tras el permiso), con `Retry-After`.
  */
 export const conversationsCopilotSuggest = async (
   orgSlug: string,
@@ -7956,7 +7956,7 @@ export const getConversationsCopilotSummaryUrl = (orgSlug: string, conversationI
 };
 
 /**
- * Pide al copiloto un resumen de la conversación para quien atiende (`conversations.view` con su alcance y `ai.use`; 403 `PERMISSION_DENIED` sin uno de los dos), sin herramientas. Se muestra «Generado por IA», con sus cifras, términos y enlaces marcados «sin verificar» (`marks`), y no se inserta en el compositor. No envía nada: se guarda y se audita (`ai.summary.created`). 404: fuera de alcance, de otra organización o inexistente. 409 `AI_DISABLED`, `AI_NOT_CONFIGURED`, `AI_BUDGET_NOT_SET` o `AI_BUDGET_EXHAUSTED`. 502 `PROVIDER_UNAVAILABLE`, `PROVIDER_ERROR`, `CREDENTIALS_REJECTED`, `PROVIDER_BILLING`, `AI_MALFORMED` o `AI_TURN_INVALID`. 409 `AI_EXCLUDED`: la conversación está excluida de la IA (no se lee ni cuenta). 504 `AI_DEADLINE`. 429 `RATE_LIMITED`: el tope por persona (uno para sugerir y resumir), con `Retry-After`. 429 `AI_ORG_RATE_LIMITED`: el de la organización (uno para sugerir y resumir; tras el permiso), con `Retry-After`.
+ * Pide al copiloto un resumen de la conversación para quien atiende (`conversations.view` con su alcance y `ai.use`; 403 `PERMISSION_DENIED` sin uno de los dos), sin herramientas. Se muestra «Generado por IA», con sus cifras, términos y enlaces marcados «sin verificar» (`marks`), y no se inserta en el compositor. No envía nada: se guarda y se audita (`ai.summary.created`). 404: fuera de alcance, de otra organización o inexistente. 409 `AI_DISABLED`, `AI_NOT_CONFIGURED`, `AI_BUDGET_NOT_SET` o `AI_BUDGET_EXHAUSTED`. 502 `PROVIDER_UNAVAILABLE`, `PROVIDER_ERROR`, `CREDENTIALS_REJECTED`, `PROVIDER_BILLING`, `AI_MALFORMED` o `AI_TURN_INVALID`. 409 `AI_EXCLUDED`: la conversación está excluida de la IA (no se lee ni cuenta en el tope de la organización; sí en el de la persona). 504 `AI_DEADLINE`. 429 `RATE_LIMITED`: el tope por persona (uno para sugerir y resumir), con `Retry-After`. 429 `AI_ORG_RATE_LIMITED`: el de la organización (uno para sugerir y resumir; tras el permiso), con `Retry-After`.
  */
 export const conversationsCopilotSummary = async (
   orgSlug: string,

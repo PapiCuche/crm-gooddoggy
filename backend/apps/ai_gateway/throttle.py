@@ -36,10 +36,15 @@ antes del runtime, en autocommit (no hay transacción en esas rutas: nada lo des
 la ventana en la que contó. Un
 anónimo, un 403 o el tope por persona nunca llegan ahí.
 
-Una conversación excluida de la IA (F8-13) no gasta ninguno de los dos: la vista la rechaza antes
-de contar el de la organización y devuelve el de la persona (`person_refund`, en la ventana en la
-que lo contó este middleware, que la deja en la petición). Quien ya pasó su tope recibe el 429
-antes de que nada mire la conversación.
+Una conversación excluida de la IA (F8-13) no gasta el de la organización: la vista la rechaza
+antes de contarlo (o lo devuelve si el runtime la rechaza después, sin llamar). El de la persona sí
+cuenta (F8-13c), como un 403 o un 404: es el que impide repetir en bucle, y devolverlo dejaba
+pedir sin límite sobre una conversación excluida. Quien ya pasó su tope recibe el 429 antes de que
+nada mire la conversación.
+
+Excluir una conversación (`PUT …/ai-exclusion/`, F8-13c) tiene su propio contador por persona
+(`aix:usr:<id>`, `AI_EXCLUSION_THROTTLE`): puede esperar a una llamada en curso con una conexión
+tomada, así que nadie la repite en bucle.
 """
 
 import re
@@ -61,6 +66,8 @@ PATH = re.compile(
     r"|pricing/price-lists/[^/]+/ai-exposable/$)"
 )
 COPILOT = re.compile(r"^/api/v1/o/[^/]+/conversations/[^/]+/copilot/(suggest|summary)/$")
+EXCLUSION = re.compile(r"^/api/v1/o/[^/]+/conversations/[^/]+/ai-exclusion/$")  # F8-13c: el PUT
+RULES = {"aic": "AI_COPILOT_THROTTLE", "aix": "AI_EXCLUSION_THROTTLE"}  # si no, el de `aik`
 READS = ("GET", "HEAD", "OPTIONS")  # las que no cuentan; las demás, sí (F8-03e)
 _COUNT = """
 INSERT INTO login_throttles AS t (key, failures, blocked_until, updated_at)
@@ -92,11 +99,11 @@ def _counted(key: str, rule: tuple[int, int]) -> tuple[int, datetime]:
     return (int(wait) if asked > limit else 0), since
 
 
-def wait_for(user_id: object, prefix: str = "aik") -> tuple[int, datetime]:
-    """Cuenta la escritura de esa persona: los segundos que tiene que esperar si pasó el tope (0 si
-    no) y la ventana en la que contó."""
-    rule = settings.AI_COPILOT_THROTTLE if prefix == "aic" else settings.AI_ACCOUNT_THROTTLE
-    return _counted(f"{prefix}:usr:{user_id}", rule)
+def wait_for(user_id: object, prefix: str = "aik") -> int:
+    """Cuenta la escritura de esa persona y devuelve los segundos que tiene que esperar si pasó el
+    tope (0 si no)."""
+    rule = getattr(settings, RULES.get(prefix, "AI_ACCOUNT_THROTTLE"))
+    return _counted(f"{prefix}:usr:{user_id}", rule)[0]
 
 
 def organization_wait(organization_id: UUID) -> tuple[int, datetime]:
@@ -108,18 +115,8 @@ def organization_wait(organization_id: UUID) -> tuple[int, datetime]:
 def organization_refund(organization_id: UUID, since: datetime) -> None:
     """Devuelve el pedido que el runtime rechazó sin llamar (fuera de alcance o sin `ai.use`), solo
     si su ventana (`since`, de `organization_wait`) sigue abierta."""
-    _give_back(f"aio:org:{organization_id}", since)
-
-
-def person_refund(user_id: object, since: datetime) -> None:
-    """Devuelve a esa persona el pedido al copiloto que una exclusión de la IA rechazó (F8-13),
-    solo si su ventana (`since`, la que dejó el middleware) sigue abierta."""
-    _give_back(f"aic:usr:{user_id}", since)
-
-
-def _give_back(key: str, since: datetime) -> None:
     with connection.cursor() as cursor:
-        cursor.execute(_REFUND, {"key": key, "since": since})
+        cursor.execute(_REFUND, {"key": f"aio:org:{organization_id}", "since": since})
 
 
 class AiAccountThrottleMiddleware:
@@ -128,11 +125,12 @@ class AiAccountThrottleMiddleware:
 
     def __call__(self, request: HttpRequest) -> HttpResponse:
         user, path = getattr(request, "user", None), request.path_info
-        prefix = "aic" if COPILOT.match(path) else "aik" if PATH.match(path) else None
-        counts = request.method == "POST" if prefix == "aic" else request.method not in READS
+        prefix = ("aic" if COPILOT.match(path) else "aix" if EXCLUSION.match(path)
+                  else "aik" if PATH.match(path) else None)  # fmt: skip
+        only = {"aic": "POST", "aix": "PUT"}.get(prefix or "")
+        counts = request.method == only if only else request.method not in READS
         if counts and prefix is not None and user is not None and user.is_authenticated:
-            wait, request.ai_counted = wait_for(user.pk, prefix)  # type: ignore[attr-defined]
-            if wait:
+            if wait := wait_for(user.pk, prefix):
                 limited = error_response("RATE_LIMITED", 429)
                 limited.headers["Retry-After"] = str(wait)
                 return limited

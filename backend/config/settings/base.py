@@ -123,6 +123,9 @@ AI_COPILOT_THROTTLE = (20, 10 * 60)
 # propuesto por el programa (seis personas a tope), pendiente de confirmación del propietario; se
 # cambia por PR. El presupuesto sigue siendo el tope duro.
 AI_COPILOT_ORG_THROTTLE = (120, 10 * 60)
+# F8-13c: excluir una conversación de la IA (el PUT), por persona y ventana (segundos): puede
+# esperar a una llamada en curso. PROVISIONAL: el valor propuesto por el programa; se cambia por PR.
+AI_EXCLUSION_THROTTLE = (30, 10 * 60)
 # Subidas de medios (F7-09b2): peticiones de una persona por ventana (< su calma). Pendiente del PO.
 MEDIA_UPLOAD_THROTTLE = (30, 10 * 60)
 # Rutas que miden el suelo de costo de una cotización (F5-09e2): peticiones por persona y
@@ -459,6 +462,9 @@ AI_MODELS: dict[str, dict[str, dict[str, Any]]] = {"ANTHROPIC": {"claude-sonnet-
 AI_PROVIDER_PARAMS: dict[str, dict[str, Any]] = {"ANTHROPIC": {
     "model": "claude-sonnet-5-5", "max_tokens": 2048, "effort": "medium", "seconds": 60,
 }}  # fmt: skip
+# F8-13c: cuánto espera excluir una conversación a que terminen sus llamadas en curso (el plazo de
+# una llamada y un margen); si no, 409 `AI_CALL_IN_PROGRESS` y no cambia nada.
+AI_EXCLUSION_WAIT_SECONDS = max(p["seconds"] for p in AI_PROVIDER_PARAMS.values()) + 5
 AI_TOOL_TOKENS = 1000  # margen de la reserva por los tokens que añade la API al usar tools
 # F8-05b7: los tokens visuales de una imagen como mucho (el tramo de alta resolución) y los límites
 # de un turno con tools; lo que los pasa ni se reserva (`AI_TURN_INVALID`).

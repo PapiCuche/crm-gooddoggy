@@ -384,6 +384,19 @@ describe("exclusión de la IA en el Inbox (F8-13b)", () => {
     expect(s.calls(PUT)).toEqual([{ excluded: true, version: 1 }]);
   });
 
+  it("si la IA sigue respondiendo, lo dice y no cambia nada", async () => {
+    const s = server({}, refusal(409, "AI_CALL_IN_PROGRESS"));
+    show(AGENT);
+    await openChat();
+    fireEvent.click(await ask("Excluir de la IA"));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "La IA sigue respondiendo en esta conversación. No se cambió nada",
+    );
+    expect(s.state.ai_excluded_at).toBeNull();
+    expect(screen.queryByText("Excluida de la IA")).toBeNull();
+    expect(s.calls(PUT)).toEqual([{ excluded: true, version: 1 }]);
+  });
+
   it("el aviso de lo hecho se va si otra persona cambia la marca", async () => {
     const s = server();
     show(MANAGER);

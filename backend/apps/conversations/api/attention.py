@@ -92,6 +92,7 @@ class HumanRequestView(APIView):
 
 
 STALE = "Otra persona cambió esta conversación. Actualiza y vuelve a intentarlo."
+BUSY = "La IA sigue respondiendo en esta conversación. Vuelve a intentarlo en un momento."
 
 
 class AiExclusionInputSerializer(Closed, serializers.Serializer[Any]):
@@ -114,8 +115,10 @@ class AiExclusionStateSerializer(serializers.Serializer[Any]):
         description="Excluye la conversación de la IA (`conversations.view` y su alcance): el "
         "copiloto ya no la lee ni la manda a un proveedor (409 `AI_EXCLUDED`). Volver a incluirla "
         "pide además `ai.manage` y el segundo factor reciente (403 `STEP_UP_REQUIRED`). La misma "
-        "marca no cambia nada. 409 `CONVERSATION_VERSION_CONFLICT`; 404: no existe o fuera del "
-        "alcance.",
+        "marca no cambia nada. Excluir espera a que terminen las llamadas a la IA en curso sobre "
+        "ella (ninguna empieza después): si no terminan a tiempo, 409 `AI_CALL_IN_PROGRESS` sin "
+        "cambiar nada (reintentar). 409 `CONVERSATION_VERSION_CONFLICT`; 404: no existe o fuera "
+        "del alcance.",
     ),
 )
 class AiExclusionView(APIView):
@@ -137,4 +140,6 @@ class AiExclusionView(APIView):
                 )
         except attention.VersionConflict:
             raise ApiError("CONVERSATION_VERSION_CONFLICT", 409, STALE) from None
+        except attention.AICallInProgress:  # F8-13c: nada cambió; se puede reintentar
+            raise ApiError("AI_CALL_IN_PROGRESS", 409, BUSY) from None
         return Response(AiExclusionStateSerializer(convo).data)
