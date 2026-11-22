@@ -16,6 +16,7 @@ from apps.ai_agents import copilot
 from apps.ai_gateway import throttle
 from tests.factories import make_user
 from tests.test_ai_copilot_context import conversation
+from tests.test_ai_copilot_insert_api import URL as INSERT
 from tests.test_ai_copilot_runtime import PLAIN, desk
 from tests.test_ai_copilot_suggest_api import DB, SPENT, URL
 from tests.test_ai_copilot_suggest_api import ask as suggest
@@ -146,6 +147,19 @@ def test_the_budget_is_still_the_final_cap_under_both_limits(
     ] * 2
     assert desk.fake.calls == []
     assert counted(migrator) == {f"aio:org:{desk.a}": 2}  # llegaron al runtime: cuentan
+
+
+def test_the_insert_route_never_touches_the_organization_counter(
+    desk: SimpleNamespace, migrator: DB, settings: Any
+) -> None:
+    """Insertar (F8-08j) no llama al modelo: ni cuenta ni lo corta el tope de la organización."""
+    settings.AI_COPILOT_ORG_THROTTLE = (1, 600)
+    desk.fake.replies = [PLAIN]
+    made = suggest(desk).json()["id"]
+    assert (suggest(desk).status_code, suggest(desk).json()) == LIMITED  # ya en su tope
+    url, ana = INSERT.format("org-a", desk.convo, made), plain(desk.ana)
+    assert [send(ana, "post", url, {}).status_code for _ in range(3)] == [200] * 3
+    assert counted(migrator) == {f"aio:org:{desk.a}": 3}  # solo los tres de sugerir
 
 
 def test_the_counter_module_imports_nothing_from_apps() -> None:

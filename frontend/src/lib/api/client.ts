@@ -59,6 +59,7 @@ import type {
   ConversationQuickRepliesListParams,
   ConversationsListParams,
   ConversationsUnansweredCountParams,
+  CopilotInsert,
   CopilotSuggestion,
   CopilotSummary,
   Cost,
@@ -7489,6 +7490,110 @@ export const useConversationsCopilotSuggest = <TError = ErrorType<Error>, TConte
   TContext
 > => {
   return useMutation(getConversationsCopilotSuggestMutationOptions(options), queryClient);
+};
+
+export const getConversationsCopilotSuggestionInsertUrl = (
+  orgSlug: string,
+  conversationId: string,
+  suggestionId: string,
+) => {
+  return `/api/v1/o/${orgSlug}/conversations/${conversationId}/copilot/suggestions/${suggestionId}/insert/`;
+};
+
+/**
+ * Devuelve el texto de una sugerencia para el compositor y audita `ai.suggestion.inserted` en la misma transacción (`conversations.view` con su alcance y `ai.use`; 403 `PERMISSION_DENIED` sin uno de los dos). No envía nada ni llama al modelo. 404: fuera de alcance, de otra organización, conversación o persona, inexistente, un resumen o ya purgada (30 días). 409 `AI_EVIDENCE_EXPIRED`: su evidencia caducó; hay que regenerarla.
+ */
+export const conversationsCopilotSuggestionInsert = async (
+  orgSlug: string,
+  conversationId: string,
+  suggestionId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<CopilotInsert> => {
+  return apiFetch<CopilotInsert>(
+    getConversationsCopilotSuggestionInsertUrl(orgSlug, conversationId, suggestionId),
+    {
+      ...options,
+      method: "POST",
+    },
+  );
+};
+
+export const getConversationsCopilotSuggestionInsertMutationKey = () =>
+  ["conversationsCopilotSuggestionInsert"] as const;
+
+export const getConversationsCopilotSuggestionInsertMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof conversationsCopilotSuggestionInsert>>,
+    TError,
+    ConversationsCopilotSuggestionInsertMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof conversationsCopilotSuggestionInsert>>,
+  TError,
+  ConversationsCopilotSuggestionInsertMutationVariables,
+  TContext
+> => {
+  const mutationKey = getConversationsCopilotSuggestionInsertMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof conversationsCopilotSuggestionInsert>>,
+    ConversationsCopilotSuggestionInsertMutationVariables
+  > = (props) => {
+    const { orgSlug, conversationId, suggestionId } = props ?? {};
+
+    return conversationsCopilotSuggestionInsert(
+      orgSlug,
+      conversationId,
+      suggestionId,
+      requestOptions,
+    );
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ConversationsCopilotSuggestionInsertMutationResult = NonNullable<
+  Awaited<ReturnType<typeof conversationsCopilotSuggestionInsert>>
+>;
+
+export type ConversationsCopilotSuggestionInsertMutationError = ErrorType<Error>;
+export type ConversationsCopilotSuggestionInsertMutationVariables = {
+  orgSlug: string;
+  conversationId: string;
+  suggestionId: string;
+};
+
+export const useConversationsCopilotSuggestionInsert = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof conversationsCopilotSuggestionInsert>>,
+      TError,
+      ConversationsCopilotSuggestionInsertMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof conversationsCopilotSuggestionInsert>>,
+  TError,
+  ConversationsCopilotSuggestionInsertMutationVariables,
+  TContext
+> => {
+  return useMutation(getConversationsCopilotSuggestionInsertMutationOptions(options), queryClient);
 };
 
 export const getConversationsCopilotSummaryUrl = (orgSlug: string, conversationId: string) => {
