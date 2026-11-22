@@ -3,6 +3,7 @@
 PostgreSQL con `crm_app`; la auditoría y el outbox, leídos con el rol dueño. Datos ficticios."""
 
 import importlib
+import time
 from types import SimpleNamespace
 from typing import Any
 from uuid import UUID, uuid4
@@ -93,6 +94,29 @@ def test_including_it_again_needs_ai_manage_and_then_a_recent_second_factor(
     with tenant_scope(ctx(inbox.a, inbox.vera)) as tenant:  # el comando también lo mira
         with pytest.raises(AccessDenied):
             attention.set_ai_excluded(tenant, conversation_id=convo, excluded=False, version=3)
+
+
+def test_including_it_again_waits_for_a_locked_row_only_so_long_and_checks_before_waiting(
+    inbox: SimpleNamespace, migrator: DB, settings: Any
+) -> None:
+    """F8-13d: volver a incluir espera la fila como mucho `AI_EXCLUSION_WAIT_SECONDS` (409
+    `CONVERSATION_BUSY`, nada cambia); inexistente y versión vieja, sin esperar."""
+    convo = inbox.convs["vera"]
+    assert put(signed(inbox.vera), convo, True).status_code == 200
+    settings.AI_EXCLUSION_WAIT_SECONDS = 1
+    with migrator.transaction():
+        migrator.execute("SELECT 1 FROM conversations WHERE id = %s FOR UPDATE", [convo])
+        started = time.monotonic()
+        busy = put(stepped(inbox.ana), convo, False, 2)
+        took = time.monotonic() - started
+        started = time.monotonic()
+        assert reply(put(stepped(inbox.ana), uuid4(), False, 2)) == NOT_FOUND
+        stale = put(stepped(inbox.ana), convo, False, 1)
+        quick = time.monotonic() - started
+    assert (busy.status_code, busy.json()["code"]) == (409, "CONVERSATION_BUSY") and took < 3
+    assert stale.json()["code"] == "CONVERSATION_VERSION_CONFLICT" and quick < 0.9
+    assert flag(inbox.a, convo) == (True, inbox.vera.pk, 2)
+    assert put(stepped(inbox.ana), convo, False, 2).status_code == 200
 
 
 def test_the_scope_the_organization_and_the_version_come_before_any_change(

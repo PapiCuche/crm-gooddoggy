@@ -384,17 +384,25 @@ describe("exclusión de la IA en el Inbox (F8-13b)", () => {
     expect(s.calls(PUT)).toEqual([{ excluded: true, version: 1 }]);
   });
 
-  it("si la IA sigue respondiendo, lo dice y no cambia nada", async () => {
-    const s = server({}, refusal(409, "AI_CALL_IN_PROGRESS"));
+  it.each([
+    ["AI_CALL_IN_PROGRESS", "La IA sigue respondiendo en esta conversación. No se cambió nada"],
+    ["CONVERSATION_BUSY", "La conversación está ocupada. No se cambió nada"], // F8-13d
+  ])("con %s lo dice, no cambia nada y reintentar funciona", async (code, text) => {
+    const s = server({}, refusal(409, code));
     show(AGENT);
     await openChat();
     fireEvent.click(await ask("Excluir de la IA"));
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "La IA sigue respondiendo en esta conversación. No se cambió nada",
-    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(text);
     expect(s.state.ai_excluded_at).toBeNull();
     expect(screen.queryByText("Excluida de la IA")).toBeNull();
-    expect(s.calls(PUT)).toEqual([{ excluded: true, version: 1 }]);
+    // F8-13d: la confirmación sigue abierta con lo leído; confirmar otra vez sí excluye
+    fireEvent.click(screen.getByRole("button", { name: "Confirmar" }));
+    expect(await screen.findByText("Conversación excluida de la IA.")).toBeVisible();
+    expect(s.state.ai_excluded_at).not.toBeNull();
+    expect(s.calls(PUT)).toEqual([
+      { excluded: true, version: 1 },
+      { excluded: true, version: 1 },
+    ]);
   });
 
   it("el aviso de lo hecho se va si otra persona cambia la marca", async () => {

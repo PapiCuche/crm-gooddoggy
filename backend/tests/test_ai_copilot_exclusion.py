@@ -184,19 +184,21 @@ def test_excluded_after_the_context_and_before_the_first_call_reserves_and_calls
 BROKEN = attention.INCLUDED.replace("c.id = %s", "c.nope = %s")  # un error real de PostgreSQL
 
 
-def test_a_conversation_that_cannot_be_read_or_without_the_call_lock_counts_as_excluded(
+def test_a_conversation_that_cannot_be_read_counts_as_excluded_and_a_lost_lock_is_an_error(
     desk: SimpleNamespace,
 ) -> None:
-    """Sin fila visible (inexistente o de otra organización, por RLS) o sin el candado de la
-    llamada en esta sesión (nunca tomado o perdido con la conexión): falla cerrado."""
+    """Sin fila visible (inexistente o de otra organización, por RLS) o con la marca: `False`.
+    Incluida pero sin el candado en esta sesión (nunca tomado, soltado o de otra sesión):
+    `CallLockLost` (F8-13d: un fallo, no una exclusión). Nunca `True` sin el candado."""
     mine, other = ctx(desk.a, desk.ana), ctx(desk.b, desk.ana)
     with attention.ai_call(mine, desk.convo, 5), tenant_scope(mine):
         assert attention.ai_included(mine, desk.convo) is True
         assert attention.ai_included(mine, uuid4()) is False
-    with tenant_scope(mine):
-        assert attention.ai_included(mine, desk.convo) is False  # ya soltado
+    with tenant_scope(mine), pytest.raises(attention.CallLockLost):
+        attention.ai_included(mine, desk.convo)  # ya soltado
     with attention.ai_call(mine, uuid4(), 5), tenant_scope(mine):  # el de otra conversación
-        assert attention.ai_included(mine, desk.convo) is False
+        with pytest.raises(attention.CallLockLost):
+            attention.ai_included(mine, desk.convo)
     with attention.ai_call(other, desk.convo, 5), tenant_scope(other):
         assert attention.ai_included(other, desk.convo) is False
     held, done = threading.Event(), threading.Event()
@@ -208,10 +210,13 @@ def test_a_conversation_that_cannot_be_read_or_without_the_call_lock_counts_as_e
 
     holder = later(hold)
     assert held.wait(10)
-    with tenant_scope(mine):
-        assert attention.ai_included(mine, desk.convo) is False
+    with tenant_scope(mine), pytest.raises(attention.CallLockLost):
+        attention.ai_included(mine, desk.convo)
     done.set()
     holder.join(10)
+    mark(desk)
+    with tenant_scope(mine):  # con la marca, sin candado: excluida (es cierto)
+        assert attention.ai_included(mine, desk.convo) is False
 
 
 def test_the_organization_switch_is_checked_before_the_exclusion_lock(
@@ -455,15 +460,77 @@ def test_a_call_waits_for_an_exclusion_no_longer_than_its_run_and_the_row_wait_i
     assert desk.fake.calls == [] and migrator.execute(RUNS).fetchall() == [("AI_DEADLINE", 0)]
     gate.set()
     stopping.join(10)
-    monkeypatch.setattr(attention, "record", audit_record)
-    settings.AI_EXCLUSION_WAIT_SECONDS = 1  # el `lock_timeout` sigue para la fila
-    mark(desk, on=False)
-    with migrator.transaction(), pytest.raises(OperationalError):  # el 500, sin esperar sin fin
+
+
+AUDITED = "SELECT count(*) FROM audit_logs WHERE action = 'conversation.ai_excluded'"
+
+
+def test_the_row_gets_only_what_is_left_of_the_wait_and_a_busy_row_is_a_retryable_409(
+    desk: SimpleNamespace, migrator: DB, settings: Any
+) -> None:
+    """F8-13d: tras esperar 1,5 s a la llamada, la fila espera solo lo que queda de los 2 s
+    (nunca dos esperas enteras); si sigue bloqueada, 409 `CONVERSATION_BUSY` y nada cambia."""
+    settings.AI_EXCLUSION_WAIT_SECONDS = 2
+    held = threading.Event()
+
+    def hold() -> None:
+        with attention.ai_call(ctx(desk.a, desk.ana), desk.convo, 5):
+            held.set()
+            threading.Event().wait(1.5)  # `desk` sustituye `time.sleep`
+
+    version = migrator_version(desk)
+    with migrator.transaction():
         migrator.execute("SELECT 1 FROM conversations WHERE id = %s FOR UPDATE", [desk.convo])
+        holder = later(hold)
+        assert held.wait(10)
         started = time.monotonic()
-        put(desk)
-    assert time.monotonic() - started < 5
-    assert excluded_at(migrator, desk) is None
+        answer = put(desk)
+        took = time.monotonic() - started
+    holder.join(10)
+    assert (answer.status_code, answer.json()["code"]) == (409, "CONVERSATION_BUSY")
+    assert 1.4 < took < 2.8  # una espera de 2 s, no 1,5 + 2
+    assert excluded_at(migrator, desk) is None and migrator_version(desk) == version
+    assert migrator.execute(AUDITED).fetchone() == (0,)
+    assert put(desk).status_code == 200  # reintentar, ya libre
+
+
+def test_a_stale_version_is_refused_before_waiting_and_takes_no_waiting_slot(
+    desk: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F8-13d: con una llamada en curso, una versión vieja es 409 enseguida (sin esperar ni ocupar
+    el único hueco de espera)."""
+    w, outcome = in_flight(desk, monkeypatch), list[str]()
+    desk.fake.replies = [PLAIN]
+    asking = later(lambda: asked(desk, outcome))
+    assert w.inside.wait(10)
+    started = time.monotonic()
+    answer = send(signed(desk.ana), "put", f"{BASE}{desk.convo}/ai-exclusion/",
+                  {"excluded": True, "version": migrator_version(desk) + 1})  # fmt: skip
+    assert (answer.status_code, answer.json()["code"]) == (409, "CONVERSATION_VERSION_CONFLICT")
+    assert time.monotonic() - started < 1 and migrator.execute(WAITING).fetchone() == (0,)
+    w.gate.set()
+    asking.join(20)
+    assert outcome == ["OK"] and excluded_at(migrator, desk) is None
+
+
+def test_a_call_lock_whose_short_transaction_fails_after_taking_it_closes_the_connection(
+    desk: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F8-13d: el candado es de sesión; si su transacción corta falla después de tomarlo, la
+    conexión se cierra (la base lo suelta) y no queda retenido."""
+    real = attention._locked
+
+    def broken(*args: Any) -> None:
+        real(*args)
+        raise OperationalError("tras tomarlo")
+
+    monkeypatch.setattr(attention, "_locked", broken)
+    with pytest.raises(OperationalError), attention.ai_call(ctx(desk.a, desk.ana), desk.convo, 5):
+        pytest.fail("no entra")
+    assert connection.connection is None
+    assert migrator.execute(
+        "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory'"
+    ).fetchone() == (0,)
 
 
 def test_every_gateway_call_in_the_apps_passes_its_check() -> None:

@@ -5,6 +5,7 @@ Audita ids y códigos y deja `conversation.updated` para el Inbox; nada sale al 
 También la exclusión de la IA de una conversación (F8-13, `set_ai_excluded`) y, para el copiloto
 (F8-13c), el candado de cada llamada (`ai_call`) y su comprobación (`ai_included`)."""
 
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime
@@ -36,11 +37,11 @@ _CALL_SHARED, _CALL_FREE = (f"SELECT pg_advisory_lock_shared({_KEY})",
 _CALL_EXCLUSIVE, _ONE = (f"SELECT pg_advisory_xact_lock({_KEY})",
                          f"SELECT pg_try_advisory_xact_lock({_KEY})")  # fmt: skip
 _WAIT = "SELECT set_config('lock_timeout', %s, true)"
-# La marca, solo con el candado en esta sesión (falla cerrado). Sin `FOR SHARE`: con el candado, la
+# La marca y si esta sesión tiene el candado (falla cerrado). Sin `FOR SHARE`: con el candado, la
 # marca no cambia. Una clave `bigint` va en `classid` (alta) y `objid` (baja).
 INCLUDED = """
 WITH k AS (SELECT hashtextextended(%s, 0) AS v)
-SELECT c.ai_excluded_at IS NULL AND EXISTS (
+SELECT c.ai_excluded_at IS NULL, EXISTS (
   SELECT 1 FROM pg_locks l, k WHERE l.locktype = 'advisory' AND l.pid = pg_backend_pid()
     AND l.granted AND l.objsubid = 1
     AND l.classid = ((k.v >> 32) & 4294967295)::oid AND l.objid = (k.v & 4294967295)::oid)
@@ -49,6 +50,14 @@ FROM conversations c WHERE c.id = %s
 
 
 class AICallInProgress(Exception):  # noqa: N818 — una llamada a la IA no terminó a tiempo
+    pass
+
+
+class CallLockLost(Exception):  # noqa: N818 — F8-13d: la sesión ya no tiene el candado de la llamada
+    pass
+
+
+class ConversationBusy(Exception):  # noqa: N818 — F8-13d: la fila siguió bloqueada todo el plazo
     pass
 
 
@@ -170,17 +179,26 @@ def set_ai_excluded(
     pide `conversations.view` y su alcance (protege: quien atiende cumple lo que pide el cliente);
     incluirla, además `ai.manage` (el segundo factor lo pide la ruta). Permiso, bloqueo, alcance
     sobre la fila bloqueada (si no, el mismo `DoesNotExist`), versión (`VersionConflict`) y estado:
-    la misma marca no cambia nada. Audita solo ids y deja `conversation.updated` para el Inbox."""
+    la misma marca no cambia nada. Audita solo ids y deja `conversation.updated` para el Inbox.
+    F8-13d: los dos caminos miran alcance y versión antes de esperar; la fila, si sigue bloqueada
+    todo el plazo, es `ConversationBusy` (nada cambió)."""
     if type(excluded) is not bool or type(version) is not int or not 1 <= version <= 2**31 - 1:
         raise ValueError("exclusión: un booleano y una versión desde 1")
     alias = require_scope(ctx)
     with transaction.atomic(using=alias):
         if not excluded and not has_permission(execution_context(ctx), MANAGE_AI):
             raise AccessDenied(Denied.PERMISSION)
-        if excluded:  # F8-13c: el alcance antes de esperar; después, las llamadas en curso
-            _visible(ctx, alias, conversation_id, lock=False)
+        # alcance y versión antes de esperar (el mismo 404, sin esperar); excluir espera además a
+        # las llamadas (F8-13c); incluir, solo a la fila, con el mismo tope (F8-13d)
+        if _visible(ctx, alias, conversation_id, lock=False).version != version:
+            raise VersionConflict
+        if excluded:
             _wait_for_calls(ctx, alias, conversation_id)
-        convo = _visible(ctx, alias, conversation_id)
+        else:
+            with connections[alias].cursor() as cursor:
+                cursor.execute(_WAIT, [_ms(settings.AI_EXCLUSION_WAIT_SECONDS)])
+        with _busy(ConversationBusy):
+            convo = _visible(ctx, alias, conversation_id)
         if convo.version != version:
             raise VersionConflict
         if (convo.ai_excluded_at is not None) is excluded:
@@ -206,21 +224,28 @@ def _ms(seconds: float) -> str:
     return f"{max(int(seconds * 1000), 1)}ms"
 
 
-def _locked(cursor: Any, sql: str, key: str) -> None:
-    """Un candado con el `lock_timeout` ya fijado; si no llega, `AICallInProgress`."""
+@contextmanager
+def _busy(busy: type[Exception]) -> Iterator[None]:
+    """Un `lock_timeout` agotado (55P03) es `busy`; otro error sale tal cual."""
     try:
-        cursor.execute(sql, [key])
+        yield
     except OperationalError as error:
         if getattr(error.__cause__, "sqlstate", None) == "55P03":  # lock_not_available
-            raise AICallInProgress from None
+            raise busy from None
         raise
+
+
+def _locked(cursor: Any, sql: str, key: str) -> None:
+    """Un candado con el `lock_timeout` ya fijado; si no llega, `AICallInProgress`."""
+    with _busy(AICallInProgress):
+        cursor.execute(sql, [key])
 
 
 def _wait_for_calls(ctx: TenantContext, alias: str, conversation_id: UUID) -> None:
     """El candado exclusivo de las llamadas, como mucho `AI_EXCLUSION_WAIT_SECONDS`, y una sola
     exclusión esperando por conversación (otra, `AICallInProgress` enseguida: no retiene una
-    conexión). El `lock_timeout` sigue hasta el fin de la transacción: también acota la fila."""
-    key = _key(ctx, conversation_id)
+    conexión). A la fila le queda solo lo que sobre del plazo (F8-13d): nunca dos esperas."""
+    key, end = _key(ctx, conversation_id), time.monotonic() + settings.AI_EXCLUSION_WAIT_SECONDS
     with connections[alias].cursor() as cursor:
         cursor.execute(_WAIT, [_ms(settings.AI_EXCLUSION_WAIT_SECONDS)])
         for one in (key, WAITER.format(ctx.organization_id, conversation_id)):
@@ -231,6 +256,7 @@ def _wait_for_calls(ctx: TenantContext, alias: str, conversation_id: UUID) -> No
             raise AICallInProgress
         if one != key:
             _locked(cursor, _CALL_EXCLUSIVE, key)
+        cursor.execute(_WAIT, [_ms(end - time.monotonic())])
 
 
 @contextmanager
@@ -239,14 +265,21 @@ def ai_call(ctx: TenantContext, conversation_id: UUID, seconds: float) -> Iterat
     conexión de `ctx` y **fuera** de toda transacción: de antes de la reserva al fin del envío (y
     sus reintentos). Espera como mucho `seconds` (si no, `AICallInProgress`); se toma en una
     transacción corta (el `lock_timeout` es suyo) y sigue tras ella. Se suelta al salir, también
-    con un error; si no se puede soltar, se cierra la conexión (la base suelta sus candados)."""
+    con un error; si no se puede soltar, se cierra la conexión (la base suelta sus candados). Si la
+    transacción corta falla tras tomarlo, también se cierra (F8-13d)."""
     db = connections["default"]
     if db.in_atomic_block:
         raise RuntimeError("ai_call() es de sesión: ninguna transacción abierta")
     key = _key(ctx, conversation_id)
-    with transaction.atomic(using="default"), db.cursor() as cursor:
-        cursor.execute(_WAIT, [_ms(seconds)])
-        _locked(cursor, _CALL_SHARED, key)
+    try:
+        with transaction.atomic(using="default"), db.cursor() as cursor:
+            cursor.execute(_WAIT, [_ms(seconds)])
+            _locked(cursor, _CALL_SHARED, key)
+    except AICallInProgress:  # no llegó a tomarlo
+        raise
+    except BaseException:
+        db.close()
+        raise
     try:
         yield
     finally:
@@ -263,9 +296,15 @@ def ai_call(ctx: TenantContext, conversation_id: UUID, seconds: float) -> Iterat
 def ai_included(ctx: TenantContext, conversation_id: UUID) -> bool:
     """F8-13c: si la conversación (RLS) no está excluida de la IA **y** esta sesión tiene el
     candado de la llamada (`ai_call`): con él, ninguna exclusión se confirma hasta soltarlo. Sin
-    fila o sin el candado, `False` (falla cerrado). Sin permisos: quien llama ya los miró."""
+    fila o con la marca, `False`; incluida pero sin el candado (la sesión lo perdió, p. ej., al
+    volver a conectar), `CallLockLost` (F8-13d: un fallo, no una exclusión). Sin permisos: quien
+    llama ya los miró."""
     key = _key(ctx, conversation_id)
     with connections[require_scope(ctx)].cursor() as cursor:
         cursor.execute(INCLUDED, [key, conversation_id])
         row = cursor.fetchone()
-    return row is not None and row[0] is True
+    if row is None or row[0] is not True:
+        return False
+    if row[1] is not True:
+        raise CallLockLost
+    return True

@@ -7373,7 +7373,7 @@ export const getConversationAiExclusionSetUrl = (orgSlug: string, conversationId
 };
 
 /**
- * Excluye la conversación de la IA (`conversations.view` y su alcance): el copiloto ya no la lee ni la manda a un proveedor (409 `AI_EXCLUDED`). Volver a incluirla pide además `ai.manage` y el segundo factor reciente (403 `STEP_UP_REQUIRED`). La misma marca no cambia nada. Excluir espera a que terminen las llamadas a la IA en curso sobre ella (ninguna empieza después): si no terminan a tiempo, 409 `AI_CALL_IN_PROGRESS` sin cambiar nada (reintentar). 409 `CONVERSATION_VERSION_CONFLICT`; 404: no existe o fuera del alcance.
+ * Excluye la conversación de la IA (`conversations.view` y su alcance): el copiloto ya no la lee ni la manda a un proveedor (409 `AI_EXCLUDED`). Volver a incluirla pide además `ai.manage` y el segundo factor reciente (403 `STEP_UP_REQUIRED`). La misma marca no cambia nada. Excluir espera a que terminen las llamadas a la IA en curso sobre ella (ninguna empieza después): si no terminan a tiempo, 409 `AI_CALL_IN_PROGRESS` sin cambiar nada (reintentar); si la conversación sigue ocupada, 409 `CONVERSATION_BUSY`, también sin cambiar nada. 409 `CONVERSATION_VERSION_CONFLICT` (excluir lo mira antes de esperar); 404: no existe o fuera del alcance.
  */
 export const conversationAiExclusionSet = async (
   orgSlug: string,

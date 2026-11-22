@@ -1,9 +1,9 @@
 """El adaptador de Anthropic (F8-05; ADR-034 §3): la Messages API por `core.http`, nunca con el
 SDK; tools con `tool_choice: auto` y la respuesta final con `output_config.format`. Como mucho dos
 reintentos, solo tras un 429 o un 5xx (sin uso) y dentro del plazo; nunca tras un tiempo agotado o
-un corte (pudo facturar), y solo si `proceed()` lo permite tras la espera (F8-13c: la exclusión de
-la conversación o la persona; si no, no se reenvía). Solo se registran el estado y el `request-id`,
-nunca el cuerpo."""
+un corte (pudo facturar). `proceed()` corre en `core.http` antes de cada envío, ya conectado y
+antes de escribir nada (F8-13d; la exclusión de la conversación o la persona, F8-13c): si no da
+`True`, no sale nada. Solo se registran el estado y el `request-id`, nunca el cuerpo."""
 
 import json
 import re
@@ -120,12 +120,15 @@ class AnthropicAdapter:
         url = f"https://{settings.AI_PROVIDER_HOSTS['ANTHROPIC']}/v1/messages"
         headers = {"x-api-key": key, "anthropic-version": probe.API_VERSION,
                    "content-type": "application/json"}  # fmt: skip
-        end = time.monotonic() + seconds
+        end, rid = time.monotonic() + seconds, ""
         with http.deadline(seconds):
             for attempt in range(ATTEMPTS):
                 try:
                     reply = http.request("POST", url, headers=headers, body=body,
-                                         read_seconds=end - time.monotonic())  # fmt: skip
+                                         read_seconds=end - time.monotonic(),
+                                         before_send=proceed)  # fmt: skip
+                except http.Withheld:  # conectado, sin escribir nada: no pudo facturar
+                    raise ProviderError(Outcome.AI_WITHHELD, billed=False, request_id=rid) from None
                 except (http.BlockedDestination, http.HTTPError, OSError) as error:
                     billed = not http.never_connected(error)  # salió: pudo cobrarla
                     logger.warning("ai.provider_call_failed", provider="ANTHROPIC", billed=billed)
@@ -145,7 +148,5 @@ class AnthropicAdapter:
                 again = again and (reply.status == 429 or reply.status >= 500)
                 if not again or time.monotonic() + wait >= end:
                     raise ProviderError(outcome, billed=False, request_id=rid)
-                time.sleep(wait)
-                if not proceed():  # F8-13c: tras la espera, antes de reenviar el contenido
-                    raise ProviderError(Outcome.AI_WITHHELD, billed=False, request_id=rid)
+                time.sleep(wait)  # el reenvío pasa otra vez por `proceed()` (F8-13c)
         raise AssertionError("inalcanzable")  # pragma: no cover
