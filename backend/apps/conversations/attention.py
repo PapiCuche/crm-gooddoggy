@@ -2,13 +2,17 @@
 o el copiloto al detectar un traspaso, a nombre de su persona; se cierra a mano, al responder una
 persona, al tomarla o pasarla, o al resolverla o cerrarla. Idempotente; organización del contexto.
 Audita ids y códigos y deja `conversation.updated` para el Inbox; nada sale al cliente.
-También la exclusión de la IA de una conversación (F8-13, `set_ai_excluded`)."""
+También la exclusión de la IA de una conversación (F8-13, `set_ai_excluded`) y, para el copiloto
+(F8-13c), el candado de cada llamada (`ai_call`) y su comprobación (`ai_included`)."""
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from django.db import transaction
+from django.conf import settings
+from django.db import OperationalError, connections, transaction
 from django.db.models import F, QuerySet
 from django.utils import timezone
 
@@ -23,18 +27,46 @@ from core.tenancy.scope import require_scope
 
 VIEW = "conversations.view"
 MANAGE_AI = "ai.manage"  # F8-13: volver a incluirla en la IA
+# F8-13c: el candado de las llamadas a la IA de una conversación: compartido de sesión en cada una
+# (`ai_call`), exclusivo de transacción al excluirla. Siempre el consultivo y después la fila.
+CALL, WAITER = "ai-call:{}:{}", "ai-call-wait:{}:{}"  # el segundo: como mucho una exclusión espera
+_KEY = "hashtextextended(%s, 0)"
+_CALL_SHARED, _CALL_FREE = (f"SELECT pg_advisory_lock_shared({_KEY})",
+                            f"SELECT pg_advisory_unlock_shared({_KEY})")  # fmt: skip
+_CALL_EXCLUSIVE, _ONE = (f"SELECT pg_advisory_xact_lock({_KEY})",
+                         f"SELECT pg_try_advisory_xact_lock({_KEY})")  # fmt: skip
+_WAIT = "SELECT set_config('lock_timeout', %s, true)"
+# La marca, solo con el candado en esta sesión (falla cerrado). Sin `FOR SHARE`: con el candado, la
+# marca no cambia. Una clave `bigint` va en `classid` (alta) y `objid` (baja).
+INCLUDED = """
+WITH k AS (SELECT hashtextextended(%s, 0) AS v)
+SELECT c.ai_excluded_at IS NULL AND EXISTS (
+  SELECT 1 FROM pg_locks l, k WHERE l.locktype = 'advisory' AND l.pid = pg_backend_pid()
+    AND l.granted AND l.objsubid = 1
+    AND l.classid = ((k.v >> 32) & 4294967295)::oid AND l.objid = (k.v & 4294967295)::oid)
+FROM conversations c WHERE c.id = %s
+"""
+
+
+class AICallInProgress(Exception):  # noqa: N818 — una llamada a la IA no terminó a tiempo
+    pass
+
+
 FIELDS = ("human_requested_at", "human_request_reason", "human_requested_by_user_id")
 
 
-def _visible(ctx: TenantContext, alias: str, conversation_id: Any) -> Conversation:
-    """La conversación bloqueada, si el actor tiene `conversations.view` (antes de leerla) y está en
-    su alcance; si no, el mismo `DoesNotExist` que una desconocida o de otra organización."""
+def _visible(
+    ctx: TenantContext, alias: str, conversation_id: Any, *, lock: bool = True
+) -> Conversation:
+    """La conversación (bloqueada si `lock`), si el actor tiene `conversations.view` (antes de
+    leerla) y está en su alcance; si no, el mismo `DoesNotExist` que una desconocida o ajena."""
     if not isinstance(conversation_id, UUID):
         raise ValueError("conversación: un identificador")
     ectx = execution_context(ctx)  # `AccessDenied` si no es un miembro activo
     if not has_permission(ectx, VIEW):
         raise AccessDenied(Denied.PERMISSION)
-    found = Conversation.objects.using(alias).select_for_update(no_key=True)
+    found = Conversation.objects.using(alias)
+    found = found.select_for_update(no_key=True) if lock else found
     convo: Conversation | None = found.filter(pk=conversation_id).first()
     if convo is None or not can(ectx, VIEW, convo):
         raise Conversation.DoesNotExist("Conversation matching query does not exist.")
@@ -145,6 +177,9 @@ def set_ai_excluded(
     with transaction.atomic(using=alias):
         if not excluded and not has_permission(execution_context(ctx), MANAGE_AI):
             raise AccessDenied(Denied.PERMISSION)
+        if excluded:  # F8-13c: el alcance antes de esperar; después, las llamadas en curso
+            _visible(ctx, alias, conversation_id, lock=False)
+            _wait_for_calls(ctx, alias, conversation_id)
         convo = _visible(ctx, alias, conversation_id)
         if convo.version != version:
             raise VersionConflict
@@ -161,3 +196,76 @@ def set_ai_excluded(
         emit(ctx, "conversation.updated", aggregate_type="conversation", aggregate_id=convo.pk)
         convo.refresh_from_db(using=alias)
         return convo, True
+
+
+def _key(ctx: TenantContext, conversation_id: UUID) -> str:
+    return CALL.format(ctx.organization_id, conversation_id)
+
+
+def _ms(seconds: float) -> str:
+    return f"{max(int(seconds * 1000), 1)}ms"
+
+
+def _locked(cursor: Any, sql: str, key: str) -> None:
+    """Un candado con el `lock_timeout` ya fijado; si no llega, `AICallInProgress`."""
+    try:
+        cursor.execute(sql, [key])
+    except OperationalError as error:
+        if getattr(error.__cause__, "sqlstate", None) == "55P03":  # lock_not_available
+            raise AICallInProgress from None
+        raise
+
+
+def _wait_for_calls(ctx: TenantContext, alias: str, conversation_id: UUID) -> None:
+    """El candado exclusivo de las llamadas, como mucho `AI_EXCLUSION_WAIT_SECONDS`, y una sola
+    exclusión esperando por conversación (otra, `AICallInProgress` enseguida: no retiene una
+    conexión). El `lock_timeout` sigue hasta el fin de la transacción: también acota la fila."""
+    key = _key(ctx, conversation_id)
+    with connections[alias].cursor() as cursor:
+        cursor.execute(_WAIT, [_ms(settings.AI_EXCLUSION_WAIT_SECONDS)])
+        for one in (key, WAITER.format(ctx.organization_id, conversation_id)):
+            cursor.execute(_ONE, [one])  # libre: sin esperar; si no, ¿hay ya quien espera?
+            if cursor.fetchone()[0] is True:
+                break
+        else:
+            raise AICallInProgress
+        if one != key:
+            _locked(cursor, _CALL_EXCLUSIVE, key)
+
+
+@contextmanager
+def ai_call(ctx: TenantContext, conversation_id: UUID, seconds: float) -> Iterator[None]:
+    """F8-13c: el candado compartido de una llamada a la IA sobre la conversación, de sesión, en la
+    conexión de `ctx` y **fuera** de toda transacción: de antes de la reserva al fin del envío (y
+    sus reintentos). Espera como mucho `seconds` (si no, `AICallInProgress`); se toma en una
+    transacción corta (el `lock_timeout` es suyo) y sigue tras ella. Se suelta al salir, también
+    con un error; si no se puede soltar, se cierra la conexión (la base suelta sus candados)."""
+    db = connections["default"]
+    if db.in_atomic_block:
+        raise RuntimeError("ai_call() es de sesión: ninguna transacción abierta")
+    key = _key(ctx, conversation_id)
+    with transaction.atomic(using="default"), db.cursor() as cursor:
+        cursor.execute(_WAIT, [_ms(seconds)])
+        _locked(cursor, _CALL_SHARED, key)
+    try:
+        yield
+    finally:
+        try:
+            with db.cursor() as cursor:
+                cursor.execute(_CALL_FREE, [key])
+                freed = cursor.fetchone()[0] is True
+        except Exception:
+            freed = False
+        if not freed:
+            db.close()
+
+
+def ai_included(ctx: TenantContext, conversation_id: UUID) -> bool:
+    """F8-13c: si la conversación (RLS) no está excluida de la IA **y** esta sesión tiene el
+    candado de la llamada (`ai_call`): con él, ninguna exclusión se confirma hasta soltarlo. Sin
+    fila o sin el candado, `False` (falla cerrado). Sin permisos: quien llama ya los miró."""
+    key = _key(ctx, conversation_id)
+    with connections[require_scope(ctx)].cursor() as cursor:
+        cursor.execute(INCLUDED, [key, conversation_id])
+        row = cursor.fetchone()
+    return row is not None and row[0] is True

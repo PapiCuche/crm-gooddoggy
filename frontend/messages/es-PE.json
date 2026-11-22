@@ -2611,6 +2611,23 @@
         "AGENT": "La pidió quien atiende."
       }
     },
+    "aiExclusion": {
+      "exclude": "Excluir de la IA",
+      "include": "Volver a incluir en la IA",
+      "excludeQuestion": "¿Excluir esta conversación de la IA? Vale solo para esta conversación, no para el contacto: el copiloto deja de leer sus mensajes y de enviarlos a un proveedor de IA, así que no habrá sugerencias ni resúmenes nuevos. Volver a incluirla solo lo puede hacer quien administra la IA.",
+      "includeQuestion": "¿Volver a incluir esta conversación en la IA? El copiloto podrá leer sus mensajes y enviarlos al proveedor de IA para sugerir y resumir. Hazlo solo si el cliente lo aceptó. Puede que te pidamos tu código de segundo factor.",
+      "cancel": "Cancelar",
+      "confirm": "Confirmar",
+      "saving": "Guardando…",
+      "excluded": "Conversación excluida de la IA.",
+      "included": "La conversación vuelve a estar incluida en la IA.",
+      "badge": "Excluida de la IA",
+      "mark": "Sin IA",
+      "stale": "Otra persona cambió esta conversación. Actualiza y vuelve a intentarlo.",
+      "denied": "No puedes cambiar esta conversación. Puede que ya no esté en tu alcance.",
+      "stepUp": "Confirma tu identidad con un código de segundo factor para volver a incluirla.",
+      "busy": "La IA sigue respondiendo en esta conversación. No se cambió nada: vuelve a intentarlo en un momento."
+    },
     "copilot": {
       "label": "Copiloto de IA",
       "suggest": "Sugerir respuesta",

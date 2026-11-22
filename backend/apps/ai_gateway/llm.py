@@ -1,6 +1,7 @@
 """La interfaz de proveedor (F8-05; ADR-005 Parte B, ADR-034 §2): un formato neutro que cada
 adaptador traduce a su API. Nada de aquí se registra: lleva el texto del cliente."""
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Protocol
@@ -26,6 +27,8 @@ class Outcome(StrEnum):  # los siete primeros quedan en `ai_llm_calls.outcome`
     # F8-08g2: el ajuste falló (la base) y la reserva queda abierta: el barrido la cierra como
     # gastada. Solo para quien llama, con el id de la reserva; nunca en el registro.
     INTERNAL_ERROR = "INTERNAL_ERROR"
+    # F8-13c: `admit` lo negó o falló (nada más salió). Solo para quien llama, nunca en el registro.
+    AI_WITHHELD = "AI_WITHHELD"
 
 
 @dataclass(frozen=True)
@@ -121,4 +124,6 @@ class ProviderError(Exception):  # noqa: N818 — solo el código y si pudo fact
 class LLMProviderAdapter(Protocol):
     def encode(self, request: LLMRequest, params: dict[str, Any]) -> bytes: ...  # lo que se envía
 
-    def send(self, key: str, body: bytes, seconds: float) -> LLMResponse: ...  # o ProviderError
+    def send(  # o ProviderError; `proceed()` antes de cada reintento: si no, no reenvía (F8-13c)
+        self, key: str, body: bytes, seconds: float, proceed: Callable[[], bool]
+    ) -> LLMResponse: ...

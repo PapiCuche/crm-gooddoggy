@@ -30,7 +30,7 @@ from tests.ai_queries import captured, writes
 from tests.ai_sim import BODY_MARK, TEST_KEY
 from tests.factories import make_user
 from tests.test_ai_copilot_context import conversation, say
-from tests.test_ai_copilot_runtime import NOTE, desk, use
+from tests.test_ai_copilot_runtime import NOTE, SHARED, desk, use
 from tests.test_ai_copilot_suggest_api import COUNTED, DB, SHOWN, SPENT, built, scalar
 from tests.test_ai_copilot_suggest_api import ask as suggest
 from tests.test_ai_gateway import world
@@ -110,7 +110,9 @@ def test_an_injection_in_the_customer_text_adds_no_tool_and_a_tool_call_ends_the
     assert (answer.status_code, answer.json()) == (502, {"code": "PROVIDER_UNAVAILABLE"})
     assert ["tools" in body for body in desk.fake.bodies()] == [False]
     tables = "ai_runs|ai_actions|ai_suggestions|audit_logs|login_throttles"
-    allowed = rf'\s*((INSERT INTO|UPDATE) "?({tables})"? |SELECT pg_advisory_xact_lock_shared\()'
+    allowed = (
+        rf'\s*((INSERT INTO|UPDATE) "?({tables})"? |SELECT pg_advisory_xact_lock_shared\(|{SHARED})'
+    )
     assert [s for s in writes(seen) if not re.match(allowed, s)] == []
     assert migrator.execute(RUN).fetchall() == [
         ("SUMMARY", "PROVIDER_UNAVAILABLE", False, None, {})

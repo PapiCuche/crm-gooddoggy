@@ -12,9 +12,12 @@ leído una vez en la transacción de la reserva: con él se estima, se reserva, 
 uno sin precio (fuera de `AI_MODELS`) falla cerrado antes de abrir la clave y de reservar. Un turno
 con tools (F8-05b7) se valida antes de todo; la cota suma lo que sus bytes no acotan: el
 razonamiento reenviado y las imágenes (`turns.surplus`). Kill switch (F8-06, `AI_DISABLED`): el
-global antes de validar; el de la organización, primero en el scope. El ajuste no lo mira."""
+global antes de validar; el de la organización, primero en el scope. El ajuste no lo mira.
+F8-13c: `admit`, la comprobación opaca de quien llama, corre en la transacción de la reserva tras
+el interruptor y, en su scope, antes de cada reintento; `False` o error: ni reserva ni reenvío."""
 
 import time
+from collections.abc import Callable
 from dataclasses import replace
 from decimal import Decimal
 from typing import Any, NoReturn
@@ -130,9 +133,25 @@ def _settled(ctx: TenantContext, held: UUID, *args: Any) -> None:
         raise GatewayError(Outcome.INTERNAL_ERROR, held) from None
 
 
+def _again(ctx: TenantContext, admit: Callable[[], bool] | None) -> Callable[[], bool]:
+    """Antes de cada reintento: `admit` en su propio scope; un error no reenvía (falla cerrado)."""
+
+    def proceed() -> bool:
+        if admit is None:
+            return True
+        try:
+            with tenant_scope(ctx):
+                return admit()
+        except Exception as error:  # nunca su mensaje: puede llevar valores
+            logger.warning("ai.retry_withheld", error=type(error).__name__)
+            return False
+
+    return proceed
+
+
 def complete(
     ctx: TenantContext, request: LLMRequest, provider: str = "ANTHROPIC",
-    deadline: float | None = None,
+    deadline: float | None = None, admit: Callable[[], bool] | None = None,
 ) -> LLMResponse:  # fmt: skip
     """Una llamada al modelo con el presupuesto de la organización de `ctx`. Se llama **fuera** de
     toda transacción (abre las suyas). `GatewayError` con el código si no hay respuesta. F8-08g:
@@ -151,6 +170,8 @@ def complete(
     with tenant_scope(ctx):
         if not switch.is_on(ctx):  # bloqueada hasta confirmar la reserva: apagar la espera
             raise GatewayError(Outcome.AI_DISABLED)
+        if admit is not None and not admit():  # F8-13c: en esta transacción, hasta confirmarla
+            raise GatewayError(Outcome.AI_WITHHELD)
         model = _model(ctx, provider)  # el mismo para la cota, la reserva, la llamada y el costo
         try:  # el cuerpo ya codificado; lo que sus bytes no acotan (razonamiento e imágenes)
             body = adapter.encode(request, {**params, "model": model})
@@ -180,12 +201,14 @@ def complete(
         raise GatewayError(Outcome.PROVIDER_UNAVAILABLE, held)
     seconds = min(float(params["seconds"]), left)
     try:
-        reply = adapter.send(key, body, seconds)
+        reply = adapter.send(key, body, seconds, _again(ctx, admit))
     except ProviderError as error:
         if error.billed:  # salió y no hubo respuesta: cuenta entera
             _settled(ctx, held, Outcome.PROVIDER_UNCERTAIN, None, None, started, error.request_id)
-        else:  # no salió, o un error sin uso: se libera
-            _settled(ctx, held, error.outcome, Decimal(0), None, started, error.request_id)
+        else:  # no salió, o un error sin uso: se libera; retenido, tras un 429 o un 5xx (F8-13c)
+            withheld = error.outcome == Outcome.AI_WITHHELD
+            logged = Outcome.PROVIDER_UNAVAILABLE if withheld else error.outcome
+            _settled(ctx, held, logged, Decimal(0), None, started, error.request_id)
         raise GatewayError(error.outcome, held) from None
     # F8-07d: una tool no ofrecida o un id ya usado en la conversación no se podrían reenviar
     offered = {tool.name for tool in request.tools}

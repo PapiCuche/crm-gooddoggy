@@ -53,6 +53,8 @@ GRANTS = {"ai.use": None, "conversations.view": "OWN", "products.view": None,
 CONTACT = {"display_name": "Berilo Cliente", "primary_email": "berilo@example.com"}
 NOTE, ASK = "nota-interna-berilo", "Hola, ¿tienen collares? escribo desde berilo@example.com"
 NAME = ("c1", "PRODUCT_NAME", "toolu_1", "products.0.name")
+# F8-13c: el candado de la llamada y la marca con FOR SHARE (no escriben nada)
+SHARED = r"SELECT pg_advisory_(un)?lock_shared\(|\s*WITH k AS \(SELECT hashtextextended\("
 
 
 def use(id_: str, name: str = "search_product", **data: Any) -> dict[str, Any]:
@@ -147,10 +149,10 @@ def test_a_full_run_writes_only_ai_records_and_never_sends_notes_or_contact_data
     assert "collares" in sent and not any(s in sent for s in (NOTE, "Berilo", "berilo@"))
     [(feedback,)] = [(c["text"],) for c in bodies[2]["messages"][-1]["content"]]
     assert re.fullmatch(r"Tramos sin evidencia .*: FIGURE \d+-\d+", feedback)  # sin «30 soles»
-    # lo único que no es `ai_*` ni `audit_logs`: el candado compartido del interruptor (F8-06),
-    # de la transacción de cada reserva
+    # lo único que no es `ai_*` ni `audit_logs`: el candado compartido del interruptor (F8-06) y el
+    # de la conversación (F8-13c), de la transacción de cada reserva
     tables = "ai_runs|ai_actions|ai_suggestions|audit_logs"
-    allowed = rf'\s*(INSERT INTO "?({tables})"? |SELECT pg_advisory_xact_lock_shared\()'
+    allowed = rf'\s*(INSERT INTO "?({tables})"? |SELECT pg_advisory_xact_lock_shared\(|{SHARED})'
     found = [s for s in writes(seen) if not re.match(allowed, s)]
     assert found == [] and rows(migrator, "SELECT count(*) FROM messages") == messages
     queued = "SELECT count(*) FROM outbox_events WHERE event_type = 'message.queued'"
@@ -233,9 +235,9 @@ def test_no_call_starts_or_runs_past_the_total_deadline(
     """Plazo de 50 s; el proveedor recibe lo que queda al enviar (esperar la reserva cuenta)."""
     now, real, reserve = [1000.0], gateway.complete, gateway._reserve
 
-    def slow(tenant: Any, request: Any, deadline: float) -> Any:
+    def slow(tenant: Any, request: Any, deadline: float, **admit: Any) -> Any:
         assert deadline == 1050
-        reply = real(tenant, request, deadline=deadline)
+        reply = real(tenant, request, deadline=deadline, **admit)
         now[0] += took
         return reply
 
@@ -277,10 +279,10 @@ def test_losing_ai_use_or_the_membership_midway_stops_before_the_next_paid_call(
 ) -> None:
     real = gateway.complete
 
-    def complete(tenant: Any, request: Any, deadline: float) -> Any:
+    def complete(tenant: Any, request: Any, deadline: float, **admit: Any) -> Any:
         if desk.fake.calls and lost == "membership":
             raise AccessDenied(Denied.MEMBERSHIP)
-        reply = real(tenant, request, deadline=deadline)
+        reply = real(tenant, request, deadline=deadline, **admit)
         if lost == "ai.use":
             migrator.execute("DELETE FROM role_permissions WHERE permission_code = 'ai.use'")
         return reply
@@ -567,7 +569,7 @@ USES = {  # módulo importado → sus atributos: exactamente estos
     "json": "loads",
     "re": "compile", "records": "Action Finding Run Suggestion save",
     "registry": "invoke_read_only", "replies": "current", "time": "monotonic",
-    "attention": "request_human",
+    "attention": "AICallInProgress ai_call ai_included request_human",  # F8-13c: el candado
 }  # fmt: skip
 DYNAMIC = {"globals", "locals", "vars", "eval", "exec", "compile", "getattr", "setattr", "delattr",
            "breakpoint"}  # fmt: skip

@@ -90,10 +90,10 @@ def drafted(
     run: Callable[[Any, UUID], copilot.Draft], request: Request, conversation_id: UUID
 ) -> copilot.Draft:
     """`run` del runtime con el tenant de la petición; sus errores, como respuestas. Antes, la
-    exclusión de la IA (F8-13, `copilot.admit`: ni contexto, ni topes, ni presupuesto; el de la
-    persona se devuelve) y el tope de la organización (F8-08m): DRF ya miró el permiso, así que un
-    403 no lo gasta; el runtime devuelve el pedido que rechaza sin llamar (`NotFound` o la
-    exclusión puesta entre medias)."""
+    exclusión de la IA (F8-13, `copilot.admit`: ni contexto, ni tope de la organización, ni
+    presupuesto; el de la persona sí cuenta, F8-13c) y el tope de la organización (F8-08m): DRF ya
+    miró el permiso, así que un 403 no lo gasta; el runtime devuelve el pedido que rechaza sin
+    llamar (`NotFound` o la exclusión puesta entre medias)."""
     organization = request.tenant.organization_id  # la de la sesión, nunca la del cuerpo
     window = None
     try:
@@ -109,11 +109,8 @@ def drafted(
             throttle.organization_refund(organization, window)  # fuera de alcance: no cuenta
         raise NotFound from None  # el mismo 404 que una conversación que no existe
     except copilot.CopilotError as stop:
-        if stop.code == copilot.EXCLUDED and stop.run_id is None:  # sin llamar: nada cuenta
-            if (since := getattr(request, "ai_counted", None)) is not None:  # el middleware
-                throttle.person_refund(request.user.pk, since)
-            if window is not None:
-                throttle.organization_refund(organization, window)
+        if stop.code == copilot.EXCLUDED and stop.run_id is None and window is not None:
+            throttle.organization_refund(organization, window)  # sin llamar: solo la organización
         status = STATUS.get(stop.code, 500)
         code = {403: PERMISSION_DENIED, 500: INTERNAL_ERROR}.get(status, stop.code)
         raise ApiError(code, status) from None
@@ -134,9 +131,10 @@ REFUSED = (
     "`AI_NOT_CONFIGURED`, `AI_BUDGET_NOT_SET` o `AI_BUDGET_EXHAUSTED`. 502 `PROVIDER_UNAVAILABLE`, "
     "`PROVIDER_ERROR`, `CREDENTIALS_REJECTED`, `PROVIDER_BILLING`, `AI_MALFORMED` o "
     "`AI_TURN_INVALID`. 409 `AI_EXCLUDED`: la conversación está excluida de la IA (no se lee ni "
-    "cuenta). 504 `AI_DEADLINE`. 429 `RATE_LIMITED`: el tope por persona (uno para "
-    "sugerir y resumir), con `Retry-After`. 429 `AI_ORG_RATE_LIMITED`: el de la organización "
-    "(uno para sugerir y resumir; tras el permiso), con `Retry-After`."
+    "cuenta en el tope de la organización; sí en el de la persona). 504 `AI_DEADLINE`. 429 "
+    "`RATE_LIMITED`: el tope por persona (uno para sugerir y resumir), con `Retry-After`. 429 "
+    "`AI_ORG_RATE_LIMITED`: el de la organización (uno para sugerir y resumir; tras el permiso), "
+    "con `Retry-After`."
 )
 
 
