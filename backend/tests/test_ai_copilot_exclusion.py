@@ -260,7 +260,7 @@ def test_nothing_is_resent_after_a_retry_wait_once_it_is_withheld(
             "excluded": lambda: mark(desk),
             "ai.use": lambda: migrator.execute(drop),
             "broken": lambda: monkeypatch.setattr(attention, "INCLUDED", BROKEN),
-        }[during]()
+        }[during]()  # type: ignore[no-untyped-call]
 
     monkeypatch.setattr(time, "sleep", wait)
     desk.fake.script, desk.fake.replies = ["rate_limit"], [PLAIN]
