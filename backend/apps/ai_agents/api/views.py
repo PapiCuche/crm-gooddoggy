@@ -5,7 +5,8 @@ Las únicas rutas de tenant sin el scope de la petición: el modelo responde en 
 va **fuera** de toda transacción. `TenantResolutionMiddleware` resuelve el tenant y no abre el scope
 (`UNSCOPED`); `HasPermission` mira `conversations.view` **y** `ai.use` en uno corto (403 sin uno de
 los dos) y el runtime abre los suyos. Antes de todo, el tope por persona
-(`apps.ai_gateway.throttle`, 429; un solo contador para las dos). Fuera del alcance, de otra
+(`apps.ai_gateway.throttle`, 429; un solo contador para las dos); tras el permiso, el de la
+organización (F8-08m: la del contexto, 429 `AI_ORG_RATE_LIMITED`). Fuera del alcance, de otra
 organización o inexistente, el mismo 404, sin llamar ni reservar. Nada se envía: la sugerencia
 lleva el texto ya marcado, el tipo y la posición de cada marca y el aviso de traspaso; nunca el
 tramo original, la evidencia, los costos ni el cuerpo del proveedor. El resumen es solo para quien
@@ -24,6 +25,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.ai_agents import copilot
+from apps.ai_gateway import throttle
 from core.api.errors import INTERNAL_ERROR, PERMISSION_DENIED, ApiError
 from core.api.schema import errors
 
@@ -36,6 +38,7 @@ STATUS = {
                      "PROVIDER_BILLING", "AI_MALFORMED", "AI_TURN_INVALID"), 502),
     "AI_DEADLINE": 504, "ACCESS_DENIED": 403,
 }  # fmt: skip
+ORG_LIMITED = "AI_ORG_RATE_LIMITED"  # el tope de la organización (F8-08m), con `Retry-After`
 
 
 class CopilotPositionSerializer(serializers.Serializer[Any]):
@@ -82,10 +85,18 @@ class CopilotSummarySerializer(serializers.Serializer[Any]):
 def drafted(
     run: Callable[[Any, UUID], copilot.Draft], request: Request, conversation_id: UUID
 ) -> copilot.Draft:
-    """`run` del runtime con el tenant de la petición; sus errores, como respuestas."""
+    """`run` del runtime con el tenant de la petición; sus errores, como respuestas. Antes, el tope
+    de la organización (F8-08m): DRF ya miró el permiso, así que un 403 no lo gasta; el runtime
+    devuelve el pedido que rechaza sin llamar (`NotFound`)."""
+    organization = request.tenant.organization_id  # la de la sesión, nunca la del cuerpo
+    if wait := throttle.organization_wait(organization):
+        limited = ApiError(ORG_LIMITED, 429)
+        limited.wait = wait  # el manejador de errores lo pasa a `Retry-After`
+        raise limited
     try:
         return run(request.tenant, conversation_id)
     except copilot.NotFound:
+        throttle.organization_refund(organization)  # fuera de alcance: no cuenta
         raise NotFound from None  # el mismo 404 que una conversación que no existe
     except copilot.CopilotError as stop:
         status = STATUS.get(stop.code, 500)
@@ -108,7 +119,8 @@ REFUSED = (
     "`AI_NOT_CONFIGURED`, `AI_BUDGET_NOT_SET` o `AI_BUDGET_EXHAUSTED`. 502 `PROVIDER_UNAVAILABLE`, "
     "`PROVIDER_ERROR`, `CREDENTIALS_REJECTED`, `PROVIDER_BILLING`, `AI_MALFORMED` o "
     "`AI_TURN_INVALID`. 504 `AI_DEADLINE`. 429 `RATE_LIMITED`: el tope por persona (uno para "
-    "sugerir y resumir), con `Retry-After`."
+    "sugerir y resumir), con `Retry-After`. 429 `AI_ORG_RATE_LIMITED`: el de la organización "
+    "(uno para sugerir y resumir; tras el permiso), con `Retry-After`."
 )
 
 

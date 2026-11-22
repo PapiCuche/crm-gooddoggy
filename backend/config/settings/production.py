@@ -11,6 +11,7 @@ from config import env
 from config.settings.base import *  # noqa: F403
 from config.settings.base import (
     AI_ACCOUNT_THROTTLE,
+    AI_COPILOT_ORG_THROTTLE,
     AI_COPILOT_THROTTLE,
     ALLOWED_HOSTS,
     APP_ORIGIN,
@@ -122,6 +123,7 @@ if META_ENABLED:
 env.check_floor_throttle(QUOTE_FLOOR_THROTTLE)  # el tope del oráculo del costo (F5-09e2)
 env.check_ai_throttle(AI_ACCOUNT_THROTTLE)  # el tope de la prueba de conexión de IA (F8-03d)
 env.check_ai_copilot_throttle(AI_COPILOT_THROTTLE)  # el de las sugerencias (F8-08h)
+env.check_ai_copilot_org_throttle(AI_COPILOT_ORG_THROTTLE, AI_COPILOT_THROTTLE)  # F8-08m
 
 # Loopback para las sondas locales (HEALTHCHECK del contenedor): se añade DESPUÉS de validar,
 # así una DJANGO_ALLOWED_HOSTS vacía sigue fallando y el operador no necesita conocer la sonda.

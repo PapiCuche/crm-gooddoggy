@@ -196,6 +196,17 @@ def check_ai_copilot_throttle(throttle: tuple[int, int]) -> None:
         raise ImproperlyConfigured("AI_COPILOT_THROTTLE: 1 a 60 peticiones, ventana de 60 a 840 s")
 
 
+def check_ai_copilot_org_throttle(throttle: tuple[int, int], person: tuple[int, int]) -> None:
+    """El tope por organización del copiloto (F8-08m): sin él, una organización agotaría el
+    servidor y el proveedor; nunca por debajo del de una persona, y su ventana, menor que la calma
+    de la purga del acceso."""
+    limit, window = throttle
+    if not (person[0] <= limit <= 600 and 60 <= window <= 840):
+        raise ImproperlyConfigured(
+            "AI_COPILOT_ORG_THROTTLE: del tope por persona a 600 peticiones, ventana de 60 a 840 s"
+        )
+
+
 def check_floor_throttle(rules: dict[str, tuple[int, int]]) -> None:
     """El tope de las rutas que miden el suelo de costo (F5-09e2): sin él, el costo se deduce."""
     quote, user = rules["quote"], rules["user"]

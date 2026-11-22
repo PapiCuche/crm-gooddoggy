@@ -3602,7 +3602,8 @@ paths:
         `AI_NOT_CONFIGURED`, `AI_BUDGET_NOT_SET` o `AI_BUDGET_EXHAUSTED`. 502 `PROVIDER_UNAVAILABLE`,
         `PROVIDER_ERROR`, `CREDENTIALS_REJECTED`, `PROVIDER_BILLING`, `AI_MALFORMED`
         o `AI_TURN_INVALID`. 504 `AI_DEADLINE`. 429 `RATE_LIMITED`: el tope por persona
-        (uno para sugerir y resumir), con `Retry-After`.'
+        (uno para sugerir y resumir), con `Retry-After`. 429 `AI_ORG_RATE_LIMITED`:
+        el de la organización (uno para sugerir y resumir; tras el permiso), con `Retry-After`.'
       parameters:
       - in: path
         name: conversation_id
@@ -3680,7 +3681,8 @@ paths:
         `AI_NOT_CONFIGURED`, `AI_BUDGET_NOT_SET` o `AI_BUDGET_EXHAUSTED`. 502 `PROVIDER_UNAVAILABLE`,
         `PROVIDER_ERROR`, `CREDENTIALS_REJECTED`, `PROVIDER_BILLING`, `AI_MALFORMED`
         o `AI_TURN_INVALID`. 504 `AI_DEADLINE`. 429 `RATE_LIMITED`: el tope por persona
-        (uno para sugerir y resumir), con `Retry-After`.'
+        (uno para sugerir y resumir), con `Retry-After`. 429 `AI_ORG_RATE_LIMITED`:
+        el de la organización (uno para sugerir y resumir; tras el permiso), con `Retry-After`.'
       parameters:
       - in: path
         name: conversation_id
