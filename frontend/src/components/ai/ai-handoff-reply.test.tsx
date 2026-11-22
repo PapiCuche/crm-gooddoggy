@@ -97,7 +97,7 @@ describe("Texto de traspaso (F8-09c)", () => {
       within(tabs)
         .getAllByRole("link")
         .map((link) => link.getAttribute("href")),
-    ).toEqual(["/o/acme/ia", "/o/acme/ia/traspaso"]);
+    ).toEqual(["/o/acme/ia", "/o/acme/ia/traspaso", "/o/acme/ia/presupuesto"]);
     expect(sent(api)).toHaveLength(1);
   });
 

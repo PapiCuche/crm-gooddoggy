@@ -72,7 +72,8 @@
     "ai": {
       "label": "Secciones de inteligencia artificial",
       "provider": "Proveedor y estado",
-      "handoff": "Texto de traspaso"
+      "handoff": "Texto de traspaso",
+      "budget": "Presupuesto"
     }
   },
   "audit": {
@@ -2842,6 +2843,50 @@
     "verify": "Confirmar con mi código",
     "empty": "Todavía no hay ninguna clave guardada.",
     "missing": "No encontramos el proveedor de IA de esta organización. Recarga la página.",
+    "model": {
+      "open": "Cambiar modelo",
+      "title": "Cambiar el modelo",
+      "label": "Modelo",
+      "hint": "El identificador exacto de un modelo de la lista permitida del CRM, en minúsculas. Cambia cuánto cuesta cada consulta.",
+      "required": "Escribe el identificador del modelo.",
+      "invalid": "Ese modelo no está en la lista permitida del CRM. Escribe el identificador exacto.",
+      "submit": "Guardar modelo",
+      "busy": "Guardando…",
+      "done": "El modelo quedó guardado. Las próximas consultas lo usan.",
+      "unchanged": "Es el modelo que ya usa la cuenta: no se cambió nada."
+    },
+    "budget": {
+      "title": "Presupuesto de IA",
+      "intro": "Los topes de gasto de {organization} con la IA, en dólares (USD). Sin los dos topes, la IA no responde.",
+      "loading": "Cargando el presupuesto de IA…",
+      "stepUp": "Para ver o cambiar los topes, confirma tu identidad con un código de segundo factor.",
+      "caps": "Topes de gasto",
+      "current": "Vigentes: {monthly} al mes y {daily} al día.",
+      "unset": "Todavía no hay topes: la IA no hace ninguna llamada hasta que guardes los dos.",
+      "fields": {
+        "monthly_usd": "Tope mensual (USD)",
+        "daily_usd": "Tope diario (USD)"
+      },
+      "hints": {
+        "monthly_usd": "Para el mes de Lima. Con punto y hasta 6 decimales, por ejemplo 50 o 12.50.",
+        "daily_usd": "Para el día de Lima. No puede superar al mensual."
+      },
+      "note": "Lo gastado no se muestra aquí: revísalo en la consola del proveedor. Bajar un tope por debajo de lo ya gastado corta la siguiente consulta. Cada cambio queda en la auditoría.",
+      "save": "Guardar topes",
+      "busy": "Guardando…",
+      "discard": "Descartar cambios",
+      "saved": "Los topes quedaron guardados. Se aplican desde la siguiente consulta.",
+      "unchanged": "No hay cambios que guardar.",
+      "problems": {
+        "REQUIRED": "Escribe un importe.",
+        "FORMAT": "Escribe solo números, con punto para los decimales (por ejemplo, 12.50).",
+        "DECIMALS": "Usa 6 decimales como mucho.",
+        "TOO_BIG": "Debe ser menor que un millón de dólares.",
+        "ZERO": "Debe ser mayor que cero.",
+        "ABOVE": "El tope diario no puede superar al mensual.",
+        "INVALID": "No se aceptó este importe: en USD, mayor que cero, menor que un millón, con 6 decimales como mucho y, el diario, sin superar al mensual."
+      }
+    },
     "handoff": {
       "title": "Texto de traspaso",
       "intro": "Lo que el copiloto propone a quien atiende cuando un cliente de {organization} pide hablar con una persona. Quien atiende lo revisa y lo envía; nunca sale solo.",
@@ -2921,7 +2966,8 @@
       "key": "Clave",
       "configured": "Guardada",
       "rotated": "Rotada",
-      "revoked": "Borrada"
+      "revoked": "Borrada",
+      "model": "Modelo"
     },
     "save": {
       "open": "Guardar clave de Anthropic",
@@ -2970,7 +3016,8 @@
       "STEP_UP_REQUIRED": "Confirma tu identidad con un código de segundo factor para continuar.",
       "RATE_LIMITED": "Demasiados intentos. Espera un momento antes de volver a probar.",
       "RATE_LIMITED_WAIT": "Demasiados intentos. Vuelve a probar en {minutes, plural, one {# minuto} other {# minutos}}.",
-      "NOT_FOUND": "Esa clave ya no existe. Actualizamos la lista."
+      "NOT_FOUND": "Esa clave ya no existe. Actualizamos la lista.",
+      "AI_DISABLED": "La IA está apagada en todo el sistema: quien despliega el CRM debe encenderla antes de probar la conexión. No es un problema de la clave."
     }
   },
   "tasks": {

@@ -15,6 +15,7 @@ const CREATE = `POST ${BASE}/`;
 const ROTATE = `POST ${BASE}/k1/key/`;
 const TEST = `POST ${BASE}/k1/test/`;
 const REMOVE = `DELETE ${BASE}/k1/`;
+const MODEL = `PUT ${BASE}/k1/model/`;
 const STEP_UP = "POST /api/v1/auth/mfa/step-up/";
 const PASTED = "fake-provider-key-for-ui-tests-0001"; // ficticia, con la forma que acepta la API
 const tenant = (codes: string[]): SelfContext => ({
@@ -495,5 +496,58 @@ describe("Proveedor de IA (F8-04)", () => {
     expect(sent(api, "DELETE", `${BASE}/k1/`)).toHaveLength(1);
     release();
     expect(await screen.findByText("La clave se borró.")).toBeVisible();
+  });
+
+  it("probar la conexión con la IA apagada en el servidor (409 AI_DISABLED) lo dice", async () => {
+    mockApi({ [LIST]: ok([account()]), [TEST]: fail(409, "AI_DISABLED") });
+    show();
+    await probe();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "La IA está apagada en todo el sistema: quien despliega el CRM debe encenderla",
+    );
+    expect(document.body.textContent).not.toMatch(/SERVIDOR|Algo salió mal/);
+  });
+
+  it("el modelo: se ve en la tarjeta; cambiarlo lo envía por PUT y actualiza la cuenta", async () => {
+    const changed = account({ model: "claude-otro-1" });
+    const api = mockApi({ [LIST]: ok([account()]), [MODEL]: ok(changed) });
+    show();
+    const item = within(await screen.findByRole("list", { name: "Proveedor de IA" }));
+    expect(item.getByText("claude-sonnet-5-5")).toBeVisible();
+    await openForm("Cambiar modelo", "Cambiar el modelo");
+    const field = screen.getByLabelText<HTMLInputElement>(/^Modelo/);
+    expect(field.value).toBe("claude-sonnet-5-5");
+    fireEvent.change(field, { target: { value: " claude-otro-1 " } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar modelo" }));
+    expect(await screen.findByText(/^El modelo quedó guardado/)).toBeVisible();
+    expect(item.getByText("claude-otro-1")).toBeVisible();
+    expect(sent(api, "PUT", `${BASE}/k1/model/`)).toEqual([{ model: "claude-otro-1" }]);
+    expect(screen.getByRole("button", { name: "Cambiar modelo" })).toHaveFocus();
+  });
+
+  it.each([
+    ["claude-sonnet-5-5", "Es el modelo que ya usa la cuenta"],
+    ["Claude Sonnet", "Ese modelo no está en la lista permitida"],
+  ])("el modelo %s no se envía", async (typed, text) => {
+    const api = mockApi({ [LIST]: ok([account()]) });
+    show();
+    await openForm("Cambiar modelo", "Cambiar el modelo");
+    fireEvent.change(screen.getByLabelText(/^Modelo/), { target: { value: typed } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar modelo" }));
+    expect(await screen.findByText(new RegExp(text))).toBeVisible();
+    expect(sent(api, "PUT", `${BASE}/k1/model/`)).toHaveLength(0);
+  });
+
+  it("un modelo fuera de la lista (400 en `model`) se dice con nuestro texto y se queda escrito", async () => {
+    const refused = { status: 400, body: { code: "VALIDATION_ERROR", fields: { model: ["X"] } } };
+    mockApi({ [LIST]: ok([account()]), [MODEL]: refused });
+    show();
+    await openForm("Cambiar modelo", "Cambiar el modelo");
+    const field = screen.getByLabelText<HTMLInputElement>(/^Modelo/);
+    fireEvent.change(field, { target: { value: "claude-nuevo-9" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar modelo" }));
+    await waitFor(() => expect(field).toHaveAttribute("aria-invalid", "true"));
+    expect(field).toHaveAccessibleDescription(/^Ese modelo no está en la lista permitida/);
+    expect(field.value).toBe("claude-nuevo-9");
   });
 });
