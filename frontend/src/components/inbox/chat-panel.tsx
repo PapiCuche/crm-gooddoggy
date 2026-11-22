@@ -37,6 +37,7 @@ import {
 import type { ApiError } from "@/lib/http";
 import { cn } from "@/lib/utils";
 
+import { useAiExclusion } from "./ai-exclusion";
 import { Assignee, AssignmentActions } from "./assignment";
 import { ChannelMark } from "./attention";
 import { Composer, type Inserter, messagesKey, writableModes } from "./composer";
@@ -99,6 +100,7 @@ export function ChatPanel({
     onInsert: (text) => inserter.current?.(text),
   });
   const human = useHumanRequest(conversation); // con `conversations.view`, como ver el chat
+  const exclusion = useAiExclusion(conversation); // excluirla de la IA (F8-13b)
   const scroller = useRef<HTMLDivElement>(null);
   const kept = useRef<number | null>(null); // lo que faltaba por desplazar al pedir los anteriores
   const placed = useRef(false);
@@ -215,6 +217,7 @@ export function ChatPanel({
             <span className="max-lg:sr-only">{t("chat.refresh")}</span>
           </Button>
           {human.button}
+          {exclusion.button}
           {name === null ? null : (
             <Button
               id="customer-toggle"
@@ -247,7 +250,9 @@ export function ChatPanel({
             </p>
           ) : null}
           {human.state}
+          {exclusion.state}
         </div>
+        {exclusion.dialog}
         {detail.data ? (
           <AssignmentActions detail={detail.data} />
         ) : (
