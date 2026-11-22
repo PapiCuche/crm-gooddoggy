@@ -547,13 +547,16 @@ def test_the_runtime_refuses_an_open_transaction_before_reading_anything(desk: A
 
 IMPORTS = {  # módulo → nombres: exactamente estos; uno nuevo se añade aquí a propósito
     "": "json re time", "collections": "Counter", "dataclasses": "dataclass field replace",
-    "datetime": "datetime", "uuid": "UUID", "django.conf": "settings", "django.db": "connections",
+    "datetime": "UTC datetime", "uuid": "UUID", "django.conf": "settings",
+    "django.db": "connections",
     "apps.access.selectors": "AccessDenied execution_context has_permission scoped",
     "apps.ai_agents": "context detectors guard records registry",
     "apps.ai_agents.context": "Purpose", "apps.ai_agents.registry": "Evidence",
     "apps.ai_gateway": "gateway", "apps.ai_gateway.gateway": "GatewayError",
     "apps.ai_gateway.llm": "Block LLMRequest LLMResponse Outcome Text ToolResult Turn",
+    "apps.conversations": "attention",  # F8-08n: la solicitud de atención humana
     "apps.conversations.models": "Conversation", "core.observability.logging": "get_logger",
+    "apps.conversations.policy": "ConversationClosed",
     "core.tenancy.context": "TenantContext", "core.tenancy.scope": "require_scope tenant_scope",
     "core.text": "VERIFY_MARK",
 }  # fmt: skip
@@ -563,7 +566,7 @@ USES = {  # módulo importado → sus atributos: exactamente estos
     "gateway": "complete", "guard": "Finding Malformed Rendered UNSTORABLE render",
     "json": "loads",
     "re": "compile", "records": "Action Finding Run Suggestion save",
-    "registry": "invoke_read_only", "time": "monotonic",
+    "registry": "invoke_read_only", "time": "monotonic", "attention": "request_human",
 }  # fmt: skip
 DYNAMIC = {"globals", "locals", "vars", "eval", "exec", "compile", "getattr", "setattr", "delattr",
            "breakpoint"}  # fmt: skip

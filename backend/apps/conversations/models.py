@@ -88,6 +88,16 @@ class AttentionMode(models.TextChoices):
     AI_AUTONOMOUS = "AI_AUTONOMOUS"
 
 
+class HumanRequest(models.TextChoices):
+    """Por qué se pidió que una persona atienda (F8-08n): lo que detectó el copiloto (ADR-034 §8:
+    el cliente pidió una persona, está molesto o lo pidió el modelo) o lo pidió quien atiende."""
+
+    ASKED_FOR_PERSON = "ASKED_FOR_PERSON"
+    UPSET = "UPSET"
+    MODEL = "MODEL"
+    AGENT = "AGENT"
+
+
 class Direction(models.TextChoices):
     INBOUND = "INBOUND"
     OUTBOUND = "OUTBOUND"
@@ -476,6 +486,13 @@ class Conversation(TenantModel):
     # Instagram o Messenger (ADR-035 §4): desde cuándo otra app controla el hilo (`standby`). La
     # fija un entrante en `standby` y la limpia uno normal, el más reciente según el canal.
     standby_since = models.DateTimeField(null=True, blank=True)
+    # F8-08n: alguien pidió que una persona la atienda (quién, cuándo y por qué); se borra cuando
+    # una persona responde al cliente o la toma, o a mano. El historial, en la auditoría.
+    human_requested_at = models.DateTimeField(null=True, blank=True)
+    human_request_reason = models.CharField(  # noqa: DJ001
+        max_length=20, choices=HumanRequest.choices, null=True, blank=True
+    )
+    human_requested_by_user_id = models.UUIDField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     version = models.PositiveIntegerField(default=1)
@@ -558,6 +575,20 @@ class Conversation(TenantModel):
                     last_message_direction__in=["INBOUND", "OUTBOUND"],
                 ),
                 name="conversations_preview_ck",
+            ),
+            models.CheckConstraint(  # F8-08n: la solicitud va entera (quién, cuándo, por qué) o no
+                condition=models.Q(
+                    human_requested_at__isnull=True,
+                    human_request_reason__isnull=True,
+                    human_requested_by_user_id__isnull=True,
+                )
+                | models.Q(
+                    human_requested_at__isnull=False,
+                    human_requested_by_user_id__isnull=False,
+                    human_request_reason__isnull=False,  # un NULL pasaría el `IN` de un CHECK
+                    human_request_reason__in=HumanRequest.values,
+                ),
+                name="conversations_human_request_ck",
             ),
         ]
 

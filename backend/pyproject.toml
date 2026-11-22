@@ -196,10 +196,13 @@ forbidden_modules = [
 # clave y mira el interruptor. `ignore_imports` quita esa arista de todo el grafo: el contrato
 # `protected` de F8-08g impide que otro módulo llegue al gateway a través del runtime, y una prueba
 # fija que el runtime solo usa `complete` y `GatewayError` del gateway. Los demás no cambian.
+# F8-08n (#1048): el runtime deja la solicitud de atención humana con `conversations.attention`,
+# que audita y lee la política del Inbox; quién más la importa lo cierra su contrato `protected`.
 ignore_imports = [
     "apps.ai_agents.records -> apps.audit.services",
     "apps.ai_agents.context -> apps.conversations.selectors",
     "apps.ai_agents.copilot -> apps.ai_gateway.gateway",
+    "apps.ai_agents.copilot -> apps.conversations.attention",
 ]
 
 [[tool.importlinter.contracts]]
@@ -384,6 +387,14 @@ name = "Comandos de tareas: solo su API los importa (F5-08a)"
 type = "protected"
 protected_modules = ["apps.tasks.commands"]
 allowed_importers = ["apps.tasks.api"]
+
+[[tool.importlinter.contracts]]
+# F8-08n (#1048): la solicitud de atención humana; a propósito también el runtime del copiloto, que
+# la deja al detectar un traspaso, y los comandos, que la cierran al responder o asignar.
+name = "Solicitud de atención humana: solo la API, los comandos y el runtime del copiloto (F8-08n)"
+type = "protected"
+protected_modules = ["apps.conversations.attention"]
+allowed_importers = ["apps.conversations.api", "apps.conversations.commands", "apps.ai_agents.copilot"]
 
 [[tool.importlinter.contracts]]
 name = "Comandos del Inbox: solo su API y sus tareas los importan (F6-01c, F6-04b, F6-08a1, F7-02b, F7-02c, F7-04)"
