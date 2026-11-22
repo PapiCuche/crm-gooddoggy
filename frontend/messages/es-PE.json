@@ -2614,7 +2614,7 @@
     "aiExclusion": {
       "exclude": "Excluir de la IA",
       "include": "Volver a incluir en la IA",
-      "excludeQuestion": "¿Excluir esta conversación de la IA? El copiloto no leerá sus mensajes ni los enviará a un proveedor de IA: no habrá sugerencias ni resúmenes. Volver a incluirla solo lo puede hacer quien administra la IA.",
+      "excludeQuestion": "¿Excluir esta conversación de la IA? Vale solo para esta conversación, no para el contacto: el copiloto deja de leer sus mensajes y de enviarlos a un proveedor de IA, así que no habrá sugerencias ni resúmenes nuevos. Volver a incluirla solo lo puede hacer quien administra la IA.",
       "includeQuestion": "¿Volver a incluir esta conversación en la IA? El copiloto podrá leer sus mensajes y enviarlos al proveedor de IA para sugerir y resumir. Hazlo solo si el cliente lo aceptó. Te pediremos tu código de segundo factor.",
       "cancel": "Cancelar",
       "confirm": "Confirmar",

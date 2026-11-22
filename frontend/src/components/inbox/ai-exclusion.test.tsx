@@ -1,4 +1,12 @@
-import { cleanup, configure, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  configure,
+  fireEvent,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TenantProvider } from "@/components/app-shell/tenant-context";
@@ -39,12 +47,13 @@ const STEP: Reply = {
 const refusal = (status: number, code: string): Reply => ({ status, body: { code, detail: "x" } });
 
 // La conversación vive en el "servidor": la ruta la cambia con lo enviado, salvo las respuestas de
-// `refused`, que se dan una vez cada una y en orden.
+// `refused`, que se dan una vez cada una y en orden. Con `state.reads = false`, releer falla.
 function server(initial: Partial<typeof rosa> = {}, ...refused: Reply[]) {
-  const state = { ...rosa, ...initial };
+  const state = { ...rosa, ...initial, reads: true };
+  const read = (body: unknown) => (state.reads ? { status: 200, body } : { status: 500, body: {} });
   const api: ReturnType<typeof mockApi> = mockApi({
-    [`GET ${BASE}/`]: () => ({ status: 200, body: { results: [{ ...state }], next: null } }),
-    [`GET ${BASE}/1/`]: () => ({ status: 200, body: { ...state } }),
+    [`GET ${BASE}/`]: () => read({ results: [{ ...state }], next: null }),
+    [`GET ${BASE}/1/`]: () => read({ ...state }),
     [`GET ${BASE}/1/messages/`]: { status: 200, body: { results: [], next: null } },
     [STEP_UP]: { status: 200, body: { step_up_expires_in: 900 } },
     [PUT]: () => {
@@ -64,7 +73,7 @@ function server(initial: Partial<typeof rosa> = {}, ...refused: Reply[]) {
     api.mock.calls
       .filter(([to, init]) => `${init?.method ?? "GET"} ${String(to)}` === route)
       .map(([, init]) => (init?.body ? JSON.parse(String(init.body)) : null));
-  return { calls };
+  return { calls, state };
 }
 const show = (permissions: Grant[]) =>
   renderApp(
@@ -193,15 +202,40 @@ describe("exclusión de la IA en el Inbox (F8-13b)", () => {
     expect(s.calls(PUT)).toHaveLength(2);
   });
 
-  it("una versión vieja lo dice con su texto, no el del servidor", async () => {
-    server({}, refusal(409, "CONVERSATION_VERSION_CONFLICT"));
+  it("el copiloto cambia con la respuesta, aunque la relectura falle", async () => {
+    const s = server();
     show(AGENT);
     await openChat();
-    fireEvent.click(await ask("Excluir de la IA"));
+    expect(await screen.findByRole("button", { name: "Sugerir respuesta" })).toBeVisible();
+    const yes = await ask("Excluir de la IA");
+    s.state.reads = false; // solo la respuesta del PUT puede cambiar la pantalla
+    fireEvent.click(yes);
+    expect(await screen.findByText("Conversación excluida de la IA.")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Sugerir respuesta" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Resumir" })).toBeNull();
+    expect(screen.getByText("Excluida de la IA")).toBeVisible();
+  });
+
+  it("una versión vieja lo dice con su texto, no reenvía y el siguiente intento usa la nueva", async () => {
+    const s = server({}, refusal(409, "CONVERSATION_VERSION_CONFLICT"));
+    show(AGENT);
+    await openChat();
+    const yes = await ask("Excluir de la IA");
+    s.state.version = 2; // otra persona la cambió después de leerla
+    fireEvent.click(yes);
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("Otra persona cambió esta conversación");
     expect(alert).not.toHaveTextContent("x");
     expect(screen.queryByText("Excluida de la IA")).toBeNull();
+    expect(s.calls(PUT)).toEqual([{ excluded: true, version: 1 }]); // nada se reenvía solo
+    await waitFor(() => expect(s.calls(`GET ${BASE}/1/`).length).toBeGreaterThan(1)); // relee
+    await act(async () => {}); // y la relectura llega a la caché
+    fireEvent.click(screen.getByRole("button", { name: "Confirmar" }));
+    expect(await screen.findByText("Conversación excluida de la IA.")).toBeVisible();
+    expect(s.calls(PUT)).toEqual([
+      { excluded: true, version: 1 },
+      { excluded: true, version: 2 },
+    ]);
   });
 
   it.each([
