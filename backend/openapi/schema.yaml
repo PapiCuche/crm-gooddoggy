@@ -15252,6 +15252,13 @@ components:
           oneOf:
           - $ref: '#/components/schemas/ProviderErrorCodeEnum'
           - $ref: '#/components/schemas/NullEnum'
+        provider_error_detail:
+          type: string
+          readOnly: true
+          nullable: true
+          description: El error del proveedor en números, `código` o `código/subcódigo`
+            (p. ej., `131031` o `10/2018278`), solo con `FAILED`; nunca su texto.
+            `null` si no lo dio.
         created_at:
           type: string
           format: date-time
@@ -15289,6 +15296,7 @@ components:
       - id
       - message_type
       - provider_error_code
+      - provider_error_detail
       - read_at
       - sender_type
       - sender_user_id

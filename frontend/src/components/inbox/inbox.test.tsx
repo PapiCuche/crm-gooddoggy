@@ -441,6 +441,48 @@ describe("Inbox, motivo de un fallo: el conjunto cerrado", () => {
     if (network !== "WhatsApp") expect(log).not.toHaveTextContent("WhatsApp");
   });
 
+  // F7b-13: el error de Meta en números junto al motivo, con una pista si se conoce.
+  it("un fallo muestra el código de Meta y nunca un detalle que no sea solo números", async () => {
+    const failed = (id: string, code: string, detail: string | null, state = "FAILED") =>
+      message(id, {
+        direction: "OUTBOUND",
+        sender_type: "USER",
+        delivery_status: state,
+        body: id,
+        provider_error_code: code as Message["provider_error_code"],
+        provider_error_detail: detail,
+      });
+    const chat = conversation("1", {
+      channel: { id: "ch1", platform: "MESSENGER", name: "Cuenta" },
+    });
+    serve({
+      [LIST]: page([chat]),
+      [MESSAGES("1")]: page([
+        failed("e", "PROVIDER_REJECTED", "131031", "SENT"),
+        failed("d", "PROVIDER_REJECTED", "Account locked"),
+        failed("c", "WINDOW_CLOSED", "10/2018278"),
+        failed("b", "PROVIDER_REJECTED", "999"),
+        failed("a", "PROVIDER_REJECTED", "131031"),
+      ]),
+    });
+    show();
+    await open(/Rosa Díaz/);
+    const log = await screen.findByRole("list", { name: "Mensajes" });
+    const row = (body: string) =>
+      within(log)
+        .getAllByRole("listitem")
+        .find((li) => li.querySelector("bdi")?.textContent === body)!;
+    expect(row("a")).toHaveTextContent(
+      "Messenger rechazó el mensaje. Código de Meta: 131031 (Meta bloqueó la cuenta de WhatsApp Business).",
+    );
+    expect(row("b")).toHaveTextContent("Messenger rechazó el mensaje. Código de Meta: 999.");
+    expect(row("c")).toHaveTextContent("Código de Meta: 10/2018278.");
+    expect(row("d")).toHaveTextContent("Messenger rechazó el mensaje.");
+    expect(log).not.toHaveTextContent("Account locked"); // nunca otro texto del servidor
+    expect(row("d")).not.toHaveTextContent("Código de Meta");
+    expect(row("e")).not.toHaveTextContent("Código de Meta"); // solo con FAILED
+  });
+
   it("el texto de TOKEN_INVALID manda a quien administra los canales, no a quien escribe", () => {
     expect(messages.inbox.failure.TOKEN_INVALID).toContain("quien administra los canales");
   });

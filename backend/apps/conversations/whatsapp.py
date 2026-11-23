@@ -53,6 +53,20 @@ def field_at(raw: bytes, *path: str | int) -> Any:
     return found
 
 
+def _number(value: Any) -> int | None:
+    fine = isinstance(value, int) and not isinstance(value, bool) and 0 <= value < 10**10
+    return value if fine else None
+
+
+def error_detail(code: Any, subcode: Any = None) -> str | None:
+    """El error de Meta en números (F7b-13): `code` o `code/subcode`, o `None` sin un `code`
+    legible. Nunca su texto, su título ni sus detalles (pueden llevar datos del cliente)."""
+    code, subcode = _number(code), _number(subcode)
+    if code is None:
+        return None
+    return str(code) if subcode is None else f"{code}/{subcode}"
+
+
 def _refused(status: int, raw: bytes, server: type[Exception]) -> SendResult:
     """Un rechazo de Meta: «demasiado rápido» se reintenta, un 5xx es `server` y el resto, un motivo
     cerrado."""
@@ -63,7 +77,8 @@ def _refused(status: int, raw: bytes, server: type[Exception]) -> SendResult:
     if status >= 500:
         raise server
     reason = "TOKEN_INVALID" if status == 401 else REASONS.get(code or 0, "PROVIDER_REJECTED")
-    return SendResult(False, reason=reason)
+    detail = error_detail(code, field_at(raw, "error", "error_subcode"))
+    return SendResult(False, reason=reason, detail=detail)
 
 
 def _upload(base: str, token: str, media: Media) -> dict[str, Any] | SendResult:

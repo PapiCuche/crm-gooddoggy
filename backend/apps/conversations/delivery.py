@@ -8,8 +8,8 @@ mensaje) cuando sigue `SENDING`, que así se reconcilia con el primer estado que
 de otra organización u otra cuenta no existe; uno que aún no se conoce falla de forma transitoria
 (`NotYet`) y la ingesta reintenta con espera. Un estado atrasado o repetido no cambia nada y
 `failed` es terminal (lo decide `advance_delivery` y, por debajo, el disparador). Del error de
-Meta solo se lee el `code`: se reduce a un código propio cerrado (`CODES`) y nunca se guarda ni se
-registra su título ni su texto.
+Meta solo se lee el `code`: se reduce a un código propio cerrado (`CODES`), se guarda también el
+número (`provider_error_detail`, F7b-13) y nunca se guarda ni se registra su título ni su texto.
 
 Instagram y Messenger (F7b-05c; ADR-035 §5–§6) en `social`: un eco es nuestro si su `app_id` es
 `META_APP_ID` y su `metadata` es la ficha (`echo_token`) de un saliente de **esa** cuenta y **ese**
@@ -37,7 +37,7 @@ from django.utils import timezone
 
 from apps.conversations import accounts, commands, inbound
 from apps.conversations.models import ECHO_HEX, META_ID, ChannelAccount, Credential, Message
-from apps.conversations.whatsapp import EXTERNAL_ID
+from apps.conversations.whatsapp import EXTERNAL_ID, error_detail
 from core.observability.logging import get_logger
 from core.tenancy.context import TenantContext
 from core.tenancy.scope import require_scope
@@ -119,6 +119,7 @@ def apply(ctx: TenantContext, account: ChannelAccount, payload: dict[str, Any]) 
     errors = payload.get("errors")
     first = errors[0] if isinstance(errors, list) and errors and isinstance(errors[0], dict) else {}
     reason = code_for(first.get("code")) if state == "FAILED" else None
+    detail = error_detail(first.get("code")) if state == "FAILED" else None  # solo el número
     now = timezone.now()
     stamp = inbound.instant(payload.get("timestamp"))
     at = min(stamp, now) if stamp else now  # el instante del proveedor, nunca del futuro
@@ -130,7 +131,7 @@ def apply(ctx: TenantContext, account: ChannelAccount, payload: dict[str, Any]) 
         if message.external_message_id is None:  # reconciliación: el envío no llegó a confirmarlo
             Message.objects.using(alias).filter(pk=message.pk).update(external_message_id=wamid)
         moved = commands.advance_delivery(
-            ctx, message_id=message.pk, status=state, at=at, reason=reason
+            ctx, message_id=message.pk, status=state, at=at, reason=reason, detail=detail
         )
         if moved.delivery_status == before:
             return None  # atrasado, repetido o tras `FAILED`: nada cambia

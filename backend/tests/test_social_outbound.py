@@ -225,6 +225,8 @@ def test_each_meta_error_ends_where_its_code_says(
         assert (saved.delivery_status, found.status) == ("SENDING", "CONNECTED")
         return
     assert (saved.delivery_status, saved.provider_error_code) == ("FAILED", expected)
+    _, code, subcode, *_ = ERRORS[name]  # F7b-13: el error de Meta en números, junto al código
+    assert saved.provider_error_detail == (f"{code}/{subcode}" if subcode else str(code))
     demoted = expected in ("TOKEN_INVALID", "MESSAGES_ACCESS_OFF")
     assert (found.status, found.status_detail) == (
         ("ERROR", expected) if demoted else ("CONNECTED", None)

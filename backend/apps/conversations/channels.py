@@ -63,12 +63,14 @@ class Claim:
 @dataclass(frozen=True, slots=True)
 class SendResult:
     """`ok` con el id que el canal le dio al mensaje, o no `ok` con un motivo de `REASONS`.
-    `delivered`: el canal ya lo entregó (Sandbox); los reales lo avisan después, con un webhook."""
+    `delivered`: el canal ya lo entregó (Sandbox); los reales lo avisan después, con un webhook.
+    `detail`: el código numérico del proveedor (`131031`, `10/2018278`; F7b-13), nunca su texto."""
 
     ok: bool
     external_id: str | None = None
     delivered: bool = False
     reason: str | None = None
+    detail: str | None = None
 
 
 class ChannelAdapter(Protocol):
