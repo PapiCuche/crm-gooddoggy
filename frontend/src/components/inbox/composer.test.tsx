@@ -35,7 +35,16 @@ const rosa = {
   ...{ id: "1", number: "CONV-00001", status: "OPEN", attention_mode: "HUMAN" },
   ...{ assignee_kind: "UNASSIGNED", assigned_user_id: null, assigned_team_id: null },
   ...{ contact: { id: "c1", display_name: "Rosa Díaz" } },
-  ...{ channel: { id: "ch1", platform: "SANDBOX", name: "Sandbox" } },
+  ...{
+    channel: {
+      id: "ch1",
+      platform: "SANDBOX",
+      name: "Sandbox",
+      text_max: 4096,
+      text_unit: "CHARACTERS",
+      accepts_media: true,
+    },
+  },
   ...{ last_message_at: "2026-11-04T15:30:00Z", last_inbound_at: null, version: 1 },
   ...{ last_message_preview: null, last_message_direction: null },
 } as unknown as Conversation;
@@ -367,5 +376,76 @@ describe("cuadro de redacción (F6-04c)", () => {
     await settle();
     expect(s.posts()).toEqual([]);
     expect(await box()).toHaveAttribute("aria-describedby");
+  });
+});
+
+// F7b-16: el tope y los adjuntos del canal de la conversación (`channel`), antes de enviar.
+describe("cuadro de redacción: Instagram y Messenger", () => {
+  const channel = (platform: string, text_max: number, text_unit: string) => ({
+    channel: { ...rosa.channel, platform, text_max, text_unit, accepts_media: false },
+  });
+  const instagram = channel("INSTAGRAM", 1000, "BYTES") as Partial<Conversation>;
+  const messenger = channel("MESSENGER", 2000, "CHARACTERS") as Partial<Conversation>;
+
+  it("Instagram cuenta bytes UTF-8: tildes, emojis y acentos combinados ocupan más", async () => {
+    const s = server({ conversation: instagram });
+    show();
+    await openChat();
+    for (const [text, bytes] of [
+      ["a".repeat(1000), 1000],
+      ["ñ".repeat(500), 1000],
+      ["👍🏽".repeat(125), 1000],
+      ["e\u0301".repeat(333) + "a", 1000],
+    ] as const) {
+      await type(text);
+      expect(screen.getByText(new RegExp(`^${bytes} de 1000 bytes`))).toBeInTheDocument();
+      expect(sendButton()).toBeEnabled();
+    }
+    await type("ñ".repeat(500) + "a");
+    expect(screen.getByText(/^Te pasaste por 1 byte: este canal acepta hasta 1000/)).toBeVisible();
+    expect(sendButton()).toBeDisabled();
+    fireEvent.keyDown(await box(), { key: "Enter" });
+    await settle();
+    expect(s.posts()).toEqual([]);
+    expect(await box()).toHaveValue("ñ".repeat(500) + "a"); // el texto no se pierde
+  });
+
+  it("Messenger cuenta caracteres y ninguno de los dos ofrece adjuntar", async () => {
+    server({ conversation: messenger });
+    show();
+    await openChat();
+    await type("ñ".repeat(2000));
+    expect(screen.getByText("2000 de 2000 caracteres")).toBeInTheDocument();
+    expect(sendButton()).toBeEnabled();
+    await type("ñ".repeat(2001));
+    expect(screen.getByText("Te pasaste por 1 carácter.")).toBeVisible();
+    expect(sendButton()).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Adjuntar imagen o PDF" })).toBeNull();
+  });
+
+  it("una nota interna no sale por el canal: sigue el tope de la API", async () => {
+    server({ conversation: instagram });
+    show(grants("conversations.view", "messages.note"));
+    await openChat();
+    const note = await screen.findByRole("textbox", { name: "Nota interna" });
+    fireEvent.change(note, { target: { value: "ñ".repeat(1500) } });
+    expect(screen.getByText("1500 de 4096 caracteres")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Guardar nota" })).toBeEnabled();
+  });
+
+  it("si la API lo rechaza igual, lo explica y conserva el texto", async () => {
+    server({
+      conversation: instagram,
+      send: () => ({ status: 400, body: { code: "TEXT_TOO_LONG_FOR_CHANNEL" } }),
+    });
+    show();
+    await openChat();
+    expect(screen.queryByRole("button", { name: "Adjuntar imagen o PDF" })).toBeNull();
+    await type("Hola");
+    fireEvent.click(sendButton());
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "El texto es demasiado largo para este canal",
+    );
+    expect(await box()).toHaveValue("Hola");
   });
 });

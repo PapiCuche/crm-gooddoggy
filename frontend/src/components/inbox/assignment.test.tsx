@@ -28,7 +28,17 @@ const first = {
   ...{ id: "1", number: "CONV-00001", status: "OPEN", attention_mode: "HUMAN" },
   ...{ assignee_kind: "UNASSIGNED", assigned_user_id: null, assigned_team_id: null },
   ...{ contact: { id: "c1", display_name: "Rosa Díaz" }, assignment_version: 3, version: 1 },
-  ...{ channel: { id: "ch1", platform: "SANDBOX", name: "Sandbox" }, last_message_preview: null },
+  ...{
+    channel: {
+      id: "ch1",
+      platform: "SANDBOX",
+      name: "Sandbox",
+      text_max: 4096,
+      text_unit: "CHARACTERS",
+      accepts_media: true,
+    },
+    last_message_preview: null,
+  },
   ...{ last_message_at: "2026-11-04T15:30:00Z", last_inbound_at: null },
   ...{ last_message_direction: null },
 };
