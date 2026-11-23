@@ -209,22 +209,30 @@ def _moment(value: Any) -> dt.datetime | None:
     return dt.datetime.fromtimestamp(value, dt.UTC) if value else None  # 0: nunca
 
 
-def token_expiry(token: str) -> Expiry | None:
+def token_expiry(token: str) -> Expiry | str:
     """La caducidad de `token` según Meta (F7b-12): `GET /debug_token?input_token=<token>`, que
-    pide el token de la app (`<META_APP_ID>|<app secret>`, en la cabecera). `None` si no se sabe:
-    sin app configurada, Meta caída o que rechaza, un token no válido, de otra app o una respuesta
-    que no es la esperada. Sin reintentos de `core.http` (su aviso lleva la URL, con el token) y
-    sin el texto de ningún error. Nunca lanza."""
+    pide el token de la app (`<META_APP_ID>|<app secret vigente>`, en la cabecera). Si no se sabe,
+    el motivo, un código cerrado: `no_app` (sin app configurada), `app_token_rejected` (Meta
+    rechaza el token de la app), `unavailable`, `invalid_token`, `other_app` o `malformed`. Sin
+    reintentos de `core.http` (su aviso lleva la URL, con el token) ni el texto de ningún error.
+    Nunca lanza."""
     app, secrets = settings.META_APP_ID, settings.META_APP_SECRETS
     if not (isinstance(app, str) and re.fullmatch(META_ID, app) and secrets):
-        return None
+        return "no_app"
     if not re.fullmatch(TOKEN_FORMAT, token):  # sin caracteres que cambien la URL
-        return None
+        return "malformed"
     try:
         found = _ask("GET", f"debug_token?input_token={token}", f"{app}|{secrets[0]}", retry=False)
+    except GraphRejected:
+        return "app_token_rejected"
+    except Exception:  # noqa: BLE001 — el texto de un error puede llevar los dos tokens
+        return "unavailable"
+    try:
         data = found["data"]
-        if data["is_valid"] is not True or str(data["app_id"]) != app:
-            return None
+        if data["is_valid"] is not True:
+            return "invalid_token"
+        if str(data["app_id"]) != app:
+            return "other_app"
         return Expiry(_moment(data["expires_at"]), _moment(data.get("data_access_expires_at", 0)))
-    except Exception:  # noqa: BLE001 — no se sabe; el texto de un error puede llevar el token
-        return None
+    except Exception:  # noqa: BLE001 — una respuesta que no es la esperada no dice nada
+        return "malformed"

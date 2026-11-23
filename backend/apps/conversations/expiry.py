@@ -59,7 +59,9 @@ class Known(NamedTuple):
 def read(platform: str, token: str) -> Known | None:
     """La caducidad que cuenta para una cuenta de `platform` con `token`; `None`, no se sabe."""
     seen = graph.token_expiry(token)
-    if seen is None:
+    if isinstance(seen, str):  # solo el motivo; los de configuración, como aviso
+        level = "warning" if seen in ("no_app", "app_token_rejected", "malformed") else "info"
+        getattr(logger, level)("channel.token_expiry_unknown", reason=seen)
         return None
     counted = [seen.expires_at]
     if platform == Platform.INSTAGRAM:
@@ -196,4 +198,5 @@ def sweep(*, backfill: bool = False) -> dict[str, int]:
         except Exception as error:  # noqa: BLE001 — nada del error: puede llevar la URL
             logger.error("channel.token_expiry_failed", error=type(error).__name__)
             done["ERROR"] += 1
+    logger.info("channel.token_expiry_swept", backfill=backfill, **done)
     return dict(done)

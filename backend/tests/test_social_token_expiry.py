@@ -19,15 +19,17 @@ from django.db import connection, connections
 from apps.access.selectors import holders
 from apps.conversations import accounts, expiry, tasks
 from apps.conversations.models import Credential
+from core import http
 from core.observability import reporting
 from core.tenancy.scope import tenant_scope
-from tests.meta_sim.graph import TEST_TOKEN
+from tests.meta_sim.graph import TEST_TOKEN, Cut
 from tests.meta_sim.page_graph import APP_TOKEN, FakePageGraph
 from tests.meta_sim.social import APP_ID, OTHER_APP_ID
 from tests.meta_sim.webhooks import TEST_APP_SECRET
 from tests.test_channel_accounts import everything, run
 from tests.test_contacts_api import crm, real_stack
 from tests.test_memberships import ctx
+from tests.test_meta_alerts import Spy
 from tests.test_social_accounts import connect
 from tests.test_social_accounts import meta as page_meta
 from tests.test_social_page_owner import app
@@ -38,17 +40,10 @@ DB = psycopg.Connection[Any]
 SECRETS = (TEST_TOKEN, TEST_APP_SECRET, APP_TOKEN)
 
 
-class Spy:
-    def __init__(self) -> None:
-        self.messages: list[tuple[str, dict[str, Any]]] = []
-
-    def capture_message(self, message: str, context: Any = None, **_: Any) -> None:
-        self.messages.append((message, dict(context or {})))
-
-
 @pytest.fixture
 def meta(page_meta: FakePageGraph, settings: Any, monkeypatch: pytest.MonkeyPatch) -> Any:
-    settings.META_APP_ID, settings.META_APP_SECRETS = APP_ID, [TEST_APP_SECRET]
+    settings.META_APP_ID = APP_ID  # el vigente primero; el anterior no abre `debug_token`
+    settings.META_APP_SECRETS = [TEST_APP_SECRET, "secreto-anterior-no-real"]
     settings.APP_ORIGIN = "https://crm.example"
     spy = Spy()
     monkeypatch.setattr(reporting, "reporter", lambda: spy)
@@ -65,6 +60,10 @@ def cred(org: UUID, pk: Any) -> Credential:
         return found
 
 
+def cut() -> None:
+    raise Cut
+
+
 def leaks(*texts: str) -> list[str]:
     return [s for s in SECRETS for text in texts if s in text]
 
@@ -79,9 +78,6 @@ def shift(migrator: DB, pk: Any, days: float) -> None:
         )
     finally:
         migrator.execute("ALTER TABLE credentials ENABLE TRIGGER credentials_expiry_guard")
-
-
-# --- Lo que se lee de Meta -------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -111,13 +107,17 @@ def test_connecting_reads_the_expiry_that_counts(
 
 
 @pytest.mark.parametrize(
-    "case",
-    ["no_app", "no_secret", "wrong_secret", "meta_100", "invalid", "other_app", "negative", "bool",
-     "text", "huge"],
+    "case, reason",
+    [("no_app", "no_app"), ("no_secret", "no_app"), ("wrong_secret", "app_token_rejected"),
+     ("old_first", "app_token_rejected"), ("meta_100", "app_token_rejected"),
+     ("down", "unavailable"), ("invalid", "invalid_token"), ("other_app", "other_app"),
+     ("negative", "malformed"), ("bool", "malformed"), ("text", "malformed"),
+     ("huge", "malformed")],
 )  # fmt: skip
-def test_an_unreadable_expiry_is_unknown_and_never_blocks_the_connection(
-    crm: SimpleNamespace, meta: Any, settings: Any, case: str
-) -> None:
+def test_an_unreadable_expiry_is_unknown_logs_why_and_never_blocks_the_connection(
+    crm: SimpleNamespace, meta: Any, settings: Any, caplog: pytest.LogCaptureFixture, case: str,
+    reason: str,
+) -> None:  # fmt: skip
     cases: dict[str, dict[str, Any]] = {
         "invalid": {"is_valid": False, "expires_at": at(5)},
         "other_app": {"app_id": OTHER_APP_ID, "expires_at": at(5)},
@@ -127,14 +127,22 @@ def test_an_unreadable_expiry_is_unknown_and_never_blocks_the_connection(
     meta.graph.debug = None if case == "meta_100" else cases.get(case, {"expires_at": at(5)})
     if case == "no_app":
         settings.META_APP_ID = ""
-    if case in ("no_secret", "wrong_secret"):
-        settings.META_APP_SECRETS = [] if case == "no_secret" else ["otro-secreto-no-real"]
-    account, made = connect(crm, "INSTAGRAM")
+    secrets = {"no_secret": [], "wrong_secret": ["otro"], "old_first": ["otro", TEST_APP_SECRET]}
+    settings.META_APP_SECRETS = secrets.get(case, settings.META_APP_SECRETS)
+    if case == "down":
+        real = meta.graph.handle
+        meta.graph.handle = lambda m, t, *a: cut() if "debug_token" in t else real(m, t, *a)
+    with caplog.at_level(logging.INFO):
+        account, made = connect(crm, "INSTAGRAM")
     found = cred(crm.a, made.pk)
     assert account.status == "PENDING" and (found.expiry_checked_at, found.expires_at) == (
         None,
         None,
     )
+    logged = [r for r in caplog.records if "channel.token_expiry_unknown" in r.getMessage()]
+    assert len(logged) == 1 and f"'reason': '{reason}'" in logged[0].getMessage()
+    loud = reason in ("no_app", "app_token_rejected", "malformed")
+    assert logged[0].levelno == (logging.WARNING if loud else logging.INFO)
 
 
 @pytest.mark.parametrize("error", ["max_retry", "unexpected"])
@@ -163,7 +171,31 @@ def test_a_network_error_carrying_the_url_leaks_no_token(
     assert leaks(caplog.text, str(meta.spy.messages), everything(migrator)) == []
 
 
-# --- Rotar --------------------------------------------------------------------------------------
+def test_debug_token_never_retries_and_both_passes_are_scheduled(
+    crm: SimpleNamespace, meta: Any, settings: Any, monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:  # fmt: skip
+    """`core.http` reintentaría con un aviso que lleva la URL (y el token): `retry=False`."""
+    real, asked = http.request, []
+
+    def spy(method: str, url: str, **kwargs: Any) -> Any:
+        asked.append((url.split("?")[0].rsplit("/", 1)[-1], kwargs.get("retry", True)))
+        return real(method, url, **kwargs)
+
+    monkeypatch.setattr(http, "request", spy)
+    settings.META_APP_ID = ""
+    connect(crm, "MESSENGER")
+    settings.META_APP_ID = APP_ID
+    with caplog.at_level(logging.INFO):
+        assert tasks.token_expiry(backfill=True) == {"READ": 1}
+    assert ("debug_token", False) in asked and all(r for name, r in asked if name != "debug_token")
+    assert "channel.token_expiry_swept" in caplog.text
+    beat = settings.CELERY_BEAT_SCHEDULE
+    hourly, daily = beat["conversations.token_expiry"], beat["conversations.token_expiry_backfill"]
+    assert hourly["task"] == daily["task"] == tasks.token_expiry.name
+    assert (hourly.get("kwargs"), daily["kwargs"]) == (None, {"backfill": True})
+    assert (hourly["schedule"].minute, daily["schedule"].hour) == ({23}, {5})
+    assert tasks.token_expiry.tenancy == "platform"
 
 
 def test_rotating_reads_the_new_expiry_and_starts_the_warnings_again(
@@ -180,9 +212,6 @@ def test_rotating_reads_the_new_expiry_and_starts_the_warnings_again(
     assert cred(crm.a, old.pk).revoked_at is not None
     assert tasks.token_expiry() == {"WARNED": 1}  # el token nuevo, su propio aviso de 10 días
     assert cred(crm.a, new.pk).expiry_warned_days == 10
-
-
-# --- Los avisos -------------------------------------------------------------------------------
 
 
 def test_a_token_warns_once_at_10_and_once_at_3_days_without_the_token_anywhere(
@@ -209,7 +238,7 @@ def test_a_token_warns_once_at_10_and_once_at_3_days_without_the_token_anywhere(
         [expiry.ACTION],
     ).fetchall()
     assert sorted(rows) == [(account.pk, "10", "SYSTEM"), (account.pk, "3", "SYSTEM")]
-    alerts = [c for name, c in meta.spy.messages if name == expiry.EVENT]
+    alerts = [c for name, c, _ in meta.spy.messages if name == expiry.EVENT]
     assert [a["days"] for a in alerts] == [10, 3] and alerts[0]["platform"] == "INSTAGRAM"
     mails = " ".join(f"{m.subject} {m.body}" for m in outbox.outbox)
     assert leaks(caplog.text, str(meta.spy.messages), everything(migrator), mails) == []
@@ -225,7 +254,7 @@ def test_a_late_token_gets_only_the_most_urgent_warning(
     assert tasks.token_expiry() == {"WARNED": 1}
     assert tasks.token_expiry() == {}
     assert cred(crm.a, made.pk).expiry_warned_days == warned
-    alerts = [c for name, c in meta.spy.messages if name == expiry.EVENT]
+    alerts = [c for name, c, _ in meta.spy.messages if name == expiry.EVENT]
     assert [(a["days"], a["expired"]) for a in alerts] == [(warned, expired)]
     subject = expiry.EXPIRED if expired else expiry.SUBJECT.format(days=3)
     assert {m.subject for m in outbox.outbox} == {subject}
@@ -318,29 +347,6 @@ def test_a_concurrent_sweep_waits_for_the_claim_and_does_not_warn_twice(
                             [expiry.ACTION]).fetchone() == (0,)  # fmt: skip
 
 
-def test_two_real_sweeps_at_once_warn_exactly_once(crm: SimpleNamespace, meta: Any) -> None:
-    meta.graph.debug = {"expires_at": at(9)}
-    connect(crm, "MESSENGER")
-    start, results = threading.Barrier(2), []
-
-    def sweep() -> None:
-        try:
-            start.wait(10)
-            results.append(tasks.token_expiry())
-        finally:
-            connections.close_all()
-
-    threads = [threading.Thread(target=sweep) for _ in range(2)]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join(30)
-    assert sorted(r.get("WARNED", 0) for r in results) == [0, 1]
-
-
-# --- La caducidad que no se sabe ----------------------------------------------------------------
-
-
 def test_the_daily_pass_reads_an_unknown_expiry_once_and_the_hourly_one_never_asks(
     crm: SimpleNamespace, meta: Any, settings: Any
 ) -> None:
@@ -390,9 +396,6 @@ def test_a_read_that_lost_the_race_keeps_the_first_one(
     meta.graph.debug = {"expires_at": at(2)}
     assert tasks.token_expiry(backfill=True) == {"READ": 0}
     assert cred(crm.a, made.pk).expires_at is None
-
-
-# --- La base -------------------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
