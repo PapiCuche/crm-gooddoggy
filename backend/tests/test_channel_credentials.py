@@ -144,6 +144,7 @@ def test_the_database_keeps_credentials_inside_their_organization_and_narrow(
     for privilege in ("DELETE", "TRUNCATE"):
         assert migrator.execute(table, [privilege]).fetchone() == (False,)
     allowed = {"ciphertext", "key_version", "revoked_at"}
+    allowed |= {"expires_at", "expiry_checked_at", "expiry_warned_days"}  # F7b-12 (0059)
     names = [r[0] for r in migrator.execute(
         "SELECT column_name FROM information_schema.columns WHERE table_name = 'credentials'"
     ).fetchall()]  # fmt: skip

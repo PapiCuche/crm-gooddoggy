@@ -979,6 +979,7 @@ DROPS = {
     "apps/conversations/migrations/0021_message_attachments.py",
     "apps/conversations/migrations/0040_social_channels.py",  # F7b-04a
     "apps/conversations/migrations/0042_social_ingress.py",  # F7b-04b
+    "apps/conversations/migrations/0059_credential_expiry.py",  # F7b-12: solo al deshacerla
     "apps/pricing/migrations/0004_promotions_frozen.py",
     "apps/pricing/migrations/0009_ai_exposable_guard.py",  # F8-07f: solo al deshacerla
     "apps/pricing/migrations/0010_price_list_visibility_guard.py",  # F8-07g: ídem
