@@ -105,12 +105,42 @@ El backup nocturno comparte con `deploy.sh` el lock `/var/lib/crm-deploy/lock` (
 
 ## 5. Alertas
 
-- **`backup.failed`**: `backup.sh` falla en cualquier paso. Queda en el journal (`journalctl -u crm-backup.service`) con la etapa (`deploy_lock`, `dump`, `upload` o `media`; `deploy_lock`: el lock de un despliegue sigue puesto tras una hora) y, si `SENTRY_DSN` está en `backup.env`, también como evento en Sentry. El log nunca lleva datos, claves de objetos ni credenciales.
-- **`backup.missing`**: `check.sh` comprueba cada hora que el último backup nocturno correcto tenga menos de 26 h (ADR-033 §8.4). Avisa por el mismo camino.
-- **Permisos de `backup.env`:** si no es de root y `0600`, `backup.sh` y `check.sh` no lo cargan y avisan con `backup.failed` y `backup.missing` (`reason: config_permissions`). Ese aviso va a Sentry solo si el archivo es de root y nadie más puede escribirlo (p. ej., `0644`): su `SENTRY_DSN` es entonces de fiar. Si otros pueden escribirlo, el aviso queda solo en el journal.
-- **Si el servidor entero cae**, esos dos avisos caen con él. Para eso, `BACKUP_HEARTBEAT_URL`: un servicio externo de monitorización que recibe un ping tras cada backup nocturno correcto y avisa si en 26 h no llega ninguno. Lo elige el propietario. Su URL lleva el token del servicio: `backup.sh` se la pasa a `curl` por la entrada estándar (`--config -`), nunca en los argumentos, que cualquier usuario ve con `ps`.
+- **`backup.failed`**: `backup.sh` falla en cualquier paso. Queda en el journal (`journalctl -u crm-backup.service`) con la etapa (`config`, `deploy_lock`, `dump`, `upload` o `media`; `deploy_lock`: el lock de un despliegue sigue puesto tras una hora). Si `SENTRY_DSN` está en `backup.env`, también va como evento a Sentry. Si es la noche (no con `predeploy`: `deploy.sh` ya se detiene), también va como señal de fallo a `BACKUP_HEARTBEAT_FAIL_URL`. El log nunca lleva datos, claves de objetos ni credenciales.
+- **`backup.missing`**: `check.sh` comprueba cada hora que el último backup nocturno correcto tenga menos de 26 h (ADR-033 §8.4). Avisa por los mismos caminos.
+- **Permisos de `backup.env`:** si no es de root y `0600`, `backup.sh` y `check.sh` no lo cargan y avisan con `backup.failed` y `backup.missing` (`reason: config_permissions`). Ese aviso va a Sentry y a `BACKUP_HEARTBEAT_FAIL_URL` solo si el archivo es de root y nadie más puede escribirlo (p. ej., `0644`): sus URL son entonces de fiar. Si otros pueden escribirlo, el aviso queda solo en el journal, aunque el entorno traiga otras URL.
 
-Qué hacer ante un aviso: leer `journalctl -u crm-backup.service -n 50`, corregir la causa (disco, credencial, destino caído) y lanzar `systemctl start crm-backup.service`. Un día sin backup no se recupera después: el RPO de ese día pasa a 48 h.
+### Servicio externo de latidos (F1-16c)
+
+Los avisos de arriba salen del propio servidor: el journal solo lo ve quien entra en él, y Sentry es opcional. Para que el propietario se entere fuera del servidor, aunque este caiga entero, hace falta un servicio externo de latidos («heartbeat» o «cron monitoring»). Lo elige y lo contrata el propietario. Sirve cualquiera que dé **una URL de éxito y otra de fallo**:
+
+- `BACKUP_HEARTBEAT_URL`: `backup.sh` la llama tras cada backup nocturno correcto, después de guardar `last-success`.
+- Las dos señales y Sentry salen después de soltar el lock de los despliegues: un despliegue no espera a que respondan.
+- `BACKUP_HEARTBEAT_FAIL_URL`: `backup.sh` la llama una vez cuando falla una noche (`backup.failed`, cualquier etapa) y `check.sh`, cada hora mientras falte el backup (`backup.missing`). Los servicios de este tipo suelen avisar solo al cambiar de estado, así que la repetición no debería multiplicar los avisos.
+- En Healthchecks.io o en los latidos de Better Stack, la URL de fallo es la de éxito seguida de `/fail`. Si el servicio usa otra forma (un parámetro como `?state=fail`), se pone esa. Es una variable aparte, y no se deriva de la de éxito, para que valga con cualquier servicio.
+
+Configuración:
+
+1. En el servicio, un chequeo con periodo de 1 día y margen de 2 h (26 h, ADR-033 §8.4), con aviso al propietario y a su suplente.
+2. Las dos URL en `/etc/crm/backup.env` (root, `0600`; plantilla en `.env.production.example`). **Son secretas**: llevan el token del servicio. `backup.sh` y `check.sh` se las pasan a `curl` por la entrada estándar (`--config -`), nunca en los argumentos, que cualquier usuario ve con `ps`. Los errores de `curl` no se escriben en el log.
+3. `sudo systemctl start crm-backup.service`: el chequeo pasa a correcto. Para probar el aviso de fallo, abrir la URL de fallo una vez desde fuera del servidor y lanzar después otro backup para volver a correcto.
+
+La señal no lleva datos: es una petición `GET` sin cuerpo y sin parámetros añadidos. Ni nombres de objetos, ni conteos, ni el motivo: la etapa queda solo en el journal. Si la señal no llega (servicio caído, sin red), el log dice `backup.heartbeat_failed` con el código de salida de `curl`, y el backup no cambia: ni su resultado, ni `last-success`, ni `last-period`.
+
+### Qué hacer ante cada aviso
+
+La señal de fallo es la misma para los dos scripts. El journal dice cuál fue: `backup.failed` en `crm-backup.service` (`backup.sh`) o `backup.missing` en `crm-backup-check.service` (`check.sh`).
+
+- **Fallo** (`backup.failed`, de madrugada, tras el temporizador de las 03:15 UTC): `journalctl -u crm-backup.service -n 50` y mirar `stage`:
+  - `config`: falta un comando (`docker`, `age`, `rclone`, `curl`), una variable de `backup.env`, o `runtime.env` o `backup-recipients.txt` no son de root con los permisos de §6. La línea anterior al aviso dice cuál.
+  - `deploy_lock`: un despliegue cortado dejó el lock ([infra/prod/README.md](../../infra/prod/README.md), «Volver atrás»).
+  - `dump`: PostgreSQL parado o el disco lleno (`/opt/crm/infra/prod/compose.sh --env-file /etc/crm/release.env ps`, `df -h`).
+  - `upload`: el destino no responde o la credencial de escritura caducó o cambió.
+  - `media`: no se pudo leer el bucket de la aplicación (`STORAGE_*` de `runtime.env`), cifrar un objeto con `age` o subirlo al destino (como en `upload`).
+  - `reason: config_permissions`: `sudo chown root:root /etc/crm/backup.env && sudo chmod 600 /etc/crm/backup.env`.
+- **Falta** (`backup.missing`, cada hora): el temporizador no corrió o todas las noches fallan. `systemctl list-timers 'crm-backup*'` y el journal de `crm-backup.service` y `crm-backup-check.service`.
+- **Sin señal en 26 h** (el servicio avisa por su cuenta): probablemente el servidor está caído o sin red. Si responde, buscar `backup.heartbeat_failed` en el journal de `crm-backup.service`: el backup pudo ir bien y no llegar la señal. Si no responde, [§6](#6-restaurar-en-un-servidor-nuevo).
+
+En todos los casos: corregir la causa y lanzar `sudo systemctl start crm-backup.service`. El ping de éxito devuelve el chequeo a correcto. Un día sin backup no se recupera después: el RPO de ese día pasa a 48 h.
 
 ## 6. Restaurar en un servidor nuevo
 
@@ -166,16 +196,30 @@ Objetivo: menos de 4 h (RTO). El propietario o su suplente tienen que estar loca
 - que un fallo dentro del volcado deja `backup.failed stage=dump` y no mueve `last-success`, y que una marca no numérica da `backup.missing`;
 - que una lista de objetos copiados desordenada (una noche que falló a medias) no rompe la siguiente copia, y que un `.partial` no se copia;
 - que una noche fallida no guarda su periodo y la siguiente noche buena hace el semanal y el mensual; y que otra noche del mismo periodo solo hace el diario;
-- que `BACKUP_HEARTBEAT_URL` no aparece en los argumentos de `curl` y que el ping llega;
+- con un servicio de latidos simulado (un proceso `python3` local que anota cada petición): que la noche buena da una señal de éxito y ninguna de fallo; que un fallo en cada etapa (`config` sin `rclone` en el `PATH`, `deploy_lock`, `dump`, `upload`, `media`) y un `backup.env` `0644` dan exactamente una de fallo y ninguna de éxito, sin mover `last-success`; que `check.sh` con la marca vieja o no numérica o con un `backup.env` `0644` da una de fallo; que un `predeploy` que falla y un `backup.env` que otros pueden escribir no dan ninguna; que con el servicio caído el backup sale bien y deja `backup.heartbeat_failed`; y que el token de la URL no aparece en los argumentos de `curl` de `backup.sh` ni de `check.sh` (lo que muestra `ps`) ni en ningún log;
 - que un `alerted=1` heredado del entorno no silencia `backup.failed` ni `restore.failed`;
 - que un renombrado que falla deja `crm` intacta y un aviso sin `kept=`;
 - que `--replace-existing-data` que falla después de `pg_restore` deja la base anterior como `crm_replaced_<…>`; que `rollback-replaced.sql` se niega con una base guardada que no existe y vuelve a la que sí; y que tras `restore.ok` se borra;
 - que con los roles ya creados, sin `--roles-env` y sin la base `crm`, la restauración crea la base;
 - que `--media-only --overwrite-media` con otra clave deja los objetos idénticos y ningún `.partial`, y que sin `--overwrite-media` no vuelve a subir lo que ya está.
 
-Las imágenes del simulacro (Garage, Caddy, PostgreSQL y Redis) van fijadas por digest. En local, con Docker, `age` y `rclone`: `BACKEND_IMAGE=<imagen del backend del repo> bash infra/prod/backup/drill.sh`. Borra al salir, por nombre, todo lo que crea.
+Las imágenes del simulacro (Garage, Caddy, PostgreSQL y Redis) van fijadas por digest. En local, con Docker, `age`, `rclone`, `python3` y las utilidades de GNU (en macOS, dentro de un contenedor Linux con el socket de Docker): `BACKEND_IMAGE=<imagen del backend del repo> bash infra/prod/backup/drill.sh`. Borra al salir, por nombre, todo lo que crea.
 
 **En el servidor real**: es obligatorio antes de salir a producción (F1-18, #760), y después cada trimestre y tras cambiar el procedimiento (ADR-033 §8.4).
+
+**El servidor del simulacro no puede tocar producción.** Desde el 2026-11-23 la base de producción tiene canales de Meta conectados, y las KEKs restauradas abren sus tokens. En ese servidor:
+
+- No se ejecuta `deploy.sh` (ni el paso 7 de §6) y no se arrancan `worker`, `worker-media` ni `beat`: sus tareas (`healthcheck_accounts`, `sweep_queued`, `sweep_sending`) llamarían a Graph con los tokens reales o enviarían los mensajes en cola. `restore.sh` levanta `backend` con `up -d --wait`, que arranca también `migrate`, `postgres` y `redis`, pero no `worker` ni `beat`.
+- Para entrar con el navegador (la cuenta con segundo factor del paso 2):
+  - El servidor del simulacro va en **modo dedicado**, sin `/etc/crm/host-mode`. En modo compartido (`compose.shared.yaml`) el proxy no publica puertos y sirve HTTP en `:80`, y el túnel de abajo no funciona.
+  - En modo dedicado, `compose.yaml` publica 80 y 443 en `0.0.0.0`. Un servidor con los datos de producción no puede quedar abierto: antes de arrancar el proxy, cerrar 80 y 443 en el firewall de Lightsail (o del servidor) y dejar solo SSH.
+  - `/opt/crm/infra/prod/compose.sh --env-file /etc/crm/release.env up -d --wait proxy`. Arranca `frontend`, `ws` y `backend`, tampoco `worker` ni `beat`.
+  - Sin el dominio de producción: `CRM_DOMAIN=localhost` en `proxy.env` y `crm.localhost` en `DJANGO_ALLOWED_HOSTS`, `DJANGO_CSRF_TRUSTED_ORIGINS` y `APP_ORIGIN` (como el simulacro de CI). Caddy firma `crm.localhost` con su CA interna.
+  - Desde el portátil, `sudo ssh -L 443:127.0.0.1:443 <servidor del simulacro>` y abrir `https://crm.localhost`, aceptando el aviso del certificado. Si el sistema no resuelve `crm.localhost` a `127.0.0.1`, añadir `127.0.0.1 crm.localhost` a `/etc/hosts` del portátil (y quitarlo al terminar).
+- `runtime.env` va sin ninguna variable `META_*`, con `EMAIL_HOST` y `HTTP_ALLOWED_HOSTS` vacíos.
+- `backup.env` del simulacro va sin `BACKUP_HEARTBEAT_URL` ni `BACKUP_HEARTBEAT_FAIL_URL`: el servicio real no debe ver señales de otro servidor.
+- No se instalan los temporizadores `crm-backup*` ni se usa `--media` o `--media-only`: sus escrituras irían a los buckets de producción.
+- Las `STORAGE_*` restauradas dan al backend del simulacro lectura y escritura en el bucket de producción. Se usan solo para leer (descargar un archivo) y nunca se sube nada desde el simulacro.
 
 1. En un servidor **nuevo**, seguir §6 con el último backup nocturno. Cronometrar desde el aprovisionamiento hasta la puerta de salud.
 2. Comprobar:
