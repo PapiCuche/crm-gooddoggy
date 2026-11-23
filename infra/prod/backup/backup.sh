@@ -22,29 +22,31 @@ set -euo pipefail
 
 kind=${1:-nightly}
 case $kind in nightly | predeploy) ;; *) echo "uso: backup.sh [nightly|predeploy]" >&2; exit 2 ;; esac
-stage=config tmp='' alerted='' # alerted: un valor heredado del entorno silenciaría el aviso
+stage=config tmp='' alerted='' held_lock='' # alerted: un valor heredado del entorno silenciaría el aviso
+# El lock de los despliegues se suelta antes de los avisos: un despliegue no espera a Sentry ni al
+# servicio de latidos (hasta ~45 s si no responden).
+release_lock() { [ -z "$held_lock" ] || rmdir "$held_lock" || true; held_lock=''; }
 finish() {
   local status=$?
   [ -z "$tmp" ] || rm -f "$tmp" "$tmp.counts" "$tmp.list" "$tmp.new"
+  release_lock
   [ "$status" = 0 ] || [ -n "$alerted" ] || alert backup.failed "kind=$kind stage=$stage"
 }
 trap finish EXIT
 trap 'exit 143' TERM # TimeoutStartSec de systemd: también deja backup.failed
 
-need docker age rclone curl
 umask 077
-configure backup.failed
+configure backup.failed # antes que need: sin un comando, el aviso ya tiene BACKUP_HEARTBEAT_FAIL_URL
+need docker age rclone curl
 mkdir -p "$state_dir"
-held_lock=''
-if [ "$kind" = nightly ]; then
-  stage=deploy_lock
-  trap 'finish; [ -z "$held_lock" ] || rmdir "$held_lock"' EXIT
-  deploy_lock
-fi
 recipients=(-R "${BACKUP_RECIPIENTS:-${CRM_ENV_DIR:-/etc/crm}/backup-recipients.txt}")
 deploy=${BACKUP_DEPLOY_RECIPIENTS:-${CRM_ENV_DIR:-/etc/crm}/backup-deploy-recipients.txt}
 [ "$kind" = nightly ] || [ ! -s "$deploy" ] || recipients+=(-R "$deploy")
 for file in "${recipients[@]}"; do [ "$file" = -R ] || check_file "$file"; done
+if [ "$kind" = nightly ]; then
+  stage=deploy_lock
+  deploy_lock
+fi
 tmp=$(mktemp "$state_dir/.backup.XXXXXX")
 
 stage=dump
@@ -96,6 +98,7 @@ fi
 
 stage=finished
 [ "$kind" = predeploy ] || date -u +%s > "$state_dir/last-success"
+release_lock
 log backup.ok "kind=$kind" "object=$name" "bytes=$size" "prefixes=$(echo "$prefixes" | tr '\n' ' ' | sed 's/ $//')" \
   "media_copied=$copied"
 [ "$kind" = predeploy ] || heartbeat "${BACKUP_HEARTBEAT_URL:-}"

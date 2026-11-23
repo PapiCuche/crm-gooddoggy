@@ -160,7 +160,7 @@ deploy_lock() {
     sleep 30
     waited=$((waited + 30))
   done
-  # shellcheck disable=SC2034 # lo lee el trap de salida de backup.sh, que lo suelta
+  # shellcheck disable=SC2034 # lo suelta release_lock de backup.sh
   held_lock=$dir/lock
 }
 

@@ -148,6 +148,7 @@ printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> %s/curl.argv\nexec %s "$@"\n' "$work"
 chmod 700 "$work/shim/curl" # anota los argumentos de cada curl: lo que muestra ps
 touch "$work/curl.argv"
 night() { stack src env PATH="$work/shim:$PATH" BACKUP_ENV="$work/backup.env" "$@" bash "$here/backup.sh"; } # [VAR=valor…]
+check() { stack src env PATH="$work/shim:$PATH" BACKUP_ENV="$work/backup.env" "$@" bash "$here/check.sh"; }   # [VAR=valor…]
 # alerted=1 heredado del entorno: no silencia el aviso.
 if night CRM_COMPOSE_PROJECT="$id-missing" alerted=1 > "$work/failed.log" 2>&1; then fail "un backup sin base no falló"; fi
 grep -q '"event":"backup.failed"' "$work/failed.log" || fail "sin backup.failed en el log"
@@ -165,7 +166,7 @@ for o in "$object" "${object%.dump.age}.counts.age"; do
   [ "$(rclone cat --count 21 "READER:backups/db/daily/$o")" = age-encryption.org/v1 ] || fail "$o no está cifrado"
 done
 [ "$(rclone lsf -R --files-only READER:backups/media | grep -c '\.age$')" = 3 ] || fail "faltan archivos en el destino"
-if stack src env BACKUP_ENV="$work/backup.env" bash "$here/check.sh" 2> "$work/check.log"; then :; else fail "check.sh tras un backup"; fi
+check 2> "$work/check.log" || fail "check.sh tras un backup"
 pings "check.sh con un backup reciente"
 # Otra noche del mismo periodo, con el servicio de latidos caído: el backup sale bien igual.
 sed "s|127.0.0.1:$ping_port|127.0.0.1:9|" "$work/backup.env" > "$work/dead.env"
@@ -189,8 +190,20 @@ night_fails() { # <etapa> [VAR=valor…]: la noche falla ahí, no mueve last-suc
 }
 # Una noche fallida (el domingo o el día 1) no deja su periodo: la siguiente noche buena hace las copias.
 echo "0 1970-01" > "$work/state-src/last-period"
+# Sin rclone en el PATH: falla antes de tocar nada y el aviso ya tiene su URL (configure va antes que need).
+mkdir "$work/no-rclone"
+IFS=: read -ra dirs <<< "$PATH"
+for d in "${dirs[@]}"; do
+  for f in "$d"/*; do
+    n=${f##*/}
+    [ "$n" = rclone ] || [ -e "$work/no-rclone/$n" ] || ln -s "$f" "$work/no-rclone/$n"
+  done
+done
+night_fails config PATH="$work/shim:$work/no-rclone"
+grep -q 'falta el comando rclone' "$work/failed.log" || fail "el fallo sin rclone no dice qué falta"
 mkdir -p "$work/deploy-src/lock" # un despliegue cortado
 night_fails deploy_lock BACKUP_LOCK_WAIT=0
+[ -d "$work/deploy-src/lock" ] || fail "backup.sh soltó un lock que no era suyo"
 rmdir "$work/deploy-src/lock"
 # pg_dump escribe algo y falla (un pg_dump cortado): sin pipefail, age terminaría bien y se subiría.
 shim docker '*" pg_dump "*' 'printf PGDMP-cut; exit 1'
@@ -207,7 +220,7 @@ cp "$work/backup.env" "$work/open.env" && chmod 644 "$work/open.env"
 if night BACKUP_ENV="$work/open.env" > "$work/failed.log" 2>&1; then fail "aceptó un backup.env 0644"; fi
 grep -q '"event":"backup.failed".*config_permissions' "$work/failed.log" || fail "backup.env 0644 sin backup.failed"
 pings "backup.sh con backup.env 0644" /fail
-if stack src env BACKUP_ENV="$work/open.env" bash "$here/check.sh" 2> "$work/failed.log"; then fail "check.sh aceptó backup.env 0644"; fi
+if check BACKUP_ENV="$work/open.env" 2> "$work/failed.log"; then fail "check.sh aceptó backup.env 0644"; fi
 grep -q '"event":"backup.missing".*config_permissions' "$work/failed.log" || fail "backup.env 0644 sin backup.missing"
 pings "check.sh con backup.env 0644" /fail
 chmod 666 "$work/open.env" # otros pueden escribir su URL: ni esa ni la heredada del entorno
@@ -217,15 +230,11 @@ fi
 grep -q '"event":"backup.failed".*config_permissions' "$work/failed.log" || fail "backup.env 0666 sin backup.failed"
 pings "backup.env 0666"
 mkdir "$work/state-bad" && echo garbage > "$work/state-bad/last-success"
-if BACKUP_STATE_DIR="$work/state-bad" BACKUP_ENV="$work/backup.env" bash "$here/check.sh" 2> "$work/failed.log"; then
-  fail "check.sh aceptó una marca no numérica"
-fi
+if check BACKUP_STATE_DIR="$work/state-bad" 2> "$work/failed.log"; then fail "check.sh aceptó una marca no numérica"; fi
 grep -q '"event":"backup.missing"' "$work/failed.log" || fail "sin backup.missing con una marca no numérica"
 pings "check.sh con una marca no numérica" /fail
 echo 1 > "$work/state-bad/last-success" # 1970: más de 26 h
-if BACKUP_STATE_DIR="$work/state-bad" BACKUP_ENV="$work/backup.env" bash "$here/check.sh" 2> "$work/failed.log"; then
-  fail "check.sh aceptó una marca vieja"
-fi
+if check BACKUP_STATE_DIR="$work/state-bad" 2> "$work/failed.log"; then fail "check.sh aceptó una marca vieja"; fi
 grep -q '"event":"backup.missing".*last_success_age_seconds' "$work/failed.log" || fail "sin backup.missing con una marca vieja"
 pings "check.sh con una marca vieja" /fail
 LC_ALL=C sort -r -o "$work/state-src/media-copied.txt" "$work/state-src/media-copied.txt"
