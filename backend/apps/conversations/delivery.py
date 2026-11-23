@@ -127,6 +127,11 @@ def apply(ctx: TenantContext, account: ChannelAccount, payload: dict[str, Any]) 
         message = _find(alias, account, wamid, _uuid(payload.get("biz_opaque_callback_data")))
         if message is None:
             raise NotYet
+        if reason in ("TOKEN_INVALID", "QUALITY_BLOCKED"):
+            # F7b-14: la cuenta que se marcará, antes que la conversación (`_reply_failed`): el
+            # orden del reclamo (cuenta → conversación), sin ciclos
+            rows = ChannelAccount.objects.using(alias).select_for_update(no_key=True)
+            rows.filter(pk=account.pk).exists()
         before = message.delivery_status
         if message.external_message_id is None:  # reconciliación: el envío no llegó a confirmarlo
             Message.objects.using(alias).filter(pk=message.pk).update(external_message_id=wamid)
