@@ -43,6 +43,7 @@ from apps.contacts.models import Contact
 from apps.conversations import attention, media, outbound_media
 from apps.conversations.channels import REASONS, Claim, Media, SendResult
 from apps.conversations.models import (
+    META_ERROR,
     META_ID,
     PREVIEW_MAX,
     SOCIAL,
@@ -612,12 +613,15 @@ def advance_delivery(
     status: str,
     at: dt.datetime | None = None,
     reason: str | None = None,
+    detail: str | None = None,
 ) -> Message:
     """Hace avanzar el estado de entrega de un mensaje saliente y fija su marca de tiempo (`at`, o
     ahora). Un estado que no es un paso adelante (repetido, tardío o tras `FAILED`) se ignora: ni
     error ni cambio ni auditoría. Audita `message.delivery_changed`, con el `reason` (un motivo
-    corto de `channels.REASONS`, solo con `FAILED`) en los metadatos. `ValueError` si el estado no
-    existe, el motivo no vale o el mensaje no es saliente; `DoesNotExist`."""
+    corto de `channels.REASONS`, solo con `FAILED`) en los metadatos. `detail` (F7b-13, solo con
+    `FAILED`): el código numérico del proveedor, que se guarda y no se audita. `ValueError` si el
+    estado no existe, el motivo o el detalle no valen o el mensaje no es saliente;
+    `DoesNotExist`."""
     alias = require_scope(ctx)
     message_id = _uuid(message_id, "mensaje")
     if not isinstance(status, str) or status not in Delivery.values:
@@ -626,6 +630,8 @@ def advance_delivery(
         raise ValueError("fecha: con zona horaria")
     if reason is not None and (status != Delivery.FAILED or reason not in REASONS):
         raise ValueError("motivo: uno de " + ", ".join(REASONS) + ", solo con FAILED")
+    if detail is not None and (status != Delivery.FAILED or not re.fullmatch(META_ERROR, detail)):
+        raise ValueError("detalle: el código numérico del proveedor, solo con FAILED")
     with transaction.atomic(using=alias):
         found = Message.objects.using(alias).select_for_update(no_key=True)
         message: Message = found.get(pk=message_id)
@@ -639,6 +645,7 @@ def advance_delivery(
         # eso abortaría la transacción de quien llama. Con el bloqueo no debería pasar nunca; el
         # `WHERE` lo hace imposible aunque alguien quite el bloqueo.
         fields = {stamp: at or timezone.now(), "provider_error_code": reason}
+        fields["provider_error_detail"] = detail
         if late:
             fields["failed_at"] = None  # no falló: salió (lo reconcilia un estado tardío)
         moved = (
@@ -928,8 +935,9 @@ def settle_outbound(ctx: TenantContext, *, message_id: UUID, result: SendResult)
         if not result.ok:
             reason = result.reason if result.reason in REASONS else "ADAPTER_REJECTED"
             return advance_delivery(
-                ctx, message_id=message_id, status=Delivery.FAILED, reason=reason
-            )
+                ctx, message_id=message_id, status=Delivery.FAILED, reason=reason,
+                detail=result.detail,
+            )  # fmt: skip
         held.update(external_message_id=result.external_id)
         sent = advance_delivery(ctx, message_id=message_id, status=Delivery.SENT)
         if result.delivered:

@@ -145,6 +145,28 @@ def test_an_ambiguous_result_is_never_resent_and_the_message_stays_sending(
     assert len(graph.sent) == (1 if outcome.endswith("_after") else 0)  # lo aceptado, solo una vez
 
 
+@pytest.mark.parametrize(
+    ("outcome", "code", "detail"),
+    [("window_closed", "WINDOW_CLOSED", "131047"), ("no_number", "PROVIDER_REJECTED", "100/33")],
+)
+def test_a_refused_send_keeps_the_number_of_meta_error_beside_the_closed_code(
+    world: SimpleNamespace, graph: FakeGraph, outcome: str, code: str, detail: str
+) -> None:
+    graph.then(outcome)  # F7b-13: el código y el subcódigo, nunca el texto
+    _, saved = send(world, talk(world))
+    assert (saved.delivery_status, saved.provider_error_code) == ("FAILED", code)
+    assert saved.provider_error_detail == detail
+
+
+@pytest.mark.parametrize(
+    ("code", "subcode", "detail"),
+    [(131031, None, "131031"), (10, 2018278, "10/2018278"), ("10", None, None), (True, None, None),
+     (None, 33, None), (-1, None, None), (10**10, None, None), (10, "x", "10"), (10, False, "10")],
+)  # fmt: skip
+def test_only_the_numbers_of_a_meta_error_are_kept(code: Any, subcode: Any, detail: Any) -> None:
+    assert whatsapp.error_detail(code, subcode) == detail
+
+
 def test_a_refused_token_puts_the_account_in_error_and_stops_the_queue(
     world: SimpleNamespace, graph: FakeGraph, migrator: Any
 ) -> None:
@@ -392,7 +414,8 @@ def test_every_shape_of_answer_is_a_closed_outcome_and_an_unclear_success_is_nev
     )
     assert whatsapp.WhatsAppAdapter().send(copied).reason == "TOKEN_INVALID"  # no se abre
     if isinstance(outcome, str):
-        assert whatsapp.WhatsAppAdapter().send(claim) == channels.SendResult(False, reason=outcome)
+        result = whatsapp.WhatsAppAdapter().send(claim)
+        assert (result.ok, result.reason) == (False, outcome)
     else:
         with pytest.raises(outcome):
             whatsapp.WhatsAppAdapter().send(claim)

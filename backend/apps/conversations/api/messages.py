@@ -90,6 +90,12 @@ class MessageSerializer(serializers.Serializer[Any]):
         help_text="Por qué un mensaje saliente quedó `FAILED`: un código cerrado propio, nunca el "
         "texto del proveedor; `null` si no falló (o falló antes de que se guardara el motivo).",
     )
+    provider_error_detail = serializers.CharField(
+        allow_null=True,
+        read_only=True,
+        help_text="El error del proveedor en números, `código` o `código/subcódigo` (p. ej., "
+        "`131031` o `10/2018278`), solo con `FAILED`; nunca su texto. `null` si no lo dio.",
+    )
     created_at = serializers.DateTimeField()
     sent_at = serializers.DateTimeField(allow_null=True)
     delivered_at = serializers.DateTimeField(allow_null=True)

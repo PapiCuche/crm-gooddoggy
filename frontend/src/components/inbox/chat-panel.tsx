@@ -325,6 +325,7 @@ export function ChatPanel({
 }
 
 const CODES: readonly string[] = Object.values(ProviderErrorCodeEnum);
+const META_ERROR = /^[0-9]{1,10}(\/[0-9]{1,10})?$/; // como `messages_error_detail_ck`
 // La red que nombra el motivo de un fallo en Instagram y Messenger (F7b-06f): un mapa cerrado de la
 // plataforma a su clave de texto; nada se arma con lo que manda el servidor.
 const SOCIAL_NETWORK = { INSTAGRAM: "network.INSTAGRAM", MESSENGER: "network.MESSENGER" } as const;
@@ -385,6 +386,16 @@ function Bubble({
     : social && t.has(`failureSocial.${reason}`)
       ? t(`failureSocial.${reason}`, { network: t(social) })
       : t(`failure.${reason}`);
+  // El error de Meta en números (F7b-13), junto al motivo: solo con la forma `código[/subcódigo]`,
+  // y una pista corta si es uno conocido. Nunca otro texto del servidor.
+  const raw = message.provider_error_detail;
+  const detail = state === "FAILED" && raw && META_ERROR.test(raw) ? raw : null;
+  const hint = detail && t.has(`failureMeta.${detail}`) ? t(`failureMeta.${detail}`) : null;
+  const meta = !detail
+    ? null
+    : hint
+      ? t("failureCodeHint", { code: detail, hint })
+      : t("failureCode", { code: detail });
   return (
     <li
       className={cn(
@@ -444,8 +455,10 @@ function Bubble({
           </span>
         ) : null}
       </p>
-      {why ? (
-        <p className={cn("text-xs", unsure ? "text-foreground" : "text-danger")}>{why}</p>
+      {why || meta ? (
+        <p className={cn("text-xs", unsure ? "text-foreground" : "text-danger")}>
+          {[why, meta].filter(Boolean).join(" ")}
+        </p>
       ) : null}
     </li>
   );

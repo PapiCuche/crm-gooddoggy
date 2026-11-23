@@ -55,6 +55,11 @@ export interface Message {
    * * `MESSAGES_ACCESS_OFF` - MESSAGES_ACCESS_OFF
    */
   provider_error_code: ProviderErrorCodeEnum | NullEnum | null;
+  /**
+   * El error del proveedor en números, `código` o `código/subcódigo` (p. ej., `131031` o `10/2018278`), solo con `FAILED`; nunca su texto. `null` si no lo dio.
+   * @nullable
+   */
+  readonly provider_error_detail: string | null;
   created_at: string;
   /** @nullable */
   sent_at: string | null;

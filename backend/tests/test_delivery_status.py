@@ -107,6 +107,20 @@ def test_each_meta_error_becomes_its_own_closed_code_and_never_its_text(
     assert str([m for _, m in deliveries(migrator) if m]) == str([{"reason": code}])
 
 
+def test_an_unknown_meta_error_keeps_its_number_beside_the_closed_code_and_never_its_text(
+    world: SimpleNamespace, graph: Any, migrator: Any, caplog: pytest.LogCaptureFixture
+) -> None:
+    message = sent(world, graph)  # F7b-13: Meta aceptó el envío y después dijo `failed`
+    run(webhooks.status(WAMID, "failed", error=(131031, "TITULO-SECRETO-DE-META")))
+    saved = stamp(world, message)
+    assert (saved.provider_error_code, saved.provider_error_detail) == (
+        "PROVIDER_REJECTED",
+        "131031",
+    )
+    everything = str(audit(migrator)) + caplog.text + str(rows(migrator))
+    assert "TITULO-SECRETO" not in everything
+
+
 def test_a_failed_status_after_the_send_sets_the_reason_even_for_a_policy_failure(
     world: SimpleNamespace, graph: Any
 ) -> None:
@@ -281,6 +295,22 @@ def test_the_error_code_only_exists_on_a_failed_message_and_from_the_closed_set(
             migrator.execute("UPDATE messages SET provider_error_code = %s WHERE id = %s",
                              [bad, message.pk])  # fmt: skip
         migrator.rollback()
+    failed = (
+        "UPDATE messages SET delivery_status = 'FAILED', provider_error_detail = %s WHERE id = %s"
+    )
+    for bad in (
+        "Account locked",
+        "131031 x",
+        "1/2/3",
+        "/10",
+        "12345678901",
+    ):  # F7b-13: solo números
+        with pytest.raises(Exception, match="messages_error_detail_ck"):
+            migrator.execute(failed, [bad, message.pk])
+    with pytest.raises(Exception, match="messages_error_detail_ck"):  # y solo con `FAILED`
+        migrator.execute("UPDATE messages SET provider_error_detail = '10' WHERE id = %s",
+                         [message.pk])  # fmt: skip
+    migrator.execute(failed, ["10/2018278", message.pk])
 
 
 def test_a_late_status_reconciles_a_message_the_deadline_closed_as_unknown_and_nothing_else(

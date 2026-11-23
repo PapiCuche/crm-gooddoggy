@@ -2467,6 +2467,15 @@
       "QUALITY_BLOCKED": "{network} bloqueó el envío.",
       "PROVIDER_ERROR": "{network} tuvo un problema al procesar el envío."
     },
+    "failureCode": "Código de Meta: {code}.",
+    "failureCodeHint": "Código de Meta: {code} ({hint}).",
+    "failureMeta": {
+      "10": "falta un permiso o el acceso avanzado de Meta",
+      "200": "falta un permiso o el acceso avanzado de Meta",
+      "131030": "el número no está entre los destinatarios permitidos del número de prueba",
+      "131031": "Meta bloqueó la cuenta de WhatsApp Business",
+      "131047": "pasaron más de 24 horas desde el último mensaje del cliente"
+    },
     "list": {
       "landmark": "Conversaciones",
       "label": "Lista de conversaciones"

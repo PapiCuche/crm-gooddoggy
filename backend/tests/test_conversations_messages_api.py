@@ -29,7 +29,7 @@ INBOUND = "/api/v1/o/org-a/channels/sandbox/inbound/"
 MESSAGE = {
     "id", "direction", "sender_type", "sender_user_id", "message_type", "body",
     "client_message_id", "delivery_status", "created_at", "sent_at", "delivered_at", "read_at",
-    "failed_at", "provider_error_code", "attachment",
+    "failed_at", "provider_error_code", "provider_error_detail", "attachment",
 }  # fmt: skip
 
 
@@ -162,12 +162,18 @@ def test_a_failed_message_shows_its_closed_reason_and_nothing_else_of_the_failur
     failed = {"direction": "OUTBOUND", "sender_type": "USER", "delivery_status": "FAILED"}
     for body, code in (("a", "PROVIDER_UNKNOWN"), ("b", "WINDOW_CLOSED"), ("c", None)):
         say(inbox.a, convo, body, sender_user_id=inbox.ana.pk, provider_error_code=code, **failed)
+    say(inbox.a, convo, "d", sender_user_id=inbox.ana.pk, provider_error_code="PROVIDER_REJECTED",
+        provider_error_detail="131031", **failed)  # fmt: skip
     say(inbox.a, convo, "del cliente")
     url = f"{BASE}{convo}/messages/"
     rows = {r["body"]: r for r in signed(inbox.ana).get(url).json()["results"]}
     seen = {k: rows[k]["provider_error_code"] for k in ("a", "b", "c", "del cliente")}
     assert seen == {"a": "PROVIDER_UNKNOWN", "b": "WINDOW_CLOSED", "c": None, "del cliente": None}
     assert rows["a"]["delivery_status"] == "FAILED" and set(rows["a"]) == MESSAGE  # nada más
+    assert (rows["d"]["provider_error_detail"], rows["a"]["provider_error_detail"]) == (
+        "131031",
+        None,
+    )
     hidden = signed(inbox.vera).get(f"{BASE}{inbox.convs['sam']}/messages/")
     assert hidden.status_code == 404  # el alcance de la lectura no cambia
 

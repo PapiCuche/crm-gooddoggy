@@ -27,7 +27,7 @@ from apps.conversations.channels import (
     TemporaryChannelError,
 )
 from apps.conversations.models import EXTERNAL_ID, META_ID
-from apps.conversations.whatsapp import admit, field_at
+from apps.conversations.whatsapp import admit, error_detail, field_at
 from core import http
 from core.observability.logging import get_logger
 
@@ -107,11 +107,11 @@ class PageAdapter:
             if isinstance(mid, str) and re.fullmatch(MID, mid):
                 return SendResult(True, mid)
             raise AmbiguousChannelError  # Meta lo aceptó (200) y no dijo con qué id
-        reason = classify(
-            field_at(reply.data, "error", "code"), field_at(reply.data, "error", "error_subcode")
-        )
+        code = field_at(reply.data, "error", "code")
+        subcode = field_at(reply.data, "error", "error_subcode")
+        reason = classify(code, subcode)
         if reason == "RATE_LIMITED":
             raise TemporaryChannelError  # Meta no lo aceptó: se reintenta con espera
         if reason == "PROVIDER_ERROR":
             raise AmbiguousChannelError  # pudo haberse enviado: no se reenvía a ciegas
-        return SendResult(False, reason=reason)
+        return SendResult(False, reason=reason, detail=error_detail(code, subcode))

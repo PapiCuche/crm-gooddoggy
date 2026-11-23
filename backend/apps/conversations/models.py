@@ -58,6 +58,7 @@ LIMIT_TIERS = (  # a confirmar con la documentación de Meta
 )  # fmt: skip
 META_ID = r"^[0-9]{5,30}$"  # `phone_number_id` y WABA: dígitos (a confirmar)
 ECHO_HEX = r"^[0-9a-f]{32}$"  # `secrets.token_hex(16)`: 128 bits (ADR-035 §6)
+META_ERROR = r"^[0-9]{1,10}(/[0-9]{1,10})?$"  # el error de Meta en números: `code[/subcode]`
 
 
 # Por qué un mensaje saliente quedó `FAILED` (F7-06a; ADR-029 §8): un conjunto cerrado de códigos
@@ -633,6 +634,8 @@ class Message(TenantModel):
     )
     sending_at = models.DateTimeField(null=True, blank=True)  # cuándo se reclamó (el barredor)
     provider_error_code = models.CharField(max_length=24, null=True, blank=True)  # noqa: DJ001
+    # El error del proveedor en números (F7b-13): `131031` o `10/2018278`, nunca su texto.
+    provider_error_detail = models.CharField(max_length=24, null=True, blank=True)  # noqa: DJ001
     # Reintentos del canal (F7-05c): cuántas veces se devolvió el reclamo y no antes de cuándo
     # vuelve a intentarse (el barredor de la cola no lo reencola antes: no amplifica).
     dispatch_attempts = models.PositiveSmallIntegerField(default=0, db_default=0)
@@ -741,6 +744,11 @@ class Message(TenantModel):
                     & models.Q(provider_error_code__in=FAILURE_CODES)
                 ),
                 name="messages_error_code_ck",
+            ),
+            models.CheckConstraint(  # el error del proveedor en números, solo con `FAILED`
+                condition=models.Q(provider_error_detail__isnull=True)
+                | models.Q(delivery_status="FAILED", provider_error_detail__regex=META_ERROR),
+                name="messages_error_detail_ck",
             ),
             models.CheckConstraint(  # la decisión de la política es solo de lo saliente
                 condition=models.Q(policy_decision__isnull=True) | models.Q(direction="OUTBOUND"),
