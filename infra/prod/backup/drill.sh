@@ -196,7 +196,8 @@ IFS=: read -ra dirs <<< "$PATH"
 for d in "${dirs[@]}"; do
   for f in "$d"/*; do
     n=${f##*/}
-    [ "$n" = rclone ] || [ -e "$work/no-rclone/$n" ] || ln -s "$f" "$work/no-rclone/$n"
+    [ -x "$f" ] && [ "$n" != rclone ] && [ ! -L "$work/no-rclone/$n" ] || continue # el primero del PATH, como command -v
+    ln -s "$f" "$work/no-rclone/$n"
   done
 done
 night_fails config PATH="$work/shim:$work/no-rclone"
