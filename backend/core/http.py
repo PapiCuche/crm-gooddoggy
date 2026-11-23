@@ -72,8 +72,12 @@ def is_public(ip: str) -> bool:
 
 
 def resolve_public(host: str, port: int) -> str:
+    """Una IP pública de `host` que este equipo puede alcanzar (F7b-12). `AI_ADDRCONFIG` deja
+    fuera las familias sin dirección configurada (un servidor solo IPv4 no recibe AAAA) y, entre
+    las que quedan, gana IPv4: ordenar el texto ponía `2a03:…` antes que `57.…` y fijaba una IPv6
+    inalcanzable. Todas las direcciones devueltas pasan el control de IP pública."""
     try:
-        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM, flags=socket.AI_ADDRCONFIG)
     except OSError as exc:
         raise BlockedDestination(f"No se pudo resolver {host}") from exc
     ips = {str(info[4][0]) for info in infos}
@@ -81,7 +85,7 @@ def resolve_public(host: str, port: int) -> str:
         raise BlockedDestination(f"{host} no tiene direcciones")
     if any("%" in ip for ip in ips) or not all(is_public(ip) for ip in ips):  # `%`: zona
         raise NonPublicAddress(f"{host} resuelve a una IP no pública")
-    return sorted(ips)[0]
+    return str(min((ipaddress.ip_address(ip) for ip in ips), key=lambda a: (a.version, a)))
 
 
 class _Watchdog:
