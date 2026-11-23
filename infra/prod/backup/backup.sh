@@ -12,6 +12,7 @@
 #      a media/, sin los `.partial` de una restauración que falló. Lo ya copiado se recuerda en
 #      $state_dir/media-copied.txt: el servidor no lista el destino.
 #   4. Marca el éxito (check.sh avisa si en 26 h no hay otro) y avisa a BACKUP_HEARTBEAT_URL.
+#      Si una noche falla, BACKUP_HEARTBEAT_FAIL_URL (heartbeat y alert en lib.sh).
 # nightly toma antes el lock de los despliegues (deploy_lock en lib.sh): ni un despliegue ni
 # `deploy.sh --migrate` corren a la vez que él (F1-15b).
 # Si algo falla: log backup.failed y Sentry si SENTRY_DSN (alert en lib.sh); sale con error.
@@ -97,8 +98,4 @@ stage=finished
 [ "$kind" = predeploy ] || date -u +%s > "$state_dir/last-success"
 log backup.ok "kind=$kind" "object=$name" "bytes=$size" "prefixes=$(echo "$prefixes" | tr '\n' ' ' | sed 's/ $//')" \
   "media_copied=$copied"
-if [ -n "${BACKUP_HEARTBEAT_URL:-}" ] && [ "$kind" = nightly ]; then
-  # La URL lleva el token del servicio: a curl por stdin (--config -), nunca en sus argumentos (ps).
-  printf '%s\n' "$BACKUP_HEARTBEAT_URL" | sed 's/[\\"]/\\&/g; s/.*/url = "&"/' |
-    curl -fsS -m 10 --retry 3 -o /dev/null --config - || log backup.heartbeat_failed level=warning
-fi
+[ "$kind" = predeploy ] || heartbeat "${BACKUP_HEARTBEAT_URL:-}"

@@ -6,13 +6,15 @@
 # tiempo de la restauración frente al RTO de 4 h (ADR-033 §8.3). Claves age y contraseñas desechables.
 # Uso: BACKEND_IMAGE=<imagen del backend del repo> bash infra/prod/backup/drill.sh
 # Crea y borra al salir, por nombre: los proyectos $id-src y $id-dst (down -v), los contenedores
-# $id-garage y $id-s3tls, la red $id-s3 y un directorio temporal.
+# $id-garage y $id-s3tls, la red $id-s3, un directorio temporal y el servicio de latidos simulado
+# (un proceso python3 en 127.0.0.1).
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 repo=$(cd "$here/../../.." && pwd)
 id=${DRILL_ID:-crm-drill}
 port=${DRILL_S3_PORT:-39470}
 s3="http://127.0.0.1:$port"
+ping_port=${DRILL_PING_PORT:-39471}
 : "${BACKEND_IMAGE:?imagen del backend construida del repo}"
 umask 077 # los archivos de configuración, 0600 como en el servidor (check_file)
 work=$(mktemp -d)
@@ -29,6 +31,7 @@ stack() { # <src|dst> <comando de compose…>
 }
 cleanup() {
   set +e
+  [ -z "${receiver:-}" ] || kill "$receiver" 2> /dev/null
   for p in src dst; do
     [ -f "$work/$p/release.env" ] && stack "$p" compose down -v --remove-orphans > /dev/null 2>&1
   done
@@ -101,8 +104,31 @@ age-keygen -y "$work/identity.txt" > "$work/recipients.txt"
 printf '%s\n' "BACKUP_S3_ENDPOINT=$s3" BACKUP_S3_REGION=garage BACKUP_S3_BUCKET=backups \
   "BACKUP_STORAGE_ENDPOINT=$s3" "BACKUP_RECIPIENTS=$work/recipients.txt" > "$work/backup.env"
 cp "$work/backup.env" "$work/restore.env"
-heartbeat="heartbeat-$(hex 8)" # el «token» del ping: nunca en los argumentos de curl
-touch "$work/$heartbeat" && echo "BACKUP_HEARTBEAT_URL=file://$work/$heartbeat" >> "$work/backup.env"
+# El servicio de latidos simulado (estilo healthchecks): anota cada petición y responde 200. El token
+# de su URL nunca puede salir en los argumentos de curl ni en los logs (pings).
+tok=$(uuid)
+ping_url="http://127.0.0.1:$ping_port/$tok"
+printf '%s\n' "BACKUP_HEARTBEAT_URL=$ping_url" "BACKUP_HEARTBEAT_FAIL_URL=$ping_url/fail" >> "$work/backup.env"
+: > "$work/received.txt"
+python3 -c 'import http.server as h, sys
+class R(h.BaseHTTPRequestHandler):
+    def do_GET(s):
+        n = s.headers.get("Content-Length", "-")
+        with open(sys.argv[2], "a") as f: f.write(f"{s.command} {s.path} {n}\n")
+        s.send_response(200); s.end_headers()
+    do_POST = do_HEAD = do_GET
+    def log_message(s, *a): pass
+h.HTTPServer(("127.0.0.1", int(sys.argv[1])), R).serve_forever()' "$ping_port" "$work/received.txt" &
+receiver=$!
+for _ in $(seq 30); do curl -fs -o /dev/null "http://127.0.0.1:$ping_port/up" && break; sleep 1; done
+pings() { # <cuándo> [rutas tras el token…]: lo que recibió el servicio simulado desde la última vez
+  local want='' p got
+  for p in "${@:2}"; do want+="GET /$tok$p -"$'\n'; done
+  got=$(grep -v '^GET /up ' "$work/received.txt" || true)
+  [ "$got" = "${want%$'\n'}" ] || fail "$1: el servicio de latidos recibió «${got//$tok/<token>}»"
+  : > "$work/received.txt"
+  if grep -qF "$tok" "$work"/*.log "$work/curl.argv"; then fail "$1: la URL de los latidos en un log o en los argumentos de curl"; fi
+}
 printf '%s\n' "BACKUP_S3_ACCESS_KEY_ID=$writer" "BACKUP_S3_SECRET_ACCESS_KEY=$writer_secret" >> "$work/backup.env"
 printf '%s\n' "BACKUP_S3_ACCESS_KEY_ID=$reader" "BACKUP_S3_SECRET_ACCESS_KEY=$reader_secret" >> "$work/restore.env"
 
@@ -116,13 +142,21 @@ for size in 2048 300000 6000000; do
   head -c "$size" /dev/urandom | rclone rcat "APP:prod-media/org/$org/attachment/2026/11/$(uuid)"
 done
 
-echo "== Backup (la alerta primero: un backup que falla deja backup.failed)"
+echo "== Backup (la alerta primero: un backup que falla deja backup.failed y un solo aviso de fallo)"
+mkdir "$work/shim"
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> %s/curl.argv\nexec %s "$@"\n' "$work" "$(command -v curl)" > "$work/shim/curl"
+chmod 700 "$work/shim/curl" # anota los argumentos de cada curl: lo que muestra ps
+touch "$work/curl.argv"
+night() { stack src env PATH="$work/shim:$PATH" BACKUP_ENV="$work/backup.env" "$@" bash "$here/backup.sh"; } # [VAR=valor…]
 # alerted=1 heredado del entorno: no silencia el aviso.
-if stack src env CRM_COMPOSE_PROJECT="$id-missing" alerted=1 BACKUP_ENV="$work/backup.env" bash "$here/backup.sh" 2> "$work/failed.log"; then
-  fail "un backup sin base no falló"
-fi
+if night CRM_COMPOSE_PROJECT="$id-missing" alerted=1 > "$work/failed.log" 2>&1; then fail "un backup sin base no falló"; fi
 grep -q '"event":"backup.failed"' "$work/failed.log" || fail "sin backup.failed en el log"
-stack src env BACKUP_ENV="$work/backup.env" bash "$here/backup.sh" nightly
+pings "un backup sin base" /fail
+if stack src env PATH="$work/shim:$PATH" CRM_COMPOSE_PROJECT="$id-missing" BACKUP_ENV="$work/backup.env" \
+  bash "$here/backup.sh" predeploy > "$work/failed.log" 2>&1; then fail "un predeploy sin base no falló"; fi
+pings "un predeploy que falla (deploy.sh ya se para)"
+night > "$work/night.log" 2>&1 || { cat "$work/night.log" >&2; fail "la noche buena falló"; }
+pings "la noche buena" ''
 s3_remote WRITER "$s3" garage "$writer" "$writer_secret"
 s3_remote READER "$s3" garage "$reader" "$reader_secret"
 if rclone lsf WRITER:backups/db/daily/ > /dev/null 2>&1; then fail "la credencial del servidor lee el destino"; fi
@@ -131,56 +165,83 @@ for o in "$object" "${object%.dump.age}.counts.age"; do
   [ "$(rclone cat --count 21 "READER:backups/db/daily/$o")" = age-encryption.org/v1 ] || fail "$o no está cifrado"
 done
 [ "$(rclone lsf -R --files-only READER:backups/media | grep -c '\.age$')" = 3 ] || fail "faltan archivos en el destino"
-if stack src env BACKUP_ENV="$work/backup.env" bash "$here/check.sh" 2> /dev/null; then :; else fail "check.sh tras un backup"; fi
-stack src env BACKUP_ENV="$work/backup.env" bash "$here/backup.sh" 2>&1 | grep -q '"prefixes":"daily"' ||
-  fail "otra noche del mismo periodo repitió el semanal o el mensual"
+if stack src env BACKUP_ENV="$work/backup.env" bash "$here/check.sh" 2> "$work/check.log"; then :; else fail "check.sh tras un backup"; fi
+pings "check.sh con un backup reciente"
+# Otra noche del mismo periodo, con el servicio de latidos caído: el backup sale bien igual.
+sed "s|127.0.0.1:$ping_port|127.0.0.1:9|" "$work/backup.env" > "$work/dead.env"
+night BACKUP_ENV="$work/dead.env" > "$work/dead.log" 2>&1 || fail "un servicio de latidos caído hizo fallar el backup"
+grep -q '"prefixes":"daily"' "$work/dead.log" || fail "otra noche del mismo periodo repitió el semanal o el mensual"
+grep -q '"event":"backup.heartbeat_failed"' "$work/dead.log" || fail "un ping que no llegó no dejó aviso"
+pings "con el servicio de latidos caído"
 
-echo "== Fallos: en el volcado, con la configuración legible por otros, y la lista de objetos desordenada"
+echo "== Fallos: en cada etapa, con la configuración legible por otros, y la lista de objetos desordenada"
 last=$(cat "$work/state-src/last-success")
 docker=$(command -v docker)
-mkdir "$work/shim"
-shim() { # <patrón de los argumentos de docker> <qué hace entonces, en sh>: un docker que falla o hace algo antes
-  printf '#!/bin/sh\ncase " $* " in %s) %s ;; esac\nexec %s "$@"\n' "$1" "$2" "$docker" > "$work/shim/docker"
-  chmod 700 "$work/shim/docker"
+shim() { # <comando> <patrón de sus argumentos> <qué hace entonces, en sh>: un comando que falla o hace algo antes
+  printf '#!/bin/sh\ncase " $* " in %s) %s ;; esac\nexec %s "$@"\n' "$2" "$3" "$(command -v "$1")" > "$work/shim/$1"
+  chmod 700 "$work/shim/$1"
 }
-printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> %s/curl.argv\nexec %s "$@"\n' "$work" "$(command -v curl)" > "$work/shim/curl"
-chmod 700 "$work/shim/curl"
+night_fails() { # <etapa> [VAR=valor…]: la noche falla ahí, no mueve last-success y avisa una sola vez
+  if night "${@:2}" > "$work/failed.log" 2>&1; then fail "un fallo en $1 no falló"; fi
+  grep -q "\"event\":\"backup.failed\".*stage=$1" "$work/failed.log" || fail "el fallo en $1 no dice su etapa"
+  [ "$(cat "$work/state-src/last-success")" = "$last" ] || fail "un fallo en $1 movió last-success"
+  pings "un fallo en $1" /fail
+}
 # Una noche fallida (el domingo o el día 1) no deja su periodo: la siguiente noche buena hace las copias.
 echo "0 1970-01" > "$work/state-src/last-period"
+mkdir -p "$work/deploy-src/lock" # un despliegue cortado
+night_fails deploy_lock BACKUP_LOCK_WAIT=0
+rmdir "$work/deploy-src/lock"
 # pg_dump escribe algo y falla (un pg_dump cortado): sin pipefail, age terminaría bien y se subiría.
-shim '*" pg_dump "*' 'printf PGDMP-cut; exit 1'
-if stack src env PATH="$work/shim:$PATH" BACKUP_ENV="$work/backup.env" bash "$here/backup.sh" 2> "$work/failed.log"; then
-  fail "un volcado fallido no falló"
-fi
-grep -q 'stage=dump' "$work/failed.log" || fail "el fallo del volcado no dice su etapa"
-[ "$(cat "$work/state-src/last-success")" = "$last" ] || fail "un backup fallido movió last-success"
+shim docker '*" pg_dump "*' 'printf PGDMP-cut; exit 1'
+night_fails dump
+rm "$work/shim/docker"
+shim rclone '*" copyto "*' 'exit 1'
+night_fails upload
 [ "$(cat "$work/state-src/last-period")" = "0 1970-01" ] || fail "un backup fallido guardó su periodo"
+shim rclone '*" lsf "*' 'exit 1'
+night_fails media
+rm "$work/shim/rclone"
+echo "0 1970-01" > "$work/state-src/last-period" # la noche que falló en media ya había subido el volcado
 cp "$work/backup.env" "$work/open.env" && chmod 644 "$work/open.env"
-if stack src env BACKUP_ENV="$work/open.env" bash "$here/backup.sh" 2> "$work/failed.log"; then fail "aceptó un backup.env 0644"; fi
+if night BACKUP_ENV="$work/open.env" > "$work/failed.log" 2>&1; then fail "aceptó un backup.env 0644"; fi
 grep -q '"event":"backup.failed".*config_permissions' "$work/failed.log" || fail "backup.env 0644 sin backup.failed"
+pings "backup.sh con backup.env 0644" /fail
 if stack src env BACKUP_ENV="$work/open.env" bash "$here/check.sh" 2> "$work/failed.log"; then fail "check.sh aceptó backup.env 0644"; fi
 grep -q '"event":"backup.missing".*config_permissions' "$work/failed.log" || fail "backup.env 0644 sin backup.missing"
+pings "check.sh con backup.env 0644" /fail
+chmod 666 "$work/open.env" # otros pueden escribir su URL: ni esa ni la heredada del entorno
+if night BACKUP_ENV="$work/open.env" BACKUP_HEARTBEAT_FAIL_URL="$ping_url/fail" > "$work/failed.log" 2>&1; then
+  fail "aceptó un backup.env 0666"
+fi
+grep -q '"event":"backup.failed".*config_permissions' "$work/failed.log" || fail "backup.env 0666 sin backup.failed"
+pings "backup.env 0666"
 mkdir "$work/state-bad" && echo garbage > "$work/state-bad/last-success"
 if BACKUP_STATE_DIR="$work/state-bad" BACKUP_ENV="$work/backup.env" bash "$here/check.sh" 2> "$work/failed.log"; then
   fail "check.sh aceptó una marca no numérica"
 fi
 grep -q '"event":"backup.missing"' "$work/failed.log" || fail "sin backup.missing con una marca no numérica"
+pings "check.sh con una marca no numérica" /fail
+echo 1 > "$work/state-bad/last-success" # 1970: más de 26 h
+if BACKUP_STATE_DIR="$work/state-bad" BACKUP_ENV="$work/backup.env" bash "$here/check.sh" 2> "$work/failed.log"; then
+  fail "check.sh aceptó una marca vieja"
+fi
+grep -q '"event":"backup.missing".*last_success_age_seconds' "$work/failed.log" || fail "sin backup.missing con una marca vieja"
+pings "check.sh con una marca vieja" /fail
 LC_ALL=C sort -r -o "$work/state-src/media-copied.txt" "$work/state-src/media-copied.txt"
 echo org/0-not-in-the-bucket >> "$work/state-src/media-copied.txt"
 # Un .partial de una restauración de objetos fallida no se copia.
 head -c 100 /dev/urandom | rclone rcat "APP:prod-media/org/$org/attachment/2026/11/$(uuid).partial"
 # Una fila escrita mientras se vuelca: ni el volcado ni sus filas por tabla la ven (misma instantánea).
-shim '*" pg_dump "*' "$docker exec $id-src-postgres-1 psql -qU postgres -d crm -c \"INSERT INTO django_migrations \
+shim docker '*" pg_dump "*' "$docker exec $id-src-postgres-1 psql -qU postgres -d crm -c \"INSERT INTO django_migrations \
 (app, name, applied) VALUES ('drill', 'written-during-the-dump', now())\" > /dev/null"
-stack src env PATH="$work/shim:$PATH" BACKUP_ENV="$work/backup.env" bash "$here/backup.sh" 2> "$work/catchup.log" ||
-  { cat "$work/catchup.log" >&2; fail "la noche buena falló"; }
+night > "$work/catchup.log" 2>&1 || { cat "$work/catchup.log" >&2; fail "la noche buena falló"; }
 grep -q '"media_copied":"0"' "$work/catchup.log" || fail "una lista desordenada o un .partial rompieron la copia de objetos"
 grep -q '"prefixes":"daily weekly monthly"' "$work/catchup.log" || fail "la noche buena no recuperó el semanal y el mensual"
 [ "$(cat "$work/state-src/last-period")" != "0 1970-01" ] || fail "la noche buena no guardó su periodo"
 rclone delete --include '*.partial' APP:prod-media
-[ -s "$work/curl.argv" ] || fail "no hubo ping a BACKUP_HEARTBEAT_URL"
-if grep -qF "$heartbeat" "$work/curl.argv"; then fail "BACKUP_HEARTBEAT_URL en los argumentos de curl"; fi
-if grep -q heartbeat_failed "$work/catchup.log"; then fail "curl no leyó BACKUP_HEARTBEAT_URL de --config"; fi
+[ -s "$work/curl.argv" ] || fail "ningún curl pasó por el registro de argumentos"
+pings "la noche buena tras los fallos" ''
 
 echo "== Servidor nuevo: postgres vacío y restauración"
 started=$(date +%s)
@@ -220,13 +281,13 @@ rollback() { # el procedimiento del runbook, §6
     < "$here/rollback-replaced.sql"
 }
 restore_path="$work/shim:$PATH"
-shim '*RENAME*' 'exit 1' # el renombrado falla: crm sigue intacta y el aviso no nombra una base que no existe
+shim docker '*RENAME*' 'exit 1' # el renombrado falla: crm sigue intacta y el aviso no nombra una base que no existe
 if restore --replace-existing-data > /dev/null 2> "$work/replace.log"; then fail "un renombrado fallido no falló"; fi
 grep -q '"event":"restore.failed"' "$work/replace.log" || fail "un renombrado fallido no avisó"
 if grep -q 'kept=' "$work/replace.log"; then fail "el aviso dice kept= sin base guardada"; fi
 [ -z "$(replaced)" ] || fail "un renombrado fallido dejó una base guardada"
 stack dst table_counts | diff -q - "$work/before.tsv" > /dev/null || fail "un renombrado fallido tocó crm"
-shim '*" up "*" backend "*' 'exit 1' # falla después de pg_restore: el backend no arranca
+shim docker '*" up "*" backend "*' 'exit 1' # falla después de pg_restore: el backend no arranca
 if restore --replace-existing-data > /dev/null 2> "$work/replace.log"; then fail "un backend que no arranca no falló"; fi
 restore_path=$PATH
 kept=$(replaced)

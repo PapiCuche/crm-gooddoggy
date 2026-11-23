@@ -30,10 +30,22 @@ log() { # <evento> [clave=valor …]: una línea JSON en stderr (journald). Nunc
   printf '%s}\n' "$out" >&2
 }
 
-# Aviso de fallo (ADR-033 §8.4): la línea del log y, con SENTRY_DSN, un evento a Sentry. Un fallo
-# del envío no tapa el del backup.
+# Señal a un servicio externo de latidos (F1-16c): una petición GET sin cuerpo ni datos. La URL lleva
+# el token del servicio: a curl por stdin (--config -), nunca en sus argumentos (ps), y sin la salida
+# de error de curl en el log. Si no llega, solo un aviso: ni el código de salida ni el estado cambian.
+heartbeat() { # <URL; vacía: nada>
+  [ -n "$1" ] || return 0
+  printf '%s\n' "$1" | sed 's/[\\"]/\\&/g; s/.*/url = "&"/' |
+    curl -fs -m 10 --retry 2 --proto =http,https -o /dev/null --config - 2> /dev/null ||
+    log backup.heartbeat_failed level=warning "curl_exit=$?"
+}
+
+# Aviso de fallo (ADR-033 §8.4): la línea del log; con SENTRY_DSN, un evento a Sentry; y si falla o
+# falta el backup nocturno, BACKUP_HEARTBEAT_FAIL_URL (no el de predeploy: deploy.sh ya se para).
+# Un fallo del envío no tapa el del backup.
 alert() { # <evento> <motivo>
   log "$1" level=error "reason=$2"
+  case $1 in backup.failed | backup.missing) [ "${kind:-}" = predeploy ] || heartbeat "${BACKUP_HEARTBEAT_FAIL_URL:-}" ;; esac
   [ -n "${SENTRY_DSN:-}" ] || return 0
   local scheme=${SENTRY_DSN%%://*} rest=${SENTRY_DSN#*://} key host project id
   key=${rest%%@*} rest=${rest#*@} project=${rest##*/} host=${rest%/*}
@@ -77,12 +89,15 @@ s3_remote() { # <NOMBRE> <endpoint (vacío = AWS)> <región> <access key> <secre
 }
 
 # backup.env, de root y 0600. Si no lo es, el aviso sale igual (reason=config_permissions) y el script
-# termina. A Sentry solo si nadie más puede escribir el archivo: si no, su SENTRY_DSN no es de fiar.
+# termina. A Sentry y a BACKUP_HEARTBEAT_FAIL_URL solo si nadie más puede escribir el archivo: si no,
+# sus URL no son de fiar, y tampoco las heredadas del entorno.
 secure_config() { # <evento del aviso>
   local config="${BACKUP_ENV:-${CRM_ENV_DIR:-/etc/crm}/backup.env}"
   if check_file "$config" secret; then load_env "$config"; return 0; fi
+  SENTRY_DSN='' BACKUP_HEARTBEAT_FAIL_URL=''
   if check_file "$config" 2> /dev/null; then
     SENTRY_DSN=$(env_value "$config" SENTRY_DSN) SENTRY_ENVIRONMENT=$(env_value "$config" SENTRY_ENVIRONMENT)
+    BACKUP_HEARTBEAT_FAIL_URL=$(env_value "$config" BACKUP_HEARTBEAT_FAIL_URL)
   fi
   # shellcheck disable=SC2034 # lo leen los traps de salida de backup.sh y restore.sh: no repiten el aviso
   alerted=1
