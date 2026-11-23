@@ -46,8 +46,9 @@ CODES = {
     1: "PROVIDER_ERROR", 2: "PROVIDER_ERROR", 131000: "PROVIDER_ERROR", 131016: "PROVIDER_ERROR",
 }  # fmt: skip
 TEMPLATES = range(132000, 133000)  # la familia de errores de plantilla de Meta
-# Límites de tasa de Meta: en la respuesta del envío no lo aceptó y se reintenta antes de la tabla.
-TOO_FAST = (4, 17, 613, 80007, 130429, 131056)
+# Límites de tasa de Meta (los `RATE_LIMITED` de la tabla): en la respuesta del envío no lo aceptó y
+# se reintenta antes de la tabla.
+TOO_FAST = tuple(code for code, own in CODES.items() if own == "RATE_LIMITED")
 
 
 def field_at(raw: bytes, *path: str | int) -> Any:

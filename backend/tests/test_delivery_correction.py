@@ -81,6 +81,25 @@ def test_the_correction_changes_the_account_once_however_often_meta_repeats_it(
     assert corrections(migrator) == [{"reason": reason, "corrected": "PROVIDER_UNKNOWN"}]
 
 
+def test_a_corrected_190_from_before_a_rotation_leaves_the_new_token_alone(
+    world: SimpleNamespace, graph: Any, migrator: Any
+) -> None:
+    from apps.conversations import credentials
+    from tests.meta_sim.graph import TEST_TOKEN
+
+    message = unknown(world, graph, migrator)  # reclamado antes de la rotación
+    with tenant_scope(ctx(world.a)) as tenant:  # se rota el token tras el plazo
+        account = ChannelAccount.objects.get(pk=message.channel_account_id)
+        credentials.revoke(tenant, account.credential_id)
+        fresh = credentials.store(tenant, account.pk, TEST_TOKEN, rotated=True)
+        ChannelAccount.objects.filter(pk=account.pk).update(credential_id=fresh.pk)
+    run(failed(message, 190))  # llega tarde: era del token viejo
+    assert state(world, message).provider_error_code == "TOKEN_INVALID"  # sí se corrige
+    with tenant_scope(ctx(world.a)):
+        assert ChannelAccount.objects.get(pk=account.pk).status == "CONNECTED"
+    assert corrections(migrator) == [{"reason": "TOKEN_INVALID", "corrected": "PROVIDER_UNKNOWN"}]
+
+
 def test_two_failed_statuses_at_once_correct_the_message_once(
     world: SimpleNamespace, graph: Any, migrator: Any
 ) -> None:
@@ -194,6 +213,11 @@ def test_the_settled_trigger_runs_as_the_caller(migrator: Any) -> None:
 
 
 SYNC = [*whatsapp.CODES, 132000, 132001, 132999, 131031, 100]
+
+
+def test_every_rate_limited_code_of_the_table_is_retried_first() -> None:
+    limited = {code for code, own in whatsapp.CODES.items() if own == "RATE_LIMITED"}
+    assert set(whatsapp.TOO_FAST) == limited == {4, 17, 613, 80007, 130429, 131056}
 
 
 @pytest.mark.parametrize("code", SYNC)

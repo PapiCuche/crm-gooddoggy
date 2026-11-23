@@ -7,7 +7,9 @@ demás: con el estado `FAILED` antes y después, `provider_error_code`, `provide
 `failed_at` solo cambian si el motivo era `PROVIDER_UNKNOWN` y pasa a otro no nulo. Un motivo
 definitivo no se reescribe. Como el de entrega: sin `SECURITY DEFINER`, `search_path` fijo con
 `pg_temp` al final; `lock_timeout` de 5 s en los dos sentidos (`messages` es grande). Hacia atrás
-se borran el disparador y la función."""
+se borran el disparador y la función. Ata también a `crm_migrator`: un arreglo de datos de motivos,
+detalles u horas de un `FAILED` tiene que quitarlo y recrearlo en una migración revisada y listada
+en `DROPS` (`tests/test_message_media.py`)."""
 
 from django.db import migrations
 
