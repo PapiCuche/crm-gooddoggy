@@ -22,6 +22,7 @@ from apps.audit.services import Entity, record
 from apps.conversations import handoff
 from apps.conversations.models import Conversation, HumanRequest, Message, Status
 from apps.conversations.policy import ConversationClosed
+from core.db.timeouts import ms as _ms
 from core.outbox import emit
 from core.tenancy.context import TenantContext
 from core.tenancy.scope import require_scope
@@ -218,10 +219,6 @@ def set_ai_excluded(
 
 def _key(ctx: TenantContext, conversation_id: UUID) -> str:
     return CALL.format(ctx.organization_id, conversation_id)
-
-
-def _ms(seconds: float) -> str:
-    return f"{max(int(seconds * 1000), 1)}ms"
 
 
 @contextmanager

@@ -4,6 +4,7 @@ PostgreSQL con `crm_app`; la auditoría y el outbox, leídos con el rol dueño. 
 
 import importlib
 import time
+from collections.abc import Callable
 from types import SimpleNamespace
 from typing import Any
 from uuid import UUID, uuid4
@@ -18,6 +19,7 @@ from apps.access.selectors import AccessDenied
 from apps.conversations import attention
 from apps.conversations.models import Conversation
 from core.tenancy.scope import tenant_scope
+from tests.test_ai_kill_switch import later
 from tests.test_channel_accounts_api import signed as stepped
 from tests.test_conversations_api import BASE, UNAUTHENTICATED, crm, inbox, real_stack
 from tests.test_conversations_assign_api import duel
@@ -96,27 +98,34 @@ def test_including_it_again_needs_ai_manage_and_then_a_recent_second_factor(
             attention.set_ai_excluded(tenant, conversation_id=convo, excluded=False, version=3)
 
 
+def bounded(call: Callable[[], Any], seconds: float) -> Any:
+    """F8-13e: `call()` en otro hilo con su propio tope; si no contesta a tiempo, la prueba falla ya
+    (la fila se suelta al salir y el hilo termina), no al timeout de pytest."""
+    answers: list[Any] = []
+    later(lambda: answers.append(call())).join(seconds)
+    assert answers, f"sin respuesta en {seconds} s"
+    return answers[0]
+
+
 def test_including_it_again_waits_for_a_locked_row_only_so_long_and_checks_before_waiting(
     inbox: SimpleNamespace, migrator: DB, settings: Any
 ) -> None:
     """F8-13d: volver a incluir espera la fila como mucho `AI_EXCLUSION_WAIT_SECONDS` (409
     `CONVERSATION_BUSY`, nada cambia); inexistente y versión vieja, sin esperar."""
-    convo = inbox.convs["vera"]
+    convo, ana = inbox.convs["vera"], stepped(inbox.ana)
     assert put(signed(inbox.vera), convo, True).status_code == 200
     settings.AI_EXCLUSION_WAIT_SECONDS = 1
     with migrator.transaction():
         migrator.execute("SELECT 1 FROM conversations WHERE id = %s FOR UPDATE", [convo])
+        busy = bounded(lambda: put(ana, convo, False, 2), 3)
         started = time.monotonic()
-        busy = put(stepped(inbox.ana), convo, False, 2)
-        took = time.monotonic() - started
-        started = time.monotonic()
-        assert reply(put(stepped(inbox.ana), uuid4(), False, 2)) == NOT_FOUND
-        stale = put(stepped(inbox.ana), convo, False, 1)
+        assert reply(bounded(lambda: put(ana, uuid4(), False, 2), 2)) == NOT_FOUND
+        stale = bounded(lambda: put(ana, convo, False, 1), 2)
         quick = time.monotonic() - started
-    assert (busy.status_code, busy.json()["code"]) == (409, "CONVERSATION_BUSY") and took < 3
+    assert (busy.status_code, busy.json()["code"]) == (409, "CONVERSATION_BUSY")
     assert stale.json()["code"] == "CONVERSATION_VERSION_CONFLICT" and quick < 0.9
     assert flag(inbox.a, convo) == (True, inbox.vera.pk, 2)
-    assert put(stepped(inbox.ana), convo, False, 2).status_code == 200
+    assert put(ana, convo, False, 2).status_code == 200
 
 
 def test_the_scope_the_organization_and_the_version_come_before_any_change(
