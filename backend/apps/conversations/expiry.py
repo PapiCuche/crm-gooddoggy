@@ -1,16 +1,11 @@
 """La caducidad del token de una página de Messenger o Instagram y sus avisos (F7b-12; ADR-035 §3).
 
-Meta la da en `debug_token` (`graph.token_expiry`): `expires_at` (`0`, nunca) y
-`data_access_expires_at`, que solo cuenta en Instagram (los permisos de Messenger están en la lista
-de Meta de los que no caducan por el acceso a datos; los de Instagram, no: una lectura de la
-documentación). `credentials.expires_at` es la más temprana; `expiry_checked_at` `NULL`, no se sabe.
-Se lee al conectar y al rotar; si no se pudo, `sweep(backfill=True)` (a diario) lo reintenta.
-
-`sweep` (cada hora) avisa por correo a quien tiene `channels.manage` y a operaciones (como las
-alertas de la ingesta) a 10 y a 3 días, una vez por umbral y token: un `UPDATE` condicional reclama
-el umbral (de dos barridos a la vez, gana uno) con su auditoría en la misma transacción; el correo
-sale tras confirmar y no se reintenta. Un token ya caducado recibe solo el último, con `expired`.
-Rotar crea otra credencial, sin avisos. Nada lleva el token, su final ni el app secret.
+`debug_token` da `expires_at` (`0`, nunca) y `data_access_expires_at`, que solo cuenta en Instagram
+(una lectura de la lista de Meta de permisos que no caducan). `expires_at` guarda la más temprana;
+`expiry_checked_at` `NULL`, no se sabe. Se lee al conectar, al rotar y, si falta, a diario.
+`sweep` (cada hora) avisa (correo a `channels.manage` y alerta) a 10 y 3 días, una vez por umbral
+y token: un `UPDATE` condicional reclama el umbral con su auditoría; el correo sale tras confirmar
+y no se reintenta. Nada lleva el token, su final ni el app secret.
 """
 
 import datetime as dt
@@ -70,8 +65,7 @@ def read(platform: str, token: str) -> Known | None:
 
 
 def _targets(alias: str, wanted: Q) -> list[tuple[ChannelAccount, Credential]]:
-    """Las credenciales vivas que cumplen `wanted` de las cuentas sociales vivas que se
-    comprueban, con su cuenta, en el scope de `alias`."""
+    """Las credenciales vivas que cumplen `wanted` de cuentas sociales vivas que se comprueban."""
     found = ChannelAccount.objects.using(alias).filter(
         platform__in=SOCIAL, deleted_at__isnull=True, status__in=CHECKED,
         credential_id__isnull=False,

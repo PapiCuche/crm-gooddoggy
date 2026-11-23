@@ -59,6 +59,7 @@ def test_a_page_of_another_organization_gets_the_answer_of_a_malformed_account(
     if first == then:  # la página se vinculó después a otra cuenta de Instagram
         meta.pages[PAGE_ID], over = OTHER, {"instagram_account_id": OTHER}
     malformed = reply(post(crm, "b", then, **{FIELD[then]: "no-es-un-id"}))
+    caplog.clear()  # F7b-12: solo lo de la conexión rechazada (A registra lo suyo al conectar)
     with caplog.at_level(logging.DEBUG):
         refused = post(crm, "b", then, **over)
     assert reply(refused) == malformed  # la misma respuesta, byte a byte: sin oráculo

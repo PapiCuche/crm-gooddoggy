@@ -2,7 +2,6 @@
 contra la Graph API simulada, con la política real de `core.http`) y sus avisos a 10 y 3 días.
 PostgreSQL real con `crm_app`; las garantías de la base, con SQL directo."""
 
-import datetime as dt
 import logging
 import threading
 import time
@@ -17,9 +16,9 @@ from django.core import mail as outbox
 from django.db import connection, connections
 
 from apps.access.selectors import holders
-from apps.conversations import accounts, expiry, tasks
-from apps.conversations.models import Credential
-from core import http
+from apps.conversations import accounts, credentials, expiry, tasks
+from apps.conversations.models import TOKEN_PURPOSE, Credential
+from core import http, sealed
 from core.observability import reporting
 from core.tenancy.scope import tenant_scope
 from tests.meta_sim.graph import TEST_TOKEN, Cut
@@ -70,14 +69,13 @@ def leaks(*texts: str) -> list[str]:
 
 def shift(migrator: DB, pk: Any, days: float) -> None:
     """El paso del tiempo: la caducidad leída no se reescribe (el disparador), salvo aquí."""
-    migrator.execute("ALTER TABLE credentials DISABLE TRIGGER credentials_expiry_guard")
+    guard = "ALTER TABLE credentials {} TRIGGER credentials_expiry_guard"
+    migrator.execute(guard.format("DISABLE"))
     try:
-        migrator.execute(
-            "UPDATE credentials SET expires_at = now() + make_interval(secs => %s) WHERE id = %s",
-            [days * 86400, pk],
-        )
+        sql = "UPDATE credentials SET expires_at = now() + make_interval(secs => %s) WHERE id = %s"
+        migrator.execute(sql, [days * 86400, pk])  # noqa: S608
     finally:
-        migrator.execute("ALTER TABLE credentials ENABLE TRIGGER credentials_expiry_guard")
+        migrator.execute(guard.format("ENABLE"))
 
 
 @pytest.mark.parametrize(
@@ -96,12 +94,8 @@ def test_connecting_reads_the_expiry_that_counts(
 ) -> None:
     meta.graph.debug = debug
     found = cred(crm.a, connect(crm, platform)[1].pk)
-    assert found.expiry_checked_at is not None
-    if days is None:
-        assert found.expires_at is None
-    else:
-        assert found.expires_at is not None
-        assert abs((found.expires_at - dt.datetime.now(dt.UTC)).days - days) <= 1
+    left = found.expires_at and round((found.expires_at.timestamp() - time.time()) / 86400)
+    assert found.expiry_checked_at is not None and left == days
     calls = [c for c in meta.graph.calls if c["path"].endswith("/debug_token")]
     assert len(calls) == 1 and calls[0]["query"] == {"input_token": [TEST_TOKEN]}
 
@@ -350,11 +344,12 @@ def test_a_concurrent_sweep_waits_for_the_claim_and_does_not_warn_twice(
 def test_the_daily_pass_reads_an_unknown_expiry_once_and_the_hourly_one_never_asks(
     crm: SimpleNamespace, meta: Any, settings: Any
 ) -> None:
-    settings.META_APP_ID = ""  # conectada sin app configurada: no se sabe
+    meta.graph.debug = {"expires_at": at(2)}
+    connect(crm, "MESSENGER")  # con un aviso pendiente
+    settings.META_APP_ID = ""  # la misma página, sin app configurada: no se sabe
     made = connect(crm, "INSTAGRAM")[1]
-    settings.META_APP_ID = APP_ID
-    meta.graph.debug, before = {"expires_at": at(2)}, len(meta.graph.calls)
-    assert tasks.token_expiry() == {}  # la de cada hora no pregunta a Meta
+    settings.META_APP_ID, before = APP_ID, len(meta.graph.calls)
+    assert tasks.token_expiry() == {"WARNED": 1}  # la de cada hora no pregunta a Meta
     assert len(meta.graph.calls) == before
     meta.graph.debug = None  # Meta no contesta: sigue sin saberse, una llamada por pasada
     assert tasks.token_expiry(backfill=True) == {"UNKNOWN": 1}
@@ -366,21 +361,9 @@ def test_the_daily_pass_reads_an_unknown_expiry_once_and_the_hourly_one_never_as
     assert found.expiry_checked_at is not None and found.expiry_warned_days == 3
 
 
-def test_the_hourly_pass_never_asks_meta_even_with_a_warning_due(
-    crm: SimpleNamespace, meta: Any, settings: Any
-) -> None:
-    meta.graph.debug = {"expires_at": at(2)}
-    connect(crm, "MESSENGER")
-    settings.META_APP_ID = ""
-    connect(crm, "INSTAGRAM")  # la misma página: su caducidad no se sabe
-    settings.META_APP_ID, before = APP_ID, len(meta.graph.calls)
-    assert tasks.token_expiry() == {"WARNED": 1} and len(meta.graph.calls) == before
-
-
 def test_a_read_that_lost_the_race_keeps_the_first_one(
     crm: SimpleNamespace, meta: Any, settings: Any, migrator: DB, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Otro worker guardó la caducidad mientras esta pasada preguntaba a Meta: no se reescribe."""
     settings.META_APP_ID = ""
     made = connect(crm, "MESSENGER")[1]
     settings.META_APP_ID, real = APP_ID, expiry.read
@@ -462,3 +445,26 @@ def test_the_discovery_returns_only_organizations_with_something_due(
     with connection.cursor() as cursor:
         cursor.execute("SELECT count(*) FROM credentials")
         assert cursor.fetchone() == (0,)  # crm_app sin tenant no ve credenciales
+
+
+def test_main_image_writes_still_pass_on_the_new_schema(crm: SimpleNamespace, meta: Any) -> None:
+    """ADR-033 §7 (migrar con la imagen anterior sirviendo, o un rollback): sus escrituras tal cual,
+    el INSERT de `store`, el UPDATE de `reseal` y el de `revoke`, sobre una fila ya avisada."""
+    meta.graph.debug = {"expires_at": at(2)}
+    account, made = connect(crm, "MESSENGER")
+    assert tasks.token_expiry() == {"WARNED": 1}
+    box = sealed.seal(TOKEN_PURPOSE, credentials.owner(account.pk), TEST_TOKEN.encode())
+    version = int.from_bytes(box[1:3], "big")
+    with tenant_scope(ctx(crm.a)), connection.cursor() as cursor:  # como crm_app
+        cursor.execute("UPDATE credentials SET ciphertext = %s, key_version = %s WHERE id = %s",
+                       [box, version, made.pk])  # fmt: skip
+        revoke = "UPDATE credentials SET ciphertext = NULL, revoked_at = now() WHERE id = %s"
+        cursor.execute(revoke, [made.pk])
+        cursor.execute(
+            "INSERT INTO credentials (id, organization_id, owner_type, owner_id, ciphertext, "
+            "key_version, last_four, expires_at, rotated_at, revoked_at, created_by_user_id, "
+            "created_at) VALUES (gen_random_uuid(), %s, 'CHANNEL_ACCOUNT', %s, %s, %s, 'ABCD', "
+            "NULL, now(), NULL, NULL, now()) RETURNING expiry_checked_at, expiry_warned_days",
+            [crm.a, account.pk, box, version],
+        )
+        assert cursor.fetchone() == (None, None)
