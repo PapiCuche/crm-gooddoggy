@@ -79,6 +79,30 @@ def test_allowlisted_host_resolving_to_metadata_ip_is_blocked_at_connect(
         http.request("GET", "https://api.example.com/v1/x")
 
 
+def test_a_mixed_answer_pins_ipv4_and_only_configured_families_are_asked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F7b-12: `2a03:…` ordenaba antes que `57.…` y un servidor solo IPv4 no llegaba a Graph."""
+    seen: list[int] = []
+
+    def fake(host: str, port: int, *args: Any, **kwargs: Any) -> list[Any]:
+        seen.append(kwargs.get("flags", 0))
+        return [
+            (socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("2a03:2880:f337:8d:face:b00c:0:2", port)),
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("157.240.1.1", port)),
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("57.144.66.141", port)),
+        ]
+
+    monkeypatch.setattr(socket, "getaddrinfo", fake)
+    assert http.resolve_public("graph.facebook.com", 443) == "57.144.66.141"
+    assert seen and all(flags & socket.AI_ADDRCONFIG for flags in seen)
+
+
+def test_an_ipv6_only_answer_still_resolves(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(socket, "getaddrinfo", resolving_to("2606:4700::1111", "2a03:2880::1"))
+    assert http.resolve_public("api.example.com", 443) == "2606:4700::1111"
+
+
 def test_public_resolution_pins_the_ip_and_no_redirects_are_followed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
