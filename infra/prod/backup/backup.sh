@@ -25,7 +25,8 @@ case $kind in nightly | predeploy) ;; *) echo "uso: backup.sh [nightly|predeploy
 stage=config tmp='' alerted='' held_lock='' # alerted: un valor heredado del entorno silenciaría el aviso
 # El lock de los despliegues se suelta antes de los avisos: un despliegue no espera a Sentry ni al
 # servicio de latidos (hasta ~45 s si no responden).
-release_lock() { [ -z "$held_lock" ] || rmdir "$held_lock" || true; held_lock=''; }
+# Se olvida antes de borrarlo: un TERM entre los dos no borra el lock que deploy.sh acaba de tomar.
+release_lock() { local lock=$held_lock; held_lock=''; [ -z "$lock" ] || rmdir "$lock" || true; }
 finish() {
   local status=$?
   [ -z "$tmp" ] || rm -f "$tmp" "$tmp.counts" "$tmp.list" "$tmp.new"
