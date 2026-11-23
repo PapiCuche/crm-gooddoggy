@@ -139,6 +139,12 @@ class Delivery(models.TextChoices):
     FAILED = "FAILED"  # terminal
 
 
+# F7b-14: un saliente que no falló o que pudo salir (`PROVIDER_UNKNOWN`): cuenta como respuesta.
+NOT_FAILED = ~models.Q(delivery_status=Delivery.FAILED) | models.Q(
+    provider_error_code="PROVIDER_UNKNOWN"
+)
+
+
 Reason: type[models.TextChoices] = models.TextChoices(  # type: ignore[assignment]  # ADR-007 §2
     "Reason",
     "MANUAL TAKE TRANSFER ROUND_ROBIN LOAD_BALANCE SKILL_RULE AI_ROUTING HANDOFF "
@@ -494,6 +500,12 @@ class Conversation(TenantModel):
         max_length=20, choices=HumanRequest.choices, null=True, blank=True
     )
     human_requested_by_user_id = models.UUIDField(null=True, blank=True)
+    # F7b-14: la respuesta que la atendió (la API la da por cerrada); si esa falla y ninguna otra
+    # salió, la solicitud se reabre tal cual. FK compuesta a los mensajes (migración 0060).
+    human_request_reply_id = models.UUIDField(null=True, blank=True)
+    # F7b-14: lo último es nuestro, pero ninguna respuesta desde el último mensaje del cliente pudo
+    # llegar (todas `FAILED`, salvo `PROVIDER_UNKNOWN`): sigue «Sin responder».
+    last_reply_failed = models.BooleanField(default=False, db_default=False)
     # F8-13: excluida de la IA (cuándo y quién): el copiloto no la lee ni la manda a un proveedor.
     ai_excluded_at = models.DateTimeField(null=True, blank=True)
     ai_excluded_by_user_id = models.UUIDField(null=True, blank=True)
@@ -528,6 +540,14 @@ class Conversation(TenantModel):
                 condition=models.Q(last_message_direction="INBOUND")
                 & ~models.Q(status__in=["RESOLVED", "CLOSED"]),
                 name="conversations_unanswered_idx",
+            ),
+            models.Index(  # «Sin responder» con la respuesta fallida (F7b-14): CONCURRENTLY, 0061
+                fields=["organization_id", "-last_message_at", "-id"],
+                condition=(
+                    models.Q(last_message_direction="INBOUND") | models.Q(last_reply_failed=True)
+                )
+                & ~models.Q(status__in=["RESOLVED", "CLOSED"]),
+                name="conversations_unreplied_idx",
             ),
             models.Index(  # las cuentas con hilos en `standby` (F7b-06b): CONCURRENTLY en la 0048
                 fields=["organization_id", "channel_account"],
@@ -593,6 +613,16 @@ class Conversation(TenantModel):
                     human_request_reason__in=HumanRequest.values,
                 ),
                 name="conversations_human_request_ck",
+            ),
+            models.CheckConstraint(  # F7b-14: la respuesta que la atendió, solo con solicitud
+                condition=models.Q(human_request_reply_id__isnull=True)
+                | models.Q(human_requested_at__isnull=False),
+                name="conversations_human_reply_ck",
+            ),
+            models.CheckConstraint(  # F7b-14: solo si lo último es nuestro (un NULL no pasa)
+                condition=models.Q(last_reply_failed=False)
+                | models.Q(last_message_direction__isnull=False, last_message_direction="OUTBOUND"),
+                name="conversations_reply_failed_ck",
             ),
             models.CheckConstraint(  # F8-13: la exclusión va entera (cuándo y quién) o no
                 condition=models.Q(ai_excluded_at__isnull=True, ai_excluded_by_user_id__isnull=True)

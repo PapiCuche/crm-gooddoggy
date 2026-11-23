@@ -20,7 +20,7 @@ from django.utils import timezone
 from apps.access.selectors import AccessDenied, Denied, can, execution_context, has_permission
 from apps.audit.services import Entity, record
 from apps.conversations import handoff
-from apps.conversations.models import Conversation, HumanRequest, Message, Status
+from apps.conversations.models import NOT_FAILED, Conversation, HumanRequest, Message, Status
 from apps.conversations.policy import ConversationClosed
 from core.db.timeouts import ms as _ms
 from core.outbox import emit
@@ -63,6 +63,12 @@ class ConversationBusy(Exception):  # noqa: N818 — F8-13d: la fila siguió blo
 
 
 FIELDS = ("human_requested_at", "human_request_reason", "human_requested_by_user_id")
+CLEARED = dict.fromkeys((*FIELDS, "human_request_reply_id"))
+
+
+def waiting(convo: Conversation) -> bool:
+    """¿Espera a una persona? Con solicitud y sin una respuesta que la atendiera (F7b-14)."""
+    return convo.human_requested_at is not None and convo.human_request_reply_id is None
 
 
 def _visible(
@@ -88,14 +94,17 @@ def _write(
     metadata: dict[str, str],
 ) -> None:  # fmt: skip
     """Solo estas columnas (quien llama puede tener la fila con otros cambios ya guardados), la
-    auditoría con ids y códigos y la pista para el Inbox."""
-    before = convo.human_request_reason
+    auditoría con ids y códigos (el motivo que se ve: el de una solicitud que espera) y la pista
+    para el Inbox."""
+    before = convo.human_request_reason if waiting(convo) else None
     Conversation.objects.using(alias).filter(pk=convo.pk).update(
         **values, updated_at=timezone.now()
     )
     for name, value in values.items():
         setattr(convo, name, value)
-    changes = {"human_request_reason": [before, convo.human_request_reason]}
+    changes = {
+        "human_request_reason": [before, convo.human_request_reason if waiting(convo) else None]
+    }
     record(ctx, action, Entity("conversation", convo.pk, convo.number), changes, metadata)
     emit(ctx, "conversation.updated", aggregate_type="conversation", aggregate_id=convo.pk)
 
@@ -142,9 +151,9 @@ def request_human(
         if convo.status == Status.CLOSED:
             raise ConversationClosed
         mine = Message.objects.using(alias).filter(conversation_id=convo.pk, sender_type="USER")
-        if convo.human_requested_at is not None or _late(ctx, mine, after):
+        if waiting(convo) or _late(ctx, mine, after):
             return convo, False
-        values = dict(zip(FIELDS, (timezone.now(), reason, ctx.user_id), strict=True))
+        values = CLEARED | dict(zip(FIELDS, (timezone.now(), reason, ctx.user_id), strict=True))
         metadata = {"reason": reason} | ({"ai_run_id": str(ai_run_id)} if ai_run_id else {})
         _write(ctx, alias, convo, values, "conversation.human_requested", metadata)
         return convo, True
@@ -152,11 +161,41 @@ def request_human(
 
 def clear(ctx: TenantContext, alias: str, convo: Conversation, cause: str, **ids: UUID) -> None:
     """Cierra la solicitud de la conversación ya bloqueada, si la hay (`cause`: `MANUAL`,
-    `REPLIED`, `ASSIGNED` o `CLOSED`: resuelta o cerrada). Para los comandos, en su transacción."""
-    if convo.human_requested_at is not None:
-        metadata = {"cause": cause} | {name: str(value) for name, value in ids.items()}
-        values = dict.fromkeys(FIELDS)
+    `REPLIED`, `ASSIGNED` o `CLOSED`: resuelta o cerrada). Para los comandos, en su transacción.
+    F7b-14: `REPLIED` guarda la respuesta (`message_id`) y la solicitud, por si esa respuesta
+    falla (`reply_failed`); las demás causas lo borran todo y, tomada o cerrada, también lo ya
+    atendido (sin auditar de nuevo: ya estaba cerrada). A mano, sin solicitud, nada cambia."""
+    metadata = {"cause": cause} | {name: str(value) for name, value in ids.items()}
+    if waiting(convo):
+        values = {"human_request_reply_id": ids["message_id"]} if cause == "REPLIED" else CLEARED
         _write(ctx, alias, convo, values, "conversation.human_request_closed", metadata)
+    elif convo.human_request_reply_id is not None and cause in ("ASSIGNED", "CLOSED"):
+        Conversation.objects.using(alias).filter(pk=convo.pk).update(**CLEARED)
+        for name, value in CLEARED.items():
+            setattr(convo, name, value)
+
+
+def reply_failed(ctx: TenantContext, alias: str, convo: Conversation, message_id: UUID) -> None:
+    """F7b-14: el saliente `message_id` terminó `FAILED` (no `PROVIDER_UNKNOWN`). Si era la
+    respuesta que atendió la solicitud de la conversación (ya bloqueada), la sustituye la última
+    respuesta de una persona desde la solicitud que no falló (y no es el texto de traspaso); si no
+    hay, la solicitud se reabre como estaba (quién, cuándo y por qué)."""
+    if convo.human_request_reply_id != message_id:
+        return
+    fixed = handoff.text(ctx).split()  # `NOT_FAILED` ya deja fuera a `message_id`
+    others = Message.objects.using(alias).filter(
+        NOT_FAILED, conversation_id=convo.pk, direction="OUTBOUND", sender_type="USER",
+        created_at__gte=convo.human_requested_at,
+    )  # fmt: skip
+    found = others.order_by("-created_at", "-id").values_list("pk", "body")
+    other = next((pk for pk, body in found if body.split() != fixed), None)
+    if other is not None:  # sigue atendida, por otra respuesta
+        Conversation.objects.using(alias).filter(pk=convo.pk).update(human_request_reply_id=other)
+        convo.human_request_reply_id = other
+        return
+    metadata = {"cause": "REPLY_FAILED", "message_id": str(message_id)}
+    values = {"human_request_reply_id": None}
+    _write(ctx, alias, convo, values, "conversation.human_request_reopened", metadata)
 
 
 def close_request(ctx: TenantContext, *, conversation_id: UUID) -> tuple[Conversation, bool]:
@@ -164,7 +203,7 @@ def close_request(ctx: TenantContext, *, conversation_id: UUID) -> tuple[Convers
     alias = require_scope(ctx)
     with transaction.atomic(using=alias):
         convo = _visible(ctx, alias, conversation_id)
-        opened = convo.human_requested_at is not None
+        opened = waiting(convo)
         clear(ctx, alias, convo, "MANUAL")
         return convo, opened
 

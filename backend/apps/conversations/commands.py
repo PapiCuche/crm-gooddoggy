@@ -26,7 +26,7 @@ from uuid import UUID
 
 from django.conf import settings
 from django.db import IntegrityError, connections, transaction
-from django.db.models import F, Q
+from django.db.models import F, Max, Q
 from django.utils import timezone
 
 from apps.access.selectors import (
@@ -45,6 +45,7 @@ from apps.conversations.channels import REASONS, Claim, Media, SendResult
 from apps.conversations.models import (
     META_ERROR,
     META_ID,
+    NOT_FAILED,
     PREVIEW_MAX,
     SOCIAL,
     AttentionMode,
@@ -80,7 +81,8 @@ WINDOW_HOURS = 24  # la ventana de WhatsApp: un entrante con más de 24 h no rea
 KEY = "CONV"
 ORDER = (Delivery.QUEUED, Delivery.SENDING, Delivery.SENT, Delivery.DELIVERED, Delivery.READ)
 ZWJ, JOINERS = "\u200d", "\u200c\u200d"
-LAST = ("last_message_at", "last_message_preview", "last_message_direction")
+# F7b-14: un mensaje nuevo, del cliente o nuestro, deja de ser «la respuesta falló»
+LAST = ("last_message_at", "last_message_preview", "last_message_direction", "last_reply_failed")
 STAMPS = {
     "SENDING": "sending_at", "SENT": "sent_at", "DELIVERED": "delivered_at", "READ": "read_at",
     "FAILED": "failed_at",
@@ -379,11 +381,13 @@ def record_inbound(
             convo.standby_since = (convo.standby_since or anchor) if standby else None
         convo.last_inbound_at, convo.last_message_at = anchor, now
         convo.last_message_preview, convo.last_message_direction = _preview(text), "INBOUND"
+        convo.last_reply_failed = False
         if convo.status in (Status.WAITING_CUSTOMER, Status.RESOLVED) and not stale:
             _status(  # con las marcas del mensaje: `update_fields` no las guardaría de otro modo
                 ctx, alias, convo, Status.OPEN, "conversation.reopened", resolved_at=None,
                 last_inbound_at=anchor, last_message_at=now, standby_since=convo.standby_since,
                 last_message_preview=convo.last_message_preview, last_message_direction="INBOUND",
+                last_reply_failed=False,
             )  # fmt: skip
         else:
             convo.save(
@@ -518,9 +522,10 @@ def record_outbound(
                 _status(
                     ctx, alias, convo, Status.OPEN, "conversation.opened", last_message_at=now,
                     last_message_preview=_preview(text), last_message_direction="OUTBOUND",
+                    last_reply_failed=False,
                 )  # fmt: skip
             else:
-                convo.last_message_at = now
+                convo.last_message_at, convo.last_reply_failed = now, False
                 convo.last_message_preview, convo.last_message_direction = (
                     _preview(text),
                     "OUTBOUND",
@@ -528,7 +533,7 @@ def record_outbound(
                 convo.save(using=alias, update_fields=[*LAST, "updated_at"])
             record(ctx, "message.queued", Entity("message", message.pk), None, _sent(message))
             # F8-08n: el aviso de traspaso no atiende; F8-08l2: sin solicitud no se lee el texto
-            if convo.human_requested_at is not None and not attention.handoff_reply(ctx, text):
+            if attention.waiting(convo) and not attention.handoff_reply(ctx, text):
                 attention.clear(ctx, alias, convo, "REPLIED", message_id=message.pk)
             ids = {"conversation_id": convo.pk, "channel_account_id": convo.channel_account_id}
             emit(  # para el despachador (F6-04b); solo ids, nunca el texto
@@ -558,7 +563,7 @@ def queue_confirmation(ctx: TenantContext, *, conversation_id: UUID, body: str) 
             direction="OUTBOUND", sender_type="SYSTEM", delivery_status="QUEUED",
             policy_decision=decision.as_json(),
         )  # fmt: skip
-        convo.last_message_at = timezone.now()
+        convo.last_message_at, convo.last_reply_failed = timezone.now(), False
         convo.last_message_preview, convo.last_message_direction = _preview(text), "OUTBOUND"
         convo.save(using=alias, update_fields=[*LAST, "updated_at"])
         record(ctx, "message.queued", Entity("message", message.pk), None, _sent(message))
@@ -663,7 +668,32 @@ def advance_delivery(
                 ctx, "message.updated", aggregate_type="message", aggregate_id=message.pk,
                 payload={"conversation_id": str(message.conversation_id)},
             )  # fmt: skip
+        failed = message.delivery_status == Delivery.FAILED
+        if moved and failed and message.provider_error_code != "PROVIDER_UNKNOWN":
+            _reply_failed(ctx, alias, message)  # también un `PROVIDER_UNKNOWN` que se corrige
         return message
+
+
+def _reply_failed(ctx: TenantContext, alias: str, message: Message) -> None:
+    """F7b-14: un saliente terminó `FAILED` (no `PROVIDER_UNKNOWN`: pudo salir). Con la
+    conversación bloqueada (siempre después del mensaje: nadie bloquea una conversación y luego
+    espera a un mensaje ya escrito, y el reclamo los salta), vuelve a mirar «Sin responder»: lo
+    último es nuestro, el cliente escribió y ninguna respuesta desde su último mensaje pudo
+    llegar. Y la solicitud de persona que esa respuesta atendía se reabre si nada la sustituye."""
+    convo = _locked(alias, message.conversation_id)
+    mine = Message.objects.using(alias).filter(conversation_id=convo.pk)
+    since = mine.filter(direction="INBOUND").aggregate(at=Max("created_at"))["at"]
+    failed = (
+        convo.last_message_direction == "OUTBOUND"
+        and since is not None
+        and not mine.filter(NOT_FAILED, direction="OUTBOUND", created_at__gt=since).exists()
+    )
+    if failed != convo.last_reply_failed:
+        Conversation.objects.using(alias).filter(pk=convo.pk).update(
+            last_reply_failed=failed, updated_at=timezone.now()
+        )
+        emit(ctx, "conversation.updated", aggregate_type="conversation", aggregate_id=convo.pk)
+    attention.reply_failed(ctx, alias, convo, message.pk)
 
 
 def _fail_from(ctx: TenantContext, message_id: UUID, reason: str, was: str) -> Message | None:

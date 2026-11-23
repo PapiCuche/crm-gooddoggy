@@ -69,6 +69,10 @@ class ConversationSerializer(serializers.Serializer[Any]):
     last_message_direction = serializers.ChoiceField(
         choices=[("INBOUND", "INBOUND"), ("OUTBOUND", "OUTBOUND")], allow_null=True
     )
+    last_reply_failed = serializers.BooleanField(
+        help_text="F7b-14: lo último es nuestro, pero ninguna respuesta desde el último mensaje "
+        "del cliente le llegó (fallaron): sigue sin responder."
+    )
     standby_since = serializers.DateTimeField(
         allow_null=True,
         help_text="Instagram o Messenger: desde cuándo otra app controla el hilo (`standby`); "
@@ -105,7 +109,8 @@ class ConversationFilterSerializer(BoxFilterSerializer):
     )
     unanswered = serializers.BooleanField(
         required=False,
-        help_text="`true`: solo las abiertas cuyo último mensaje es del cliente (sin responder).",
+        help_text="`true`: solo las abiertas cuyo último mensaje es del cliente o cuya respuesta "
+        "falló (sin responder).",
     )
 
 

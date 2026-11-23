@@ -32,8 +32,12 @@ SERVABLE = Q(purpose="message-media", scan_status="CLEAN", mime_type__in=EXTENSI
 # aunque alguien lo dejara en la base). La misma regla para la lista (`available`) y la URL.
 SERVED = Q(download_status="DONE", message__direction="INBOUND")
 # Sin responder (F6-09): abierta (ni `RESOLVED` ni `CLOSED`) y lo último lo dijo el cliente. Una
-# nota interna no cuenta (no toca `last_message_direction`); una respuesta, aunque falle, sí.
-UNANSWERED = Q(last_message_direction="INBOUND") & ~Q(status__in=("RESOLVED", "CLOSED"))
+# nota interna no cuenta (no toca `last_message_direction`). F7b-14: una respuesta cuenta solo si
+# no terminó `FAILED` (`PROVIDER_UNKNOWN` sí cuenta: pudo salir); si ninguna desde el último
+# mensaje del cliente pudo llegar, `last_reply_failed`. El índice parcial es el de esta condición.
+UNANSWERED = (Q(last_message_direction="INBOUND") | Q(last_reply_failed=True)) & ~Q(
+    status__in=["RESOLVED", "CLOSED"]
+)
 
 
 def conversations() -> QuerySet[Conversation]:
