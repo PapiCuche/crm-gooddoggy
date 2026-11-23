@@ -6,7 +6,16 @@ compuesta a `messages` (`ON DELETE SET NULL` solo de la columna: un mensaje nunc
 limpiar las pruebas) nacen `NOT VALID` (rigen ya para toda fila nueva o modificada); la `0060` los
 valida. `crm_app` ya tiene `UPDATE` de la tabla (`0001`); la tabla ya tiene RLS con FORCE.
 `lock_timeout` de 5 s en los dos sentidos. Hacia atrás, una solicitud atendida por una respuesta
-vuelve a la forma de antes (cerrada: sin quién, cuándo ni por qué) en vez de reaparecer abierta."""
+vuelve a la forma de antes (cerrada: sin quién, cuándo ni por qué) en vez de reaparecer abierta.
+
+Desplegar y volver atrás (ADR-033 §7): la imagen anterior sigue escribiendo mientras se migra, y
+una vuelta atrás la corre sobre este esquema; no conoce las columnas nuevas. El disparador INVOKER
+`conversations_reply_guard` las mantiene coherentes con lo que esa imagen sí escribe: un mensaje
+nuevo (`last_message_at` cambia) o una dirección que no es `OUTBOUND` quitan `last_reply_failed`,
+y una solicitud que se borra se lleva su respuesta. Así ninguna de sus escrituras choca con los
+`CHECK`. Lo que no puede arreglar: la imagen anterior ve como abierta una solicitud atendida
+(`human_requested_at` sigue puesta) mientras corra. Un mensaje borrado (solo al limpiar las
+pruebas) quita la respuesta por la FK y la solicitud vuelve a verse abierta sin auditoría."""
 
 from typing import Any
 
@@ -18,7 +27,7 @@ REPLY_CK, FAILED_CK, FK = (
     "conversations_reply_failed_ck",
     "conversations_human_reply_fk",
 )
-ADD = (
+ADD: tuple[str, ...] = (
     LOCK,
     "ALTER TABLE public.conversations"
     " ADD COLUMN last_reply_failed boolean NOT NULL DEFAULT false,"
@@ -31,8 +40,28 @@ ADD = (
     " REFERENCES public.messages (organization_id, id)"
     " ON DELETE SET NULL (human_request_reply_id) NOT VALID",
 )
+GUARD = """
+CREATE FUNCTION public.conversations_reply_guard() RETURNS trigger
+LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $fn$
+BEGIN
+    IF NEW.last_message_direction IS DISTINCT FROM 'OUTBOUND' OR (TG_OP = 'UPDATE'
+        AND NEW.last_message_at IS DISTINCT FROM OLD.last_message_at) THEN
+        NEW.last_reply_failed := false;
+    END IF;
+    IF NEW.human_requested_at IS NULL THEN
+        NEW.human_request_reply_id := NULL;
+    END IF;
+    RETURN NEW;
+END
+$fn$;
+CREATE TRIGGER conversations_reply_guard BEFORE INSERT OR UPDATE ON public.conversations
+    FOR EACH ROW EXECUTE FUNCTION public.conversations_reply_guard();
+"""
+ADD = (*ADD, GUARD)
 DROP = (
     LOCK,
+    "DROP TRIGGER conversations_reply_guard ON public.conversations",
+    "DROP FUNCTION public.conversations_reply_guard()",
     f"ALTER TABLE public.conversations DROP CONSTRAINT {FK}, DROP CONSTRAINT {FAILED_CK},"
     f" DROP CONSTRAINT {REPLY_CK}, DROP COLUMN human_request_reply_id,"
     " DROP COLUMN last_reply_failed",

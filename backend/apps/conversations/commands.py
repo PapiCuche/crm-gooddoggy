@@ -81,8 +81,7 @@ WINDOW_HOURS = 24  # la ventana de WhatsApp: un entrante con más de 24 h no rea
 KEY = "CONV"
 ORDER = (Delivery.QUEUED, Delivery.SENDING, Delivery.SENT, Delivery.DELIVERED, Delivery.READ)
 ZWJ, JOINERS = "\u200d", "\u200c\u200d"
-# F7b-14: un mensaje nuevo, del cliente o nuestro, deja de ser «la respuesta falló»
-LAST = ("last_message_at", "last_message_preview", "last_message_direction", "last_reply_failed")
+LAST = ("last_message_at", "last_message_preview", "last_message_direction")
 STAMPS = {
     "SENDING": "sending_at", "SENT": "sent_at", "DELIVERED": "delivered_at", "READ": "read_at",
     "FAILED": "failed_at",
@@ -381,13 +380,11 @@ def record_inbound(
             convo.standby_since = (convo.standby_since or anchor) if standby else None
         convo.last_inbound_at, convo.last_message_at = anchor, now
         convo.last_message_preview, convo.last_message_direction = _preview(text), "INBOUND"
-        convo.last_reply_failed = False
         if convo.status in (Status.WAITING_CUSTOMER, Status.RESOLVED) and not stale:
             _status(  # con las marcas del mensaje: `update_fields` no las guardaría de otro modo
                 ctx, alias, convo, Status.OPEN, "conversation.reopened", resolved_at=None,
                 last_inbound_at=anchor, last_message_at=now, standby_since=convo.standby_since,
                 last_message_preview=convo.last_message_preview, last_message_direction="INBOUND",
-                last_reply_failed=False,
             )  # fmt: skip
         else:
             convo.save(
@@ -522,10 +519,9 @@ def record_outbound(
                 _status(
                     ctx, alias, convo, Status.OPEN, "conversation.opened", last_message_at=now,
                     last_message_preview=_preview(text), last_message_direction="OUTBOUND",
-                    last_reply_failed=False,
                 )  # fmt: skip
             else:
-                convo.last_message_at, convo.last_reply_failed = now, False
+                convo.last_message_at = now
                 convo.last_message_preview, convo.last_message_direction = (
                     _preview(text),
                     "OUTBOUND",
@@ -563,7 +559,7 @@ def queue_confirmation(ctx: TenantContext, *, conversation_id: UUID, body: str) 
             direction="OUTBOUND", sender_type="SYSTEM", delivery_status="QUEUED",
             policy_decision=decision.as_json(),
         )  # fmt: skip
-        convo.last_message_at, convo.last_reply_failed = timezone.now(), False
+        convo.last_message_at = timezone.now()
         convo.last_message_preview, convo.last_message_direction = _preview(text), "OUTBOUND"
         convo.save(using=alias, update_fields=[*LAST, "updated_at"])
         record(ctx, "message.queued", Entity("message", message.pk), None, _sent(message))
@@ -676,10 +672,11 @@ def advance_delivery(
 
 def _reply_failed(ctx: TenantContext, alias: str, message: Message) -> None:
     """F7b-14: un saliente terminó `FAILED` (no `PROVIDER_UNKNOWN`: pudo salir). Con la
-    conversación bloqueada (siempre después del mensaje: nadie bloquea una conversación y luego
-    espera a un mensaje ya escrito, y el reclamo los salta), vuelve a mirar «Sin responder»: lo
-    último es nuestro, el cliente escribió y ninguna respuesta desde su último mensaje pudo
-    llegar. Y la solicitud de persona que esa respuesta atendía se reabre si nada la sustituye."""
+    conversación bloqueada después del mensaje (nadie bloquea una conversación y luego espera a un
+    mensaje ya escrito: el reclamo los salta), vuelve a mirar «Sin responder»: lo último es
+    nuestro, el cliente escribió y ninguna respuesta desde su último mensaje pudo llegar. Y la
+    solicitud de persona que esa respuesta atendía se reabre si nada la sustituye. Quitar la marca
+    con un mensaje nuevo lo hace la base (`conversations_reply_guard`, migración 0059)."""
     convo = _locked(alias, message.conversation_id)
     mine = Message.objects.using(alias).filter(conversation_id=convo.pk)
     since = mine.filter(direction="INBOUND").aggregate(at=Max("created_at"))["at"]

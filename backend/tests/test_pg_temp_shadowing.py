@@ -61,6 +61,7 @@ FUNCTIONS = (
     "public.ai_runs_ensure_partitions(integer)",  # F8-08b
     "public.ai_actions_ensure_partitions(integer)",
     "public.ai_suggestions_guard()",  # INVOKER
+    "public.conversations_reply_guard()",  # F7b-14, INVOKER
 )
 
 

@@ -348,11 +348,13 @@ def sweep_queued(batch_size: int = 100, max_orgs: int = 50) -> int:
             ready = Q(not_before__isnull=True) | Q(not_before__lte=now)
             fresh = found.exclude(spent).filter(ready).values_list("pk", flat=True)
             ids = list(fresh[:batch_size])
-            for message_id in list(found.filter(spent).values_list("pk", flat=True)[:batch_size]):
-                commands.fail_queued(tenant, message_id=message_id, reason="RETRIES_EXHAUSTED")
+            gone = list(found.filter(spent).values_list("pk", flat=True)[:batch_size])
             # no se vuelve a reencolar antes de `REQUEUE_WAIT`, y el despacho espera lo mismo
             wait = dt.timedelta(seconds=REQUEUE_WAIT)
             Message.objects.filter(pk__in=ids).update(not_before=now + wait)
+        for message_id in gone:  # F7b-14: cada fallo bloquea su conversación; uno por transacción
+            with tenant_scope(tenant):
+                commands.fail_queued(tenant, message_id=message_id, reason="RETRIES_EXHAUSTED")
         for message_id in ids:
             dispatch_message.apply_async(
                 kwargs={"message_id": str(message_id), "organization_id": str(organization_id)},

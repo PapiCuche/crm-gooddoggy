@@ -17,6 +17,8 @@ import pytest
 from django.conf import settings
 from django.core.management import call_command
 from django.db import IntegrityError, connection
+from django.db.models import F
+from django.utils import timezone
 
 from apps.contacts.models import Contact
 from apps.conversations import attention, commands, ingress, selectors
@@ -24,6 +26,7 @@ from apps.conversations.models import Conversation, Message
 from apps.organizations.models import OrganizationMembership
 from core.tenancy.scope import require_scope, tenant_scope
 from tests import test_conversations_tables as tables
+from tests.conftest import migrator_conninfo
 from tests.meta_sim import webhooks
 from tests.test_authorization import give
 from tests.test_conversation_commands import audit, outbound, run, world, writer
@@ -41,6 +44,7 @@ INDEX = import_module("apps.conversations.migrations.0061_conversations_unreplie
 ADD = import_module("apps.conversations.migrations.0059_conversation_failed_reply")
 FIRST = "wamid.SIMOUT000001"  # el `wamid` del primer envío del simulador
 REOPENED = "conversation.human_request_reopened"
+WAITING = "SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock'"
 
 
 @pytest.fixture(autouse=True)
@@ -75,12 +79,18 @@ def move(world: SimpleNamespace, message: Message, state: str, why: str | None =
     return run(world, commands.advance_delivery, message_id=message.pk, status=state, reason=why)
 
 
-def theirs(world: SimpleNamespace) -> Message:
-    """Un mensaje del cliente de B, en su conversación."""
-    wanted = {"contact_id": world.contact_b.pk, "channel_account_id": world.account_b.pk}
-    found = run(world, commands.record_inbound, org="b", external_message_id="wamid.B1",
-                body="B", **wanted)  # fmt: skip
-    return found[0]  # type: ignore[no-any-return]
+def other(world: SimpleNamespace, chat: Conversation, number: str, wrote: bool) -> Conversation:
+    """Otra conversación de la misma cuenta de WhatsApp, con o sin un mensaje del cliente."""
+    with tenant_scope(ctx(world.a)):
+        made = Contact.objects.create(display_name=f"Cliente {number}")
+    found: Conversation = tables.conversation(
+        world.a, made, SimpleNamespace(pk=chat.channel_account_id), number,
+        last_inbound_at=chat.last_inbound_at,
+    )  # fmt: skip
+    if wrote:
+        run(world, commands.record_inbound, contact_id=made.pk, body="Hola", external_message_id=
+            f"wamid.{number}", channel_account_id=chat.channel_account_id)  # fmt: skip
+    return found
 
 
 def reopened(migrator: DB) -> list[dict[str, Any]]:
@@ -155,25 +165,15 @@ def test_a_reply_that_may_have_gone_out_counts_as_an_answer(
     assert look(world, chat) == (None, False, False) and reopened(migrator) == []
     move(world, message, "READ")  # un estado tardío lo reconcilia: sigue contestada
     assert look(world, chat) == (None, False, False)
-    with tenant_scope(ctx(world.a)):  # el cliente nunca escribió: no hay nada que responder
-        quiet = Contact.objects.create(display_name="Cliente sin mensajes")
-    account = SimpleNamespace(pk=chat.channel_account_id)
-    alone = tables.conversation(world.a, quiet, account, "CONV-00002",
-                                last_inbound_at=chat.last_inbound_at)  # fmt: skip
+    alone = other(world, chat, "CONV-00002", wrote=False)  # el cliente nunca escribió
     first, _ = outbound(world, alone)
     move(world, first, "FAILED", "PROVIDER_REJECTED")
     assert look(world, alone) == (None, False, False)
 
 
-def test_a_customer_message_or_closing_it_ends_the_failed_mark_and_the_saved_request(
+def test_closing_it_by_hand_keeps_the_saved_reply_and_taking_it_drops_it(
     world: SimpleNamespace, chat: Conversation, migrator: DB
 ) -> None:
-    message, _ = outbound(world, chat)
-    move(world, message, "FAILED", "PROVIDER_REJECTED")
-    assert look(world, chat)[1:] == (True, True)
-    run(world, commands.record_inbound, contact_id=world.contact_a.pk, body="¿Hola?",
-        channel_account_id=chat.channel_account_id, external_message_id="wamid.IN2")  # fmt: skip
-    assert look(world, chat)[1:] == (False, True)  # lo último es del cliente
     again, _ = outbound(world, chat)
     run(world, attention.close_request, conversation_id=chat.pk)  # atendida: no hay nada que cerrar
     move(world, again, "FAILED", "PROVIDER_REJECTED")
@@ -183,30 +183,27 @@ def test_a_customer_message_or_closing_it_ends_the_failed_mark_and_the_saved_req
         row = Conversation.objects.get(pk=chat.pk)
         attention.clear(tenant, require_scope(tenant), row, "ASSIGNED")
     move(world, taken, "FAILED", "PROVIDER_REJECTED")  # tomada por una persona: no vuelve
-    assert look(world, chat)[0] is None and len(reopened(migrator)) == 2
+    assert look(world, chat)[0] is None and len(reopened(migrator)) == 1
 
 
 def test_another_organization_cannot_touch_the_conversation_and_the_database_keeps_it_whole(
-    world: SimpleNamespace, chat: Conversation
+    world: SimpleNamespace, chat: Conversation, migrator: DB
 ) -> None:
     message, _ = outbound(world, chat)
     with pytest.raises(Message.DoesNotExist):  # el mensaje de A no existe para B
         run(world, commands.advance_delivery, org="b", message_id=message.pk, status="FAILED")
     assert look(world, chat) == (None, False, False)
-    other = theirs(world)
-
-    def refused(name: str, **fields: Any) -> None:
+    b = {"contact_id": world.contact_b.pk, "channel_account_id": world.account_b.pk}
+    theirs = run(world, commands.record_inbound, org="b", external_message_id="wamid.B1",
+                 body="B", **b)[0]  # fmt: skip
+    for bad in (theirs.pk, uuid4()):  # un mensaje de B, o ninguno
         with pytest.raises(IntegrityError) as error, tenant_scope(ctx(world.a)):
-            Conversation.objects.filter(pk=chat.pk).update(**fields)
-        assert error.value.__cause__.diag.constraint_name == name  # type: ignore[union-attr]
-
-    refused("conversations_human_reply_fk", human_request_reply_id=other.pk)  # de B
-    refused("conversations_human_reply_fk", human_request_reply_id=uuid4())
-    gone = dict.fromkeys(attention.FIELDS)  # la respuesta guardada, sin solicitud
-    refused("conversations_human_reply_ck", **gone)
-    refused(
-        "conversations_reply_failed_ck", last_reply_failed=True, last_message_direction="INBOUND"
-    )
+            Conversation.objects.filter(pk=chat.pk).update(human_request_reply_id=bad)
+        name = error.value.__cause__.diag.constraint_name  # type: ignore[union-attr]
+        assert name == "conversations_human_reply_fk"
+    names = ("conversations_human_reply_ck", "conversations_reply_failed_ck")  # de respaldo: el
+    sql = "SELECT count(*) FROM pg_constraint WHERE conname = ANY(%s) AND convalidated"
+    assert migrator.execute(sql, [list(names)]).fetchone() == (2,)  # disparador va antes
 
 
 @pytest.mark.parametrize("first", ["reply", "failure"])
@@ -227,43 +224,32 @@ def test_a_failure_and_a_new_reply_at_once_end_answered_in_either_order(
     assert look(world, chat) == (None, False, False)
 
 
-def test_a_token_failure_takes_the_account_before_the_conversation_like_the_claim(
-    world: SimpleNamespace, chat: Conversation, migrator: DB
+@pytest.mark.parametrize(("meta", "mark"), [(190, "TOKEN_INVALID"), (131048, "QUALITY_LOW")])
+def test_a_failure_that_marks_the_account_takes_it_before_the_conversation_like_the_claim(
+    world: SimpleNamespace, chat: Conversation, migrator: DB, meta: int, mark: str
 ) -> None:
     send(world, chat)
-    account, held, done = chat.channel_account_id, threading.Event(), list[Any]([None])
+    done: list[Any] = []
+    failed = webhooks.status(FIRST, "failed", error=(meta, "x"))
 
-    def claim() -> None:  # el orden de `claim_outbound`: cuenta → contacto → conversación
-        try:
-            with tenant_scope(ctx(world.a)), connection.cursor() as cursor:
-                cursor.execute("BEGIN")
-                cursor.execute("SELECT 1 FROM channel_accounts WHERE id = %s FOR SHARE", [account])
-                held.set()
-                for _ in range(100):  # hasta que el webhook espera a la cuenta
-                    found = migrator.execute(
-                        "SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock'"
-                    ).fetchone()
-                    if found and found[0]:
-                        break
-                    time.sleep(0.05)
-                cursor.execute(
-                    "SELECT 1 FROM conversations WHERE id = %s FOR NO KEY UPDATE", [chat.pk]
-                )
-                cursor.execute("COMMIT")
-                done[0] = "ok"
-        except Exception as error:  # noqa: BLE001 — lo comprueba la prueba
-            done[0] = type(error).__name__
-        finally:
-            connection.close()
+    def hook_run() -> None:
+        done.append(status(failed))
+        connection.close()
 
-    thread = threading.Thread(target=claim)
-    thread.start()
-    assert held.wait(timeout=10)
-    assert status(webhooks.status(FIRST, "failed", error=(190, "x"))) == {"PROCESSED": 1}
-    thread.join(timeout=10)
-    assert done == ["ok"] and look(world, chat)[1:] == (True, True)
+    hook = threading.Thread(target=hook_run)
+    with psycopg.connect(migrator_conninfo()) as claim:  # su orden: cuenta → … → conversación
+        claim.execute("SELECT 1 FROM channel_accounts WHERE id = %s FOR SHARE",
+                      [chat.channel_account_id])  # fmt: skip
+        hook.start()
+        for _ in range(200):  # hasta que el webhook espera a la cuenta
+            if migrator.execute(WAITING).fetchone() != (0,):
+                break
+            time.sleep(0.05)
+        claim.execute("SELECT 1 FROM conversations WHERE id = %s FOR NO KEY UPDATE", [chat.pk])
+    hook.join(timeout=10)
+    assert done == [{"PROCESSED": 1}] and look(world, chat)[1:] == (True, True)
     with tenant_scope(ctx(world.a)):
-        assert Conversation.objects.get(pk=chat.pk).channel_account.status_detail == "TOKEN_INVALID"
+        assert Conversation.objects.get(pk=chat.pk).channel_account.status_detail == mark
 
 
 def test_the_unanswered_filter_uses_its_partial_index(world: SimpleNamespace, migrator: DB) -> None:
@@ -281,7 +267,9 @@ def test_the_unanswered_filter_uses_its_partial_index(world: SimpleNamespace, mi
 def test_the_migrations_mark_old_failures_rebuild_the_index_and_go_back_and_forth(
     world: SimpleNamespace, chat: Conversation, migrator: DB
 ) -> None:
-    theirs(world)  # dos conversaciones: un índice único de una constante falla
+    alone, unsure = (
+        other(world, chat, n, wrote=n.endswith("3")) for n in ("CONV-00002", "CONV-00003")
+    )
     message, _ = outbound(world, chat)
     move(world, message, "FAILED", "PROVIDER_REJECTED")
     answered, _ = outbound(world, chat)  # atendida, pendiente: hacia atrás queda cerrada
@@ -304,10 +292,101 @@ def test_the_migrations_mark_old_failures_rebuild_the_index_and_go_back_and_fort
         call_command("migrate", "conversations", verbosity=0)
     assert migrator.execute(INDEX.STATE, [INDEX.INDEX]).fetchall() == [(True, INDEX.DEFINITION)]
     move(world, answered, "FAILED", "PROVIDER_REJECTED")  # tampoco llegó
-    migrator.execute(stamp, [chat.pk])
+    move(world, outbound(world, alone)[0], "FAILED", "PROVIDER_REJECTED")  # nadie le escribió
+    maybe, _ = outbound(world, unsure)
+    move(world, maybe, "SENDING")
+    run(world, commands.fail_sending, message_id=maybe.pk, reason="PROVIDER_UNKNOWN")  # pudo salir
+    migrator.execute("UPDATE conversations SET last_reply_failed = false")
     with as_migrator():
         call_command("migrate", "conversations", "0059", verbosity=0)
         call_command("migrate", "conversations", verbosity=0)  # la `0060` la marca otra vez
     assert look(world, chat)[1:] == (True, True)
+    assert look(world, alone)[1] is False and look(world, unsure)[1] is False
     with pytest.raises(RuntimeError, match="BYPASSRLS"):  # `crm_app` no ve todas las filas
         ADD.restore_closed(None, SimpleNamespace(connection=connection))
+
+
+def test_what_the_previous_image_writes_keeps_working_on_the_new_columns(
+    world: SimpleNamespace, chat: Conversation
+) -> None:
+    """ADR-033 §7: la imagen anterior (al migrar o tras volver atrás) no conoce las columnas nuevas.
+    Lo que escriben sus `record_outbound`, `record_inbound`, `_assign`, `clear` y `_status`."""
+
+    def old(**fields: Any) -> None:
+        with tenant_scope(ctx(world.a)):
+            Conversation.objects.filter(pk=chat.pk).update(**fields, updated_at=timezone.now())
+
+    def flagged() -> None:
+        move(world, outbound(world, chat)[0], "FAILED", "PROVIDER_REJECTED")
+        assert look(world, chat)[1] is True
+
+    flagged()
+    old(last_message_at=timezone.now(), last_message_preview="Hola",
+        last_message_direction="OUTBOUND")  # fmt: skip
+    assert look(world, chat)[1] is False  # un mensaje nuevo quita la marca
+    flagged()
+    old(last_message_at=timezone.now(), last_message_preview="¿Hola?", standby_since=None,
+        last_message_direction="INBOUND", last_inbound_at=timezone.now())  # fmt: skip
+    assert look(world, chat)[1:] == (False, True)
+    outbound(world, chat)  # atendida: la respuesta guardada
+    old(assigned_user_id=world.ana.pk, assigned_at=timezone.now(), status="OPEN",
+        assignment_version=F("assignment_version") + 1, version=F("version") + 1)  # fmt: skip
+    old(**dict.fromkeys(attention.FIELDS))  # su `clear`: la respuesta se va con la solicitud
+    old(status="RESOLVED", resolved_at=timezone.now(), version=F("version") + 1)
+    with tenant_scope(ctx(world.a)):
+        row = Conversation.objects.get(pk=chat.pk)
+    assert (row.human_request_reply_id, row.last_reply_failed, row.status) == (
+        None,
+        False,
+        "RESOLVED",
+    )
+
+
+def test_every_new_message_ends_the_failed_mark(world: SimpleNamespace, chat: Conversation) -> None:
+    failed, _ = outbound(world, chat)
+    move(world, failed, "FAILED", "PROVIDER_REJECTED")
+    with tenant_scope(ctx(world.a)):  # en cola otra vez (soltada): la respuesta la abre
+        Conversation.objects.filter(pk=chat.pk).update(status="PENDING")
+    again, _ = outbound(world, chat)
+    assert look(world, chat)[1:] == (False, False)
+    move(world, again, "FAILED", "PROVIDER_REJECTED")
+    confirmed = run(world, commands.queue_confirmation, conversation_id=chat.pk, body="Listo")
+    assert look(world, chat)[1:] == (False, False)  # la confirmación de una baja también
+    move(world, confirmed, "FAILED", "PROVIDER_REJECTED")
+    with tenant_scope(ctx(world.a)):
+        Conversation.objects.filter(pk=chat.pk).update(
+            status="RESOLVED", resolved_at=timezone.now()
+        )
+    run(world, commands.record_inbound, contact_id=world.contact_a.pk, body="¿Hola?",
+        channel_account_id=chat.channel_account_id, external_message_id="wamid.IN3")  # fmt: skip
+    assert look(world, chat)[1:] == (False, True)  # la reabre el cliente
+
+
+def test_only_what_counts_since_the_customer_wrote_and_only_a_person_answers_the_request(
+    world: SimpleNamespace, chat: Conversation, migrator: DB
+) -> None:
+    old, _ = outbound(world, chat)
+    move(world, old, "DELIVERED")  # contestó lo anterior, no lo de ahora
+    run(world, commands.record_inbound, contact_id=world.contact_a.pk, body="¿Y ahora?",
+        channel_account_id=chat.channel_account_id, external_message_id="wamid.IN9")  # fmt: skip
+    run(world, attention.request_human, conversation_id=chat.pk, reason="AGENT")
+    late, _ = outbound(world, chat, body="Ya voy")
+    run(world, commands.queue_confirmation, conversation_id=chat.pk, body="Listo")  # del sistema
+    move(world, late, "FAILED", "PROVIDER_REJECTED")
+    assert look(world, chat)[0] is not None and len(reopened(migrator)) == 1  # no la atiende
+    assert look(world, chat)[1] is False  # pero algo pudo llegar
+    gone, _ = outbound(world, chat)
+    run(world, commands.record_inbound, contact_id=world.contact_a.pk, body="¿Sigues?",
+        channel_account_id=chat.channel_account_id, external_message_id="wamid.IN10")  # fmt: skip
+    move(world, gone, "FAILED", "PROVIDER_REJECTED")  # llega tras el cliente: se reabre igual
+    assert look(world, chat)[1:] == (False, True) and len(reopened(migrator)) == 2
+    fresh, _ = outbound(world, chat)
+    move(world, fresh, "FAILED", "PROVIDER_REJECTED")  # tras la del cliente, nada le llegó
+    assert look(world, chat)[1:] == (True, True)
+    closing, _ = outbound(world, chat)
+    with tenant_scope(ctx(world.a)) as tenant:  # resuelta: ya no espera a nadie
+        row = Conversation.objects.select_for_update().get(pk=chat.pk)
+        commands._status(tenant, require_scope(tenant), row, "RESOLVED", "conversation.resolved",
+                         resolved_at=timezone.now())  # fmt: skip
+    move(world, closing, "FAILED", "PROVIDER_REJECTED")
+    assert look(world, chat)[0] is None and len(reopened(migrator)) == 3
