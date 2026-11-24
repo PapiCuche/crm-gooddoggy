@@ -6,13 +6,14 @@ Todo pasa por `core.http` (https, puerto 443, allowlist, IP pública). El token 
 registro. Los identificadores se validan antes: solo dígitos, así que no cambian la ruta de la URL.
 """
 
+import datetime as dt
 import json
 import re
-from typing import Any
+from typing import Any, NamedTuple
 
 from django.conf import settings
 
-from apps.conversations.models import LIMIT_TIERS, META_ID, QUALITY_RATINGS
+from apps.conversations.models import LIMIT_TIERS, META_ID, QUALITY_RATINGS, TOKEN_FORMAT
 from core import http
 
 FIELDS = "id,display_phone_number,quality_rating,messaging_limit_tier"
@@ -192,3 +193,46 @@ def profile(token: str, customer: str) -> dict[str, Any]:
         raise ValueError("identificador de Meta no válido")
     found = _ask("GET", f"{customer}?fields=name,username", token, retry=False)
     return {"name": found.get("name"), "username": found.get("username")}
+
+
+class Expiry(NamedTuple):
+    """Lo que Meta dice de un token (`debug_token`): cuándo caduca y cuándo deja la app de poder
+    leer los datos del usuario; `None`, nunca (Meta manda `0`)."""
+
+    expires_at: dt.datetime | None
+    data_access_expires_at: dt.datetime | None
+
+
+def _moment(value: Any) -> dt.datetime | None:
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise TypeError
+    return dt.datetime.fromtimestamp(value, dt.UTC) if value else None  # 0: nunca
+
+
+def token_expiry(token: str) -> Expiry | str:
+    """La caducidad de `token` según Meta (F7b-12): `GET /debug_token?input_token=<token>`, que
+    pide el token de la app (`<META_APP_ID>|<app secret vigente>`, en la cabecera). Si no se sabe,
+    el motivo, un código cerrado: `no_app` (sin app configurada), `app_token_rejected` (Meta
+    rechaza el token de la app), `unavailable`, `invalid_token`, `other_app` o `malformed`. Sin
+    reintentos de `core.http` (su aviso lleva la URL, con el token) ni el texto de ningún error.
+    Nunca lanza."""
+    app, secrets = settings.META_APP_ID, settings.META_APP_SECRETS
+    if not (isinstance(app, str) and re.fullmatch(META_ID, app) and secrets):
+        return "no_app"
+    if not re.fullmatch(TOKEN_FORMAT, token):  # sin caracteres que cambien la URL
+        return "malformed"
+    try:
+        found = _ask("GET", f"debug_token?input_token={token}", f"{app}|{secrets[0]}", retry=False)
+    except GraphRejected:
+        return "app_token_rejected"
+    except Exception:  # noqa: BLE001 — el texto de un error puede llevar los dos tokens
+        return "unavailable"
+    try:
+        data = found["data"]
+        if data["is_valid"] is not True:
+            return "invalid_token"
+        if str(data["app_id"]) != app:
+            return "other_app"
+        return Expiry(_moment(data["expires_at"]), _moment(data.get("data_access_expires_at", 0)))
+    except Exception:  # noqa: BLE001 — una respuesta que no es la esperada no dice nada
+        return "malformed"

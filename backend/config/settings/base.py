@@ -258,6 +258,19 @@ CELERY_BEAT_SCHEDULE = {
         "schedule": 60.0,
         "options": {"expires": 60},
     },
+    # F7b-12: cada hora, los avisos de caducidad de los tokens de página; una vez al día, además,
+    # lee en Meta las caducidades que no se saben (hasta 50 organizaciones y 20 tokens de cada una).
+    "conversations.token_expiry": {
+        "task": "conversations.token_expiry",
+        "schedule": crontab(minute=23),
+        "options": {"expires": 3600},
+    },
+    "conversations.token_expiry_backfill": {
+        "task": "conversations.token_expiry",
+        "schedule": crontab(hour=5, minute=13),
+        "kwargs": {"backfill": True},
+        "options": {"expires": 3600},
+    },
     # F7-03c: purga a 90 días, el tope de la ingesta (ADR-029 §3).
     "conversations.purge_webhook_ingress": {
         "task": "conversations.purge_webhook_ingress",

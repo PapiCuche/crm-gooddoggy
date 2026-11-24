@@ -20,6 +20,9 @@ from urllib.parse import parse_qs, urlsplit
 from tests.meta_sim import GRAPH_VERSION, social
 from tests.meta_sim.graph import LOST, TEST_TOKEN, Cut, Response, Timeout
 from tests.meta_sim.social import APP_ID, IG_ACCOUNT_ID, IGSID, PAGE_ID
+from tests.meta_sim.webhooks import TEST_APP_SECRET
+
+APP_TOKEN = f"{APP_ID}|{TEST_APP_SECRET}"  # el token de la app: `<id>|<secret>` (debug_token)
 
 # nombre -> (estado HTTP, código de Meta, subcódigo, título, código propio de ADR-035 §6)
 ERRORS: dict[str, tuple[int, int, int | None, str, str]] = {
@@ -70,6 +73,10 @@ class FakePageGraph:
     subscribed: dict[str, list[str]] = field(default_factory=dict)  # página -> campos
     calls: list[dict[str, Any]] = field(default_factory=list)  # método, ruta y query
     no_role: set[str] = field(default_factory=set)  # páginas sin rol: no leen sus apps (F7b-06e)
+    # F7b-12: lo que `debug_token` dice del token (segundos Unix; `0`, nunca), `None` = un `100`.
+    debug: dict[str, Any] | None = field(
+        default_factory=lambda: {"expires_at": 0, "data_access_expires_at": 0}
+    )
     profiles: dict[str, dict[str, Any]] = field(
         default_factory=lambda: {IGSID: {"name": "Cliente Simulado", "username": "cliente.sim"}}
     )
@@ -88,6 +95,12 @@ class FakePageGraph:
         path, query = parts.path.strip("/").split("/"), parse_qs(parts.query)
         self.calls.append({"method": method, "path": parts.path, "query": query})
         auth = {k.lower(): v for k, v in headers.items()}.get("authorization")
+        if (method, path[1:]) == ("GET", ["debug_token"]):  # con el token de la app [F7b-12]
+            if auth != f"Bearer {APP_TOKEN}" or self.debug is None:
+                return self._error("token" if auth != f"Bearer {APP_TOKEN}" else "invalid")
+            valid = query.get("input_token") == [self.token]
+            return self._ok({"data": {"app_id": APP_ID, "type": "PAGE", "is_valid": valid,
+                                      "profile_id": PAGE_ID, **self.debug}})  # fmt: skip
         if auth != f"Bearer {self.token}":
             return self._error("token")
         if path[0] != GRAPH_VERSION:

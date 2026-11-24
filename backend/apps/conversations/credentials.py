@@ -5,6 +5,7 @@ guarda a la vista es `last_four`. Los comandos de la cuenta (conectar,
 rotar, desconectar) llegan con F7-02c y usan estas funciones. Solo la API y las tareas lo importan.
 """
 
+from datetime import datetime
 from uuid import UUID
 
 from django.db import connection, transaction
@@ -28,15 +29,21 @@ def owner(account_id: UUID) -> str:
     return f"channel_account:{account_id}"
 
 
-def store(ctx: TenantContext, account_id: UUID, token: str, *, rotated: bool = False) -> Credential:
+def store(
+    ctx: TenantContext, account_id: UUID, token: str, *, rotated: bool = False,
+    expiry: tuple[datetime | None] | None = None,
+) -> Credential:  # fmt: skip
     """Cifra y guarda el token de la cuenta `account_id`. Dos llamadas con el mismo token dan
-    cifrados distintos. No comprueba el token ni el permiso: es de quien conecta la cuenta."""
+    cifrados distintos. No comprueba el token ni el permiso: es de quien conecta la cuenta.
+    `expiry`, la caducidad leída en Meta (`expiry.Known`, F7b-12); `None`, no se sabe."""
     alias = require_scope(ctx)
     box = sealed.seal(TOKEN_PURPOSE, owner(account_id), token.encode())
+    now = timezone.now()
     made: Credential = Credential.objects.using(alias).create(
         owner_id=account_id, ciphertext=box, key_version=int.from_bytes(box[1:3], "big"),
         last_four=token[-4:],
-        rotated_at=timezone.now() if rotated else None, created_by_user_id=ctx.user_id,
+        rotated_at=now if rotated else None, created_by_user_id=ctx.user_id,
+        expires_at=expiry[0] if expiry else None, expiry_checked_at=now if expiry else None,
     )  # fmt: skip
     return made
 

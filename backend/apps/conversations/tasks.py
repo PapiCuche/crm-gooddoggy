@@ -26,6 +26,7 @@ from apps.conversations import (
     accounts,
     commands,
     credentials,
+    expiry,
     graph,
     ingest_alerts,
     ingress,
@@ -526,3 +527,9 @@ def purge_webhook_ingress(days: int = 90, batch_size: int = 1000) -> int:
 def meta_alerts() -> list[str]:
     """F7-11a: métricas y alertas de la ingesta de Meta por ventana (`ingest_alerts.sweep`)."""
     return ingest_alerts.sweep()
+
+
+@platform_task(name="conversations.token_expiry", ignore_result=True)
+def token_expiry(backfill: bool = False) -> dict[str, int]:
+    """F7b-12: los avisos de caducidad de los tokens de página (`expiry.sweep`)."""
+    return expiry.sweep(backfill=backfill)
