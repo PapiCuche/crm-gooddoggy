@@ -320,6 +320,7 @@ def subscription_max_age() -> dt.timedelta:
 # Lo que mide un valor de `core.sealed` (ADR-022 §3): de 32 a 4127 bytes y el formato 1 al frente.
 SEALED_MIN, SEALED_MAX, SEALED_FORMAT = 32, 4127, b"\x01"
 TOKEN_PURPOSE = "channel.access_token"  # noqa: S105 — el propósito de `core.sealed`, no un secreto
+WARN_DAYS = (10, 3)  # F7b-12: los avisos antes de que caduque un token, del primero al último
 TOKEN_FORMAT = r"^[A-Za-z0-9_.-]{20,512}$"  # noqa: S105 — el token de acceso de Meta (a confirmar)
 
 
@@ -336,7 +337,11 @@ class Credential(TenantModel):
     ciphertext = models.BinaryField(null=True)
     key_version = models.PositiveSmallIntegerField()
     last_four = models.CharField(max_length=4)
+    # F7b-12: la caducidad que cuenta el CRM (`token_expiry`); `expiry_checked_at` `NULL`, no se
+    # sabe; leída y sin `expires_at`, no caduca. `expiry_warned_days`: el aviso más urgente enviado.
     expires_at = models.DateTimeField(null=True, blank=True)
+    expiry_checked_at = models.DateTimeField(null=True, blank=True)
+    expiry_warned_days = models.PositiveSmallIntegerField(null=True, blank=True)
     rotated_at = models.DateTimeField(null=True, blank=True)  # cuándo sustituyó a la anterior
     revoked_at = models.DateTimeField(null=True, blank=True)
     created_by_user_id = models.UUIDField(null=True, blank=True)  # FK a membresías (0034, F2-128)
@@ -380,6 +385,16 @@ class Credential(TenantModel):
             models.CheckConstraint(
                 condition=models.Q(key_version__gte=1, last_four__regex=r"^.{4}$"),
                 name="credentials_shape_ck",
+            ),
+            models.CheckConstraint(  # F7b-12: una caducidad solo si se leyó; avisos de 10 y 3 días
+                condition=models.Q(expires_at__isnull=True)
+                | models.Q(expiry_checked_at__isnull=False),
+                name="credentials_expiry_ck",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(expiry_warned_days__isnull=True)
+                | models.Q(expiry_warned_days__in=WARN_DAYS, expires_at__isnull=False),
+                name="credentials_expiry_warned_ck",
             ),
         ]
 
@@ -501,7 +516,7 @@ class Conversation(TenantModel):
     )
     human_requested_by_user_id = models.UUIDField(null=True, blank=True)
     # F7b-14: la respuesta que la atendió (la API la da por cerrada); si esa falla y ninguna otra
-    # salió, la solicitud se reabre tal cual. FK compuesta a los mensajes (migración 0061).
+    # salió, la solicitud se reabre tal cual. FK compuesta a los mensajes (migración 0062).
     human_request_reply_id = models.UUIDField(null=True, blank=True)
     # F7b-14: lo último es nuestro, pero ninguna respuesta desde el último mensaje del cliente pudo
     # llegar (todas `FAILED`, salvo `PROVIDER_UNKNOWN`): sigue «Sin responder».
@@ -541,7 +556,7 @@ class Conversation(TenantModel):
                 & ~models.Q(status__in=["RESOLVED", "CLOSED"]),
                 name="conversations_unanswered_idx",
             ),
-            models.Index(  # «Sin responder» con la respuesta fallida (F7b-14): CONCURRENTLY, 0062
+            models.Index(  # «Sin responder» con la respuesta fallida (F7b-14): CONCURRENTLY, 0063
                 fields=["organization_id", "-last_message_at", "-id"],
                 condition=(
                     models.Q(last_message_direction="INBOUND") | models.Q(last_reply_failed=True)

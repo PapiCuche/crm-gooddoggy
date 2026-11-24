@@ -3,7 +3,7 @@
 constante, solo catálogo, sin reescribir la tabla) y `human_request_reply_id` (nula: la respuesta
 que atendió la solicitud de persona, que se reabre si esa respuesta falla). Sus dos `CHECK` y la FK
 compuesta a `messages` (`ON DELETE SET NULL` solo de la columna: un mensaje nunca se borra, salvo al
-limpiar las pruebas) nacen `NOT VALID` (rigen ya para toda fila nueva o modificada); la `0061` los
+limpiar las pruebas) nacen `NOT VALID` (rigen ya para toda fila nueva o modificada); la `0062` los
 valida. `crm_app` ya tiene `UPDATE` de la tabla (`0001`); la tabla ya tiene RLS con FORCE.
 `lock_timeout` de 5 s en los dos sentidos. Hacia atrás, una solicitud atendida por una respuesta
 vuelve a la forma de antes (cerrada: sin quién, cuándo ni por qué) en vez de reaparecer abierta.
@@ -13,9 +13,11 @@ una vuelta atrás la corre sobre este esquema; no conoce las columnas nuevas. El
 `conversations_reply_guard` las mantiene coherentes con lo que esa imagen sí escribe: un mensaje
 nuevo (`last_message_at` cambia) o una dirección que no es `OUTBOUND` quitan `last_reply_failed`,
 y una solicitud que se borra se lleva su respuesta. Así ninguna de sus escrituras choca con los
-`CHECK`. Lo que no puede arreglar: la imagen anterior ve como abierta una solicitud atendida
-(`human_requested_at` sigue puesta) mientras corra. Un mensaje borrado (solo al limpiar las
-pruebas) quita la respuesta por la FK y la solicitud vuelve a verse abierta sin auditoría."""
+`CHECK` (la cláusula de la dirección es de respaldo: hoy toda escritura que cambia la dirección
+cambia también `last_message_at`). Lo que no puede arreglar: la imagen anterior ve como abierta
+una solicitud atendida (`human_requested_at` sigue puesta) mientras corra. Un mensaje borrado (solo
+al limpiar las pruebas) quita la respuesta por la FK y la solicitud vuelve a verse abierta sin
+auditoría."""
 
 from typing import Any
 
@@ -74,7 +76,7 @@ def restore_closed(apps: Any, schema_editor: Any) -> None:
         cursor.execute("SELECT rolbypassrls FROM pg_roles WHERE rolname = current_user")
         if not cursor.fetchone()[0]:
             raise RuntimeError(
-                "conversations 0060: run as crm_migrator with BYPASSRLS (RLS hides rows)"
+                "conversations 0061: run as crm_migrator with BYPASSRLS (RLS hides rows)"
             )
         cursor.execute(LOCK)
         cursor.execute(
@@ -87,7 +89,7 @@ def restore_closed(apps: Any, schema_editor: Any) -> None:
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("conversations", "0059_failure_settled_once"),
+        ("conversations", "0060_credential_expiry"),
     ]
 
     operations = [

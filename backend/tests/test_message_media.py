@@ -979,6 +979,7 @@ DROPS = {
     "apps/conversations/migrations/0021_message_attachments.py",
     "apps/conversations/migrations/0040_social_channels.py",  # F7b-04a
     "apps/conversations/migrations/0042_social_ingress.py",  # F7b-04b
+    "apps/conversations/migrations/0060_credential_expiry.py",  # F7b-12: solo al deshacerla
     "apps/pricing/migrations/0004_promotions_frozen.py",
     "apps/pricing/migrations/0009_ai_exposable_guard.py",  # F8-07f: solo al deshacerla
     "apps/pricing/migrations/0010_price_list_visibility_guard.py",  # F8-07g: ídem
@@ -989,7 +990,7 @@ DROPS = {
     "apps/ai_gateway/migrations/0006_budget_alerts.py",  # F8-05b4: solo al deshacerla
     "apps/organizations/migrations/0013_invitation_sends_guard.py",  # F2-130g: ídem
     "apps/conversations/migrations/0059_failure_settled_once.py",  # F7b-15: ídem
-    "apps/conversations/migrations/0060_conversation_failed_reply.py",  # F7b-14: ídem
+    "apps/conversations/migrations/0061_conversation_failed_reply.py",  # F7b-14: ídem
 }
 
 

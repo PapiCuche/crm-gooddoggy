@@ -687,7 +687,7 @@ def _reply_failed(ctx: TenantContext, alias: str, message: Message) -> None:
     mensaje ya escrito: el reclamo los salta), vuelve a mirar «Sin responder»: lo último es
     nuestro, el cliente escribió y ninguna respuesta desde su último mensaje pudo llegar. Y la
     solicitud de persona que esa respuesta atendía se reabre si nada la sustituye. Quitar la marca
-    con un mensaje nuevo lo hace la base (`conversations_reply_guard`, migración 0060)."""
+    con un mensaje nuevo lo hace la base (`conversations_reply_guard`, migración 0061)."""
     convo = _locked(alias, message.conversation_id)
     mine = Message.objects.using(alias).filter(conversation_id=convo.pk)
     since = mine.filter(direction="INBOUND").aggregate(at=Max("created_at"))["at"]
@@ -696,11 +696,10 @@ def _reply_failed(ctx: TenantContext, alias: str, message: Message) -> None:
         and since is not None
         and not mine.filter(NOT_FAILED, direction="OUTBOUND", created_at__gt=since).exists()
     )
-    if failed != convo.last_reply_failed:
+    if failed != convo.last_reply_failed:  # la pantalla ya relee con `message.updated`
         Conversation.objects.using(alias).filter(pk=convo.pk).update(
             last_reply_failed=failed, updated_at=timezone.now()
         )
-        emit(ctx, "conversation.updated", aggregate_type="conversation", aggregate_id=convo.pk)
     attention.reply_failed(ctx, alias, convo, message.pk)
 
 

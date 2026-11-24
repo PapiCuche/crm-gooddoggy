@@ -40,8 +40,8 @@ from tests.test_whatsapp_outbound import graph, redis, send, talk
 __all__ = ["channel", "graph", "redis", "world", "writer"]  # los fixtures, para pytest
 pytestmark = pytest.mark.usefixtures("tenant_db", "channel")
 DB = psycopg.Connection[Any]
-INDEX = import_module("apps.conversations.migrations.0062_conversations_unreplied_index")
-ADD = import_module("apps.conversations.migrations.0060_conversation_failed_reply")
+INDEX = import_module("apps.conversations.migrations.0063_conversations_unreplied_index")
+ADD = import_module("apps.conversations.migrations.0061_conversation_failed_reply")
 FIRST = "wamid.SIMOUT000001"  # el `wamid` del primer envío del simulador
 REOPENED = "conversation.human_request_reopened"
 WAITING = "SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock'"
@@ -276,7 +276,7 @@ def test_the_migrations_mark_old_failures_rebuild_the_index_and_go_back_and_fort
     stamp = "UPDATE conversations SET last_reply_failed = false WHERE id = %s"
     migrator.execute(stamp, [chat.pk])
     with as_migrator():
-        call_command("migrate", "conversations", "0059", verbosity=0)
+        call_command("migrate", "conversations", "0060", verbosity=0)
     assert migrator.execute(INDEX.STATE, [INDEX.INDEX]).fetchall() == []
     row = "SELECT human_requested_at FROM conversations WHERE id = %s"
     assert migrator.execute(row, [chat.pk]).fetchone() == (None,)  # cerrada, como antes
@@ -298,8 +298,8 @@ def test_the_migrations_mark_old_failures_rebuild_the_index_and_go_back_and_fort
     run(world, commands.fail_sending, message_id=maybe.pk, reason="PROVIDER_UNKNOWN")  # pudo salir
     migrator.execute("UPDATE conversations SET last_reply_failed = false")
     with as_migrator():
-        call_command("migrate", "conversations", "0060", verbosity=0)
-        call_command("migrate", "conversations", verbosity=0)  # la `0061` la marca otra vez
+        call_command("migrate", "conversations", "0061", verbosity=0)
+        call_command("migrate", "conversations", verbosity=0)  # la `0062` la marca otra vez
     assert look(world, chat)[1:] == (True, True)
     assert look(world, alone)[1] is False and look(world, unsure)[1] is False
     with pytest.raises(RuntimeError, match="BYPASSRLS"):  # `crm_app` no ve todas las filas
