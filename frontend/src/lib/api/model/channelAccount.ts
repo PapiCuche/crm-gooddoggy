@@ -12,6 +12,7 @@ import type { PageSubscriptionEnum } from "./pageSubscriptionEnum";
 import type { PlatformEnum } from "./platformEnum";
 import type { QualityRatingEnum } from "./qualityRatingEnum";
 import type { StatusDetailEnum } from "./statusDetailEnum";
+import type { TokenExpiryEnum } from "./tokenExpiryEnum";
 
 export interface ChannelAccount {
   id: string;
@@ -35,6 +36,19 @@ export interface ChannelAccount {
    * @nullable
    */
   token_last_four: string | null;
+  /**
+   * Cuándo caduca el token de la credencial viva, según Meta (F7b-12); `null` si no caduca, no se sabe o no hay credencial viva.
+   * @nullable
+   */
+  token_expires_at: string | null;
+  /**
+   * `AT`: caduca en `token_expires_at`; `NEVER`: Meta dice que no caduca; `UNKNOWN`: no se sabe todavía (WhatsApp no la lee). `null` sin credencial viva.
+   *
+   * * `UNKNOWN` - UNKNOWN
+   * * `NEVER` - NEVER
+   * * `AT` - AT
+   */
+  token_expiry: TokenExpiryEnum | NullEnum | null;
   /** Instagram o Messenger: alguna conversación no cerrada de la cuenta está en `standby` (otra app controla el hilo, ADR-035 §4). */
   has_standby_conversations: boolean;
   /**

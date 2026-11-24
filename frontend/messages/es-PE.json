@@ -2777,6 +2777,13 @@
       "page": "Página de Facebook (ID)",
       "igAccount": "Cuenta de Instagram (ID)"
     },
+    "expiry": {
+      "label": "Caduca",
+      "never": "No caduca, según Meta",
+      "unknown": "No se sabe todavía",
+      "soon": "{date} (pronto)",
+      "expired": "Caducó el {date}"
+    },
     "quality": {
       "GREEN": "Buena",
       "YELLOW": "Media",

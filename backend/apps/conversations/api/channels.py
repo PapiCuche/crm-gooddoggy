@@ -40,6 +40,7 @@ UNAVAILABLE = "No se pudo consultar a Meta ahora. Vuelve a intentarlo en unos mi
 DISABLED = "El canal de WhatsApp no está habilitado en este despliegue."
 SOCIAL_REFUSED = "Meta no aceptó ese token para esa página. Revisa el token, la página y la cuenta."
 SOCIAL_DISABLED = "Los canales de Messenger e Instagram no están habilitados en este despliegue."
+TOKEN_EXPIRY = ("UNKNOWN", "NEVER", "AT")  # F7b-12b, `selectors.channel_accounts`
 FIELD = {"MESSENGER": "page_id", "INSTAGRAM": "instagram_account_id"}  # la cuenta que se registra
 PLATFORM = OpenApiParameter("platform", str, OpenApiParameter.PATH, enum=["messenger", "instagram"])
 
@@ -96,6 +97,16 @@ class ChannelAccountSerializer(serializers.Serializer[Any]):
         allow_null=True,
         help_text="Lo único que se enseña del token; `null` si la cuenta no tiene credencial viva.",
     )
+    token_expires_at = serializers.DateTimeField(
+        allow_null=True,
+        help_text="Cuándo caduca el token de la credencial viva, según Meta (F7b-12); `null` si "
+        "no caduca, no se sabe o no hay credencial viva.",
+    )
+    token_expiry = serializers.ChoiceField(
+        choices=TOKEN_EXPIRY, allow_null=True,
+        help_text="`AT`: caduca en `token_expires_at`; `NEVER`: Meta dice que no caduca; "
+        "`UNKNOWN`: no se sabe todavía (WhatsApp no la lee). `null` sin credencial viva.",
+    )  # fmt: skip
     has_standby_conversations = serializers.BooleanField(
         help_text="Instagram o Messenger: alguna conversación no cerrada de la cuenta está en "
         "`standby` (otra app controla el hilo, ADR-035 §4)."
