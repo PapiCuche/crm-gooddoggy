@@ -591,6 +591,22 @@ describe("Inbox, motivo de un fallo: el conjunto cerrado", () => {
     expect(row("e")).not.toHaveTextContent("Reintentando");
   });
 
+  // F7b-17: durante una vuelta atrás la API anterior no manda `dispatch_attempts`: «En cola».
+  it("un mensaje en cola sin el campo de intentos dice «En cola», nunca «Reintentando»", async () => {
+    const old = message("a", { direction: "OUTBOUND", sender_type: "USER", body: "a" });
+    old.delivery_status = "QUEUED";
+    expect("dispatch_attempts" in old).toBe(false); // el campo no viene, ni siquiera vacío
+    serve({ [LIST]: page([rosa]), [MESSAGES("1")]: page([old]) });
+    show();
+    await open(/Rosa Díaz/);
+    const log = await screen.findByRole("list", { name: "Mensajes" });
+    const row = within(log)
+      .getAllByRole("listitem")
+      .find((li) => li.querySelector("bdi")?.textContent === "a")!;
+    expect(row).toHaveTextContent("En cola");
+    expect(row).not.toHaveTextContent("Reintentando");
+  });
+
   it("el texto de TOKEN_INVALID manda a quien administra los canales, no a quien escribe", () => {
     expect(messages.inbox.failure.TOKEN_INVALID).toContain("quien administra los canales");
   });
