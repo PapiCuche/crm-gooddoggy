@@ -221,6 +221,7 @@ def test_rotating_an_account_in_error_audits_the_way_back_and_low_quality_degrad
     broken("ERROR", None)  # un `ERROR` que no es de este token no se toca
     still = rotate()
     assert (still.status, still.status_detail) == ("ERROR", None)
+    meta.quality = "GREEN"  # F7b-19: con calidad baja, rotar la degrada como la comprobación
     broken("CONNECTED", None)
     assert rotate().status == "CONNECTED"  # lo sano sigue igual
 

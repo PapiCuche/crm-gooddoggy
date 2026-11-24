@@ -11,8 +11,8 @@ Meta no deduplica: como en WhatsApp, un fallo antes de enviar es `TemporaryChann
 agotado o un corte es `AmbiguousChannelError`. El POST no repite una lectura ni espera un
 `Retry-After` (urllib3 no reintenta un POST salvo al conectar; una prueba lo fija) y corre fuera de
 toda transacción. Un error de Meta se clasifica por `code` y `error_subcode` (`classify`), **nunca**
-por el estado HTTP (la API de páginas manda el `190` con 400 o con 401): el texto de Meta nunca se
-guarda ni se registra.
+por el estado HTTP (la API de páginas manda el `190` con 400 o con 401), salvo que un límite con un
+5xx no se reintenta (F7b-19): el texto de Meta nunca se guarda ni se registra.
 """
 
 import re
@@ -104,8 +104,10 @@ class PageAdapter:
         code = field_at(reply.data, "error", "code")
         subcode = field_at(reply.data, "error", "error_subcode")
         reason, detail = classify(code, subcode), error_detail(code, subcode)
+        # Pudo haberse enviado: no se reenvía a ciegas. F7b-19: un 5xx con un código de límite
+        # tampoco (Meta no documenta que no lo aceptara), antes que el reintento del límite.
+        if reason == "PROVIDER_ERROR" or (reason == "RATE_LIMITED" and reply.status >= 500):
+            raise AmbiguousChannelError
         if reason == "RATE_LIMITED":  # Meta no lo aceptó: se reintenta con espera
             raise TemporaryChannelError(detail)  # F7b-17: su código, si se agotan los reintentos
-        if reason == "PROVIDER_ERROR":
-            raise AmbiguousChannelError  # pudo haberse enviado: no se reenvía a ciegas
         return SendResult(False, reason=reason, detail=detail)
