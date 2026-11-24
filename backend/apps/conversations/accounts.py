@@ -344,21 +344,29 @@ def mark_token_invalid(
                    action="channel_account.token_invalid", credential_id=credential_id)  # fmt: skip
 
 
-def mark_messages_access_off(ctx: TenantContext, *, channel_account_id: UUID) -> bool:
+def mark_messages_access_off(
+    ctx: TenantContext, *, channel_account_id: UUID, credential_id: UUID | None = None
+) -> bool:
     """El titular de Instagram apagó «Allow access to messages» (ADR-035 §3, `200`/`2534041`): la
     cuenta pasa a `ERROR` (`MESSAGES_ACCESS_OFF`) y deja de enviar hasta que se reconecte. `False`
-    si ya estaba `ERROR` o `DISCONNECTED`, o ya no está viva."""
+    si ya estaba `ERROR` o `DISCONNECTED`, o ya no está viva; con `credential_id` (F7b-19), también
+    si la cuenta ya no usa esa credencial (se reconectó después del envío)."""
     only = ("PENDING", "CONNECTED", "DEGRADED")
     return _demote(ctx, channel_account_id, only=only, to="ERROR", detail="MESSAGES_ACCESS_OFF",
-                   action="channel_account.messages_access_off")  # fmt: skip
+                   action="channel_account.messages_access_off",
+                   credential_id=credential_id)  # fmt: skip
 
 
-def mark_degraded(ctx: TenantContext, *, channel_account_id: UUID) -> bool:
+def mark_degraded(
+    ctx: TenantContext, *, channel_account_id: UUID, credential_id: UUID | None = None
+) -> bool:
     """Meta rechazó un envío por la calidad del número (ADR-029 §8): `CONNECTED` pasa a `DEGRADED`
-    (`QUALITY_LOW`), con aviso. `False` si no estaba `CONNECTED`."""
+    (`QUALITY_LOW`), con aviso. `False` si no estaba `CONNECTED`; con `credential_id` (F7b-19),
+    también si la cuenta ya no usa esa credencial: la rotación posterior al envío volvió a leer la
+    calidad de Meta, que es más reciente que el rechazo."""
     only = ("CONNECTED",)
     return _demote(ctx, channel_account_id, only=only, to="DEGRADED", detail="QUALITY_LOW",
-                   action="channel_account.degraded")  # fmt: skip
+                   action="channel_account.degraded", credential_id=credential_id)  # fmt: skip
 
 
 CHECKED = ("PENDING", "CONNECTED", "DEGRADED")  # las que se comprueban (ADR-029 §12)

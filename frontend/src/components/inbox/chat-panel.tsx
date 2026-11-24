@@ -384,11 +384,15 @@ function Bubble({
   // Los textos de `failure` que nombran WhatsApp tienen su versión para Instagram y Messenger
   // (`failureSocial`, F7b-06f), con la red de la conversación; las demás plataformas, los de siempre.
   // La red la nombra el mapa cerrado de `channel-identity` (`social`); nada sale del servidor.
+  // F7b-19: un rechazo pasajero tardío (F7b-18) no se reintentó (`dispatch_attempts` = 0): sin «tras
+  // varios intentos». Sin el campo (la API anterior), el texto de siempre.
   const why = !reason
     ? null
-    : channelOf(platform).social && t.has(`failureSocial.${reason}`)
-      ? t(`failureSocial.${reason}`, { network: network(platform) })
-      : t(`failure.${reason}`);
+    : reason === "RETRIES_EXHAUSTED" && message.dispatch_attempts === 0
+      ? t("failureOnce")
+      : channelOf(platform).social && t.has(`failureSocial.${reason}`)
+        ? t(`failureSocial.${reason}`, { network: network(platform) })
+        : t(`failure.${reason}`);
   // El error de Meta en números (F7b-13), junto al motivo: solo con la forma `código[/subcódigo]`,
   // y una pista corta si es uno conocido. Nunca otro texto del servidor.
   const raw = message.provider_error_detail;

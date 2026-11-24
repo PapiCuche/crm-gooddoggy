@@ -101,20 +101,22 @@ def deliver(
         raise task.retry(exc=error, countdown=countdown, max_retries=MAX_RETRIES) from None
     with tenant_scope(ctx):  # también corrige un `PROVIDER_UNKNOWN` del plazo (F7b-18)
         commands.settle_outbound(ctx, message_id=message_id, result=result)
-    # Los efectos sobre la cuenta, una vez: `accounts` solo cambia una cuenta que aún estaba viva
+    # Los efectos sobre la cuenta, una vez: `accounts` solo cambia una cuenta que aún estaba viva y
+    # solo si la credencial del envío sigue siendo la suya (¿se rotó o reconectó? F7b-19)
+    used = claim.credential.pk if claim.credential else None
     if result.reason == "TOKEN_INVALID":  # Meta no acepta el token: la cuenta deja de enviar
-        with tenant_scope(ctx):  # solo si ese token sigue siendo el de la cuenta (¿se rotó?)
+        with tenant_scope(ctx):
             accounts.mark_token_invalid(
-                ctx,
-                channel_account_id=claim.account_id,
-                credential_id=claim.credential.pk if claim.credential else None,
+                ctx, channel_account_id=claim.account_id, credential_id=used
             )
     elif result.reason == "QUALITY_BLOCKED":  # F7b-15: como el mismo código por el webhook
         with tenant_scope(ctx):
-            accounts.mark_degraded(ctx, channel_account_id=claim.account_id)
+            accounts.mark_degraded(ctx, channel_account_id=claim.account_id, credential_id=used)
     elif result.reason == "MESSAGES_ACCESS_OFF":  # Instagram: el titular apagó los mensajes
         with tenant_scope(ctx):
-            accounts.mark_messages_access_off(ctx, channel_account_id=claim.account_id)
+            accounts.mark_messages_access_off(
+                ctx, channel_account_id=claim.account_id, credential_id=used
+            )
 
 
 @subscribe("message.queued")
