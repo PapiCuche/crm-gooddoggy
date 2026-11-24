@@ -1,4 +1,4 @@
-"""F7b-14: valida los dos `CHECK` y la FK que la `0059` añadió `NOT VALID` (`VALIDATE CONSTRAINT`
+"""F7b-14: valida los dos `CHECK` y la FK que la `0060` añadió `NOT VALID` (`VALIDATE CONSTRAINT`
 recorre la tabla con un bloqueo que no impide leer ni escribir; `lock_timeout` de 5 s que se quita
 aunque falle; hacia atrás quedan, validados) y marca `last_reply_failed` en las conversaciones
 cuya última respuesta ya falló: por tandas de `BATCH`, cada una en su transacción y con sus filas
@@ -50,7 +50,7 @@ def mark(apps: Any, schema_editor: Any) -> None:
         cursor.execute("SELECT rolbypassrls FROM pg_roles WHERE rolname = current_user")
         if not cursor.fetchone()[0]:
             raise RuntimeError(
-                "conversations 0060: run as crm_migrator with BYPASSRLS (RLS hides rows)"
+                "conversations 0061: run as crm_migrator with BYPASSRLS (RLS hides rows)"
             )
     last = "00000000-0000-0000-0000-000000000000"
     while True:
@@ -68,7 +68,7 @@ class Migration(migrations.Migration):
     atomic = False
 
     dependencies = [
-        ("conversations", "0059_conversation_failed_reply"),
+        ("conversations", "0060_conversation_failed_reply"),
     ]
 
     operations = [

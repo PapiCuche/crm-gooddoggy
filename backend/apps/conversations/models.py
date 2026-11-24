@@ -63,7 +63,7 @@ META_ERROR = r"^[0-9]{1,10}(/[0-9]{1,10})?$"  # el error de Meta en números: `c
 
 # Por qué un mensaje saliente quedó `FAILED` (F7-06a; ADR-029 §8): un conjunto cerrado de códigos
 # propios, nunca el título ni el texto del error del proveedor. Los de la política y el despachador
-# y los que salen de la tabla de errores de Meta (`delivery.CODES`). `CONSENT_REVOKED`: F7-08b.
+# y los que salen de la tabla de errores de Meta (`whatsapp.CODES`). `CONSENT_REVOKED`: F7-08b.
 # `MESSAGES_ACCESS_OFF` (F7b-05a, ADR-035 §6): el titular de Instagram apagó el acceso a mensajes.
 FAILURE_CODES = (
     "CONVERSATION_CLOSED", "CHANNEL_UNAVAILABLE", "CONTACT_BLOCKED", "WINDOW_CLOSED",
@@ -501,7 +501,7 @@ class Conversation(TenantModel):
     )
     human_requested_by_user_id = models.UUIDField(null=True, blank=True)
     # F7b-14: la respuesta que la atendió (la API la da por cerrada); si esa falla y ninguna otra
-    # salió, la solicitud se reabre tal cual. FK compuesta a los mensajes (migración 0060).
+    # salió, la solicitud se reabre tal cual. FK compuesta a los mensajes (migración 0061).
     human_request_reply_id = models.UUIDField(null=True, blank=True)
     # F7b-14: lo último es nuestro, pero ninguna respuesta desde el último mensaje del cliente pudo
     # llegar (todas `FAILED`, salvo `PROVIDER_UNKNOWN`): sigue «Sin responder».
@@ -541,7 +541,7 @@ class Conversation(TenantModel):
                 & ~models.Q(status__in=["RESOLVED", "CLOSED"]),
                 name="conversations_unanswered_idx",
             ),
-            models.Index(  # «Sin responder» con la respuesta fallida (F7b-14): CONCURRENTLY, 0061
+            models.Index(  # «Sin responder» con la respuesta fallida (F7b-14): CONCURRENTLY, 0062
                 fields=["organization_id", "-last_message_at", "-id"],
                 condition=(
                     models.Q(last_message_direction="INBOUND") | models.Q(last_reply_failed=True)

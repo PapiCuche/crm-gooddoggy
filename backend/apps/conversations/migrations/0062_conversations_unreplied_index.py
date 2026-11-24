@@ -55,7 +55,7 @@ def create(apps: Any, schema_editor: Any) -> None:
     found = _state(schema_editor)
     _run(schema_editor, *((DROP,) if found and not found[0] else ()), CREATE)
     if _state(schema_editor) != (True, DEFINITION):  # `IF NOT EXISTS` solo mira el nombre
-        raise RuntimeError(f"0061: {INDEX} ya existe con otra definición; bórralo y repítela")
+        raise RuntimeError(f"0062: {INDEX} ya existe con otra definición; bórralo y repítela")
 
 
 def drop(apps: Any, schema_editor: Any) -> None:
@@ -66,7 +66,7 @@ class Migration(migrations.Migration):
     atomic = False
 
     dependencies = [
-        ("conversations", "0060_validate_failed_reply"),
+        ("conversations", "0061_validate_failed_reply"),
     ]
 
     operations = [

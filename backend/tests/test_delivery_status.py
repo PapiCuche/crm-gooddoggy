@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 from django.utils import timezone
 
-from apps.conversations import delivery, ingress, tasks
+from apps.conversations import ingress, tasks, whatsapp
 from apps.conversations.models import ChannelAccount, Message
 from core.tenancy.scope import tenant_scope
 from tests import test_conversations_tables as tables
@@ -370,18 +370,33 @@ def test_the_opaque_data_never_reconciles_a_queued_or_a_definitively_failed_mess
     assert stamp(world, queued).external_message_id is None
 
 
-def test_a_failed_status_after_the_deadline_leaves_the_unknown_reason_alone(
+def test_a_definite_failure_after_the_deadline_replaces_the_unknown_reason_once(
     world: SimpleNamespace, graph: Any, migrator: Any
 ) -> None:
-    graph.then("cut_after")
+    graph.then("cut_after")  # F7b-15: antes se ignoraba y la burbuja seguía en «puede que sí»
     unknown, _ = send(world, talk(world))
     migrator.execute("UPDATE messages SET sending_at = now() - interval '1 hour'")
     assert tasks.sweep_sending() == 1
-    assert run(webhooks.status(WAMID, "failed", opaque=str(unknown.pk), error=(131047, "x"))) == {
-        "PROCESSED": 1
-    }  # ni error ni cambio: el único camino fuera de `FAILED` es hacia lo entregado
+    migrator.execute("DELETE FROM outbox_events")
+    failed = webhooks.status(WAMID, "failed", opaque=str(unknown.pk), error=(131047, "x"), at=AT)
+    assert run(failed) == {"PROCESSED": 1}
     saved = stamp(world, unknown)
-    assert (saved.delivery_status, saved.provider_error_code) == ("FAILED", "PROVIDER_UNKNOWN")
+    assert (saved.delivery_status, saved.provider_error_code) == ("FAILED", "WINDOW_CLOSED")
+    assert saved.provider_error_detail == "131047" and saved.failed_at is not None
+    assert saved.failed_at.timestamp() == AT and saved.external_message_id == WAMID
+    corrected = [(c, m) for a, c, m in audit(migrator) if a == "message.delivery_changed"][-1]
+    assert corrected == (
+        {"provider_error_code": ["PROVIDER_UNKNOWN", "WINDOW_CLOSED"]},
+        {"reason": "WINDOW_CLOSED", "corrected": "PROVIDER_UNKNOWN"},
+    )
+    events = migrator.execute("SELECT event_type, aggregate_id FROM outbox_events").fetchall()
+    assert events == [("message.updated", unknown.pk)]
+    again = webhooks.status(WAMID, "failed", error=(131026, "x"), at=AT + 9)  # otro motivo: no
+    run(again, webhooks.status(WAMID, "delivered", at=AT + 9))  # y ya no se reconcilia
+    after = stamp(world, unknown)
+    assert (after.delivery_status, after.provider_error_code) == ("FAILED", "WINDOW_CLOSED")
+    assert after.failed_at == saved.failed_at and after.provider_error_detail == "131047"
+    assert migrator.execute("SELECT count(*) FROM outbox_events").fetchone() == (1,)
 
 
 @pytest.mark.parametrize(
@@ -391,7 +406,7 @@ def test_a_failed_status_after_the_deadline_leaves_the_unknown_reason_alone(
      ("190", "PROVIDER_REJECTED"), (None, "PROVIDER_REJECTED"), (2, "PROVIDER_ERROR")],
 )  # fmt: skip
 def test_the_error_table_edges_and_a_code_that_is_not_a_number(code: Any, own: str) -> None:
-    assert delivery.code_for(code) == own
+    assert whatsapp.code_for(code) == own
 
 
 def test_a_late_190_for_a_message_claimed_before_the_rotation_does_not_break_the_account(

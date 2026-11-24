@@ -3,7 +3,7 @@
 constante, solo catálogo, sin reescribir la tabla) y `human_request_reply_id` (nula: la respuesta
 que atendió la solicitud de persona, que se reabre si esa respuesta falla). Sus dos `CHECK` y la FK
 compuesta a `messages` (`ON DELETE SET NULL` solo de la columna: un mensaje nunca se borra, salvo al
-limpiar las pruebas) nacen `NOT VALID` (rigen ya para toda fila nueva o modificada); la `0060` los
+limpiar las pruebas) nacen `NOT VALID` (rigen ya para toda fila nueva o modificada); la `0061` los
 valida. `crm_app` ya tiene `UPDATE` de la tabla (`0001`); la tabla ya tiene RLS con FORCE.
 `lock_timeout` de 5 s en los dos sentidos. Hacia atrás, una solicitud atendida por una respuesta
 vuelve a la forma de antes (cerrada: sin quién, cuándo ni por qué) en vez de reaparecer abierta.
@@ -74,7 +74,7 @@ def restore_closed(apps: Any, schema_editor: Any) -> None:
         cursor.execute("SELECT rolbypassrls FROM pg_roles WHERE rolname = current_user")
         if not cursor.fetchone()[0]:
             raise RuntimeError(
-                "conversations 0059: run as crm_migrator with BYPASSRLS (RLS hides rows)"
+                "conversations 0060: run as crm_migrator with BYPASSRLS (RLS hides rows)"
             )
         cursor.execute(LOCK)
         cursor.execute(
@@ -87,7 +87,7 @@ def restore_closed(apps: Any, schema_editor: Any) -> None:
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("conversations", "0058_validate_error_detail"),
+        ("conversations", "0059_failure_settled_once"),
     ]
 
     operations = [
