@@ -25,7 +25,16 @@ const rosa = {
   ...{ id: "1", number: "CONV-00001", status: "OPEN", attention_mode: "HUMAN" },
   ...{ assignee_kind: "UNASSIGNED", assigned_user_id: null, assigned_team_id: null },
   ...{ contact: { id: "c1", display_name: "Rosa Díaz" } },
-  ...{ channel: { id: "ch1", platform: "SANDBOX", name: "Sandbox" } },
+  ...{
+    channel: {
+      id: "ch1",
+      platform: "SANDBOX",
+      name: "Sandbox",
+      text_max: 4096,
+      text_unit: "CHARACTERS",
+      accepts_media: true,
+    },
+  },
   ...{ last_message_at: "2026-11-04T15:30:00Z", last_inbound_at: null, version: 1 },
   ...{ last_message_preview: null, last_message_direction: null },
 } as unknown as Conversation;
@@ -223,6 +232,8 @@ describe("adjuntar desde el cuadro de redacción (F7-09b3)", () => {
     [415, undefined, "Solo se pueden enviar"],
     [422, { code: "MEDIA_INFECTED" }, "El antivirus encontró un virus en este archivo"],
     [422, { code: "MEDIA_TOO_COMPLEX" }, "demasiado complejo para que el antivirus lo revise"],
+    // F7b-16: el canal dejó de admitir adjuntos después de abrir el chat
+    [409, { code: "MEDIA_NOT_SUPPORTED_BY_CHANNEL" }, "Este canal todavía no admite adjuntos"],
   ])("un %i quita el archivo y se explica, sin «Reintentar»", async (status, body, text) => {
     const s = server(() => ({ status, body }));
     show();

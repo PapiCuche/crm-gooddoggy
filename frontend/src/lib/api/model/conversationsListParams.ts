@@ -39,7 +39,7 @@ export type ConversationsListParams = {
    */
   status?: ConversationsListStatus;
   /**
-   * `true`: solo las abiertas cuyo último mensaje es del cliente (sin responder).
+   * `true`: solo las abiertas cuyo último mensaje es del cliente o cuya respuesta falló (sin responder).
    */
   unanswered?: boolean;
 };

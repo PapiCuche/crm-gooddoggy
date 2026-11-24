@@ -68,6 +68,8 @@ def events(migrator: DB) -> list[tuple[Any, ...]]:
 def state(org: UUID, convo: UUID) -> tuple[Any, ...]:
     with tenant_scope(ctx(org)):
         row = Conversation.objects.get(pk=convo)
+        if not attention.waiting(row):  # F7b-14: atendida por una respuesta, como la ve la API
+            return (None, None, None)
         return (row.human_request_reason, row.human_requested_by_user_id, row.human_requested_at)
 
 
@@ -159,7 +161,7 @@ def test_a_reply_from_a_person_or_taking_it_closes_the_request_and_releasing_doe
     assert post(ana, convo, body=padded).status_code == 202 and state(inbox.a, convo)[0] == "AGENT"
     sent = post(ana, convo)
     assert sent.status_code == 202, sent.content
-    assert state(inbox.a, convo) == (None, None, None)
+    assert ana.get(f"{BASE}{convo}/").json()["human_request"] is None  # F7b-14: la guarda
     closed = (
         "conversation.human_request_closed",
         {"cause": "REPLIED", "message_id": sent.json()["id"]},
@@ -218,7 +220,8 @@ def test_a_handoff_the_copilot_detects_is_recorded_once_without_sending_anything
     locks = rf"SELECT pg_advisory_xact_lock_shared\(|{SHARED}"  # F8-13c: y la conversación
     ai = rf'\s*((INSERT INTO|UPDATE) "?({tables})"? |{locks})'
     left = [s for s in writes(seen) if not re.match(ai, s)]
-    columns = ", ".join(f'"{c}" = [^,]+' for c in (*attention.FIELDS, "updated_at"))
+    shown = (*attention.FIELDS, "human_request_reply_id", "updated_at")  # F7b-14: la reabierta
+    columns = ", ".join(f'"{c}" = [^,]+' for c in shown)
     allowed = (
         rf'UPDATE "conversations" SET {columns} WHERE \(.*"conversations"."id" = \S+\)$',  # noqa: S608
         r'SELECT .* FROM "conversations" WHERE .* FOR NO KEY UPDATE$',

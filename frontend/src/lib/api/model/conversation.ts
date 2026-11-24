@@ -35,6 +35,8 @@ export interface Conversation {
    */
   last_message_preview: string | null;
   last_message_direction: LastMessageDirectionEnum | NullEnum | null;
+  /** F7b-14: lo último es nuestro, pero ninguna respuesta desde el último mensaje del cliente le llegó (fallaron): sigue sin responder. */
+  last_reply_failed: boolean;
   /**
    * Instagram o Messenger: desde cuándo otra app controla el hilo (`standby`); `null` si no. Mientras tanto nada responde solo (ADR-035 §4).
    * @nullable

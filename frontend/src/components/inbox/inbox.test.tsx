@@ -36,7 +36,16 @@ const conversation = (id: string, changes: Partial<Conversation> = {}) =>
     ...{ id, number: `CONV-0000${id}`, status: "OPEN", attention_mode: "HUMAN" },
     ...{ assignee_kind: "UNASSIGNED", assigned_user_id: null, assigned_team_id: null },
     ...{ contact: { id: `c${id}`, display_name: "Rosa Díaz" } },
-    ...{ channel: { id: "ch1", platform: "SANDBOX", name: "Sandbox" } },
+    ...{
+      channel: {
+        id: "ch1",
+        platform: "SANDBOX",
+        name: "Sandbox",
+        text_max: 4096,
+        text_unit: "CHARACTERS",
+        accepts_media: true,
+      },
+    },
     ...{ last_message_at: "2026-11-04T15:30:00Z", last_inbound_at: "2026-11-04T15:30:00Z" },
     ...{ last_message_preview: "Hola, ¿tienen collares?", last_message_direction: "INBOUND" },
     ...{ version: 1, ...changes },
@@ -101,6 +110,20 @@ describe("Inbox, lista (F6-03)", () => {
     expect(row).not.toHaveAttribute("aria-current");
     await open(/Rosa Díaz/);
     expect(row).toHaveAttribute("aria-current", "true");
+  });
+
+  it("una conversación cuya respuesta no llegó lo dice en la fila (F7b-14)", async () => {
+    const failed = conversation("2", {
+      ...{ contact: { id: "c2", display_name: "Luis Ramos" }, last_reply_failed: true },
+      ...{ last_message_preview: "Te ayudo", last_message_direction: "OUTBOUND" },
+    });
+    serve({ [LIST]: page([rosa, failed]) });
+    show();
+    const row = await screen.findByRole("button", { name: /Luis Ramos/ });
+    expect(row).toHaveTextContent(
+      "Tú: Te ayudoCONV-00002SandboxAbiertaSin asignarLa respuesta no llegó",
+    );
+    expect(screen.getByRole("button", { name: /Rosa Díaz/ })).not.toHaveTextContent("no llegó");
   });
 
   it("vacío, fallo con reintento y 403 sin reintento", async () => {
@@ -418,7 +441,9 @@ describe("Inbox, motivo de un fallo: el conjunto cerrado", () => {
         provider_error_code: code as Message["provider_error_code"],
       });
     const odd = platform as Conversation["channel"]["platform"]; // una plataforma rara también
-    const chat = conversation("1", { channel: { id: "ch1", platform: odd, name: "Cuenta" } });
+    const chat = conversation("1", {
+      channel: { ...conversation("1").channel, platform: odd, name: "Cuenta" },
+    });
     serve({
       [LIST]: page([chat]),
       [MESSAGES("1")]: page([
@@ -453,7 +478,14 @@ describe("Inbox, motivo de un fallo: el conjunto cerrado", () => {
         provider_error_detail: detail,
       });
     const chat = conversation("1", {
-      channel: { id: "ch1", platform: "MESSENGER", name: "Cuenta" },
+      channel: {
+        id: "ch1",
+        platform: "MESSENGER",
+        name: "Cuenta",
+        text_max: 2000,
+        text_unit: "CHARACTERS",
+        accepts_media: false,
+      },
     });
     serve({
       [LIST]: page([chat]),

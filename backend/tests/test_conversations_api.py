@@ -32,7 +32,7 @@ ITEM = {
     "id", "number", "status", "attention_mode", "assignee_kind", "assigned_user_id",
     "assigned_team_id", "contact", "channel", "last_message_at", "last_inbound_at",
     "last_message_preview", "last_message_direction", "standby_since", "human_request", "version",
-    "ai_excluded_at",
+    "ai_excluded_at", "last_reply_failed",
 }  # fmt: skip
 DETAIL = ITEM | {
     "assigned_at",

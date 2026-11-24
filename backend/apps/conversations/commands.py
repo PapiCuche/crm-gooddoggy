@@ -26,7 +26,7 @@ from uuid import UUID
 
 from django.conf import settings
 from django.db import IntegrityError, connections, transaction
-from django.db.models import F, Q
+from django.db.models import F, Max, Q
 from django.utils import timezone
 
 from apps.access.selectors import (
@@ -42,9 +42,11 @@ from apps.audit.services import Entity, record
 from apps.contacts.models import Contact
 from apps.conversations import attention, media, outbound_media
 from apps.conversations.channels import REASONS, Claim, Media, SendResult
+from apps.conversations.limits import fits, takes_media
 from apps.conversations.models import (
     META_ERROR,
     META_ID,
+    NOT_FAILED,
     PREVIEW_MAX,
     SOCIAL,
     AttentionMode,
@@ -119,6 +121,15 @@ class UnverifiedContent(Exception):
 
 class StaleVersion(Exception):
     """Otra petición cambió la cuenta después de la versión que se editaba."""
+
+
+class TooLongForChannel(Exception):
+    """El texto pasa del tope del canal de la conversación (`limits`, F7b-16): el canal nunca lo
+    aceptaría."""
+
+
+class MediaNotSupported(Exception):
+    """El canal de la conversación aún no envía medios (Messenger e Instagram, F7b-16)."""
 
 
 def _uuid(value: Any, what: str) -> UUID:
@@ -471,7 +482,8 @@ def record_outbound(
     la respuesta (`CUSTOMER_REPLY`) no. `UnverifiedContent` si el texto (o el pie de foto) lleva la
     marca `[verificar]` (F8-08a). Plantillas: F7-10. Con `media` (F7-09b, el blob limpio ya
     guardado por `outbound_media.prepare`) el mensaje es de su tipo y crea su archivo `CLEAN`; un
-    reintento es el mismo solo con el mismo archivo (`sha256`)."""
+    reintento es el mismo solo con el mismo archivo (`sha256`). `TooLongForChannel` o
+    `MediaNotSupported` si el canal no lo aceptaría (`limits`, F7b-16), sin crear nada."""
     alias = require_scope(ctx)
     if purpose not in PURPOSES:
         raise ValueError("propósito no admitido")
@@ -495,6 +507,7 @@ def record_outbound(
         if earlier is None:  # un reenvío de lo ya guardado se devuelve aunque ya no se pueda enviar
             decision = messaging_decision(convo, alias=alias, purpose=purpose, sender="USER")
             require_allowed(decision)  # cerrada, sin canal, bloqueado, ventana cerrada o baja
+            _channel_takes(alias, convo, text, media)  # F7b-16: lo que el canal nunca aceptaría
             snapshot = decision.as_json()
         elif media and not File.objects.using(alias).filter(
             pk=earlier.file_id, sha256=media.sha256
@@ -528,7 +541,7 @@ def record_outbound(
                 convo.save(using=alias, update_fields=[*LAST, "updated_at"])
             record(ctx, "message.queued", Entity("message", message.pk), None, _sent(message))
             # F8-08n: el aviso de traspaso no atiende; F8-08l2: sin solicitud no se lee el texto
-            if convo.human_requested_at is not None and not attention.handoff_reply(ctx, text):
+            if attention.waiting(convo) and not attention.handoff_reply(ctx, text):
                 attention.clear(ctx, alias, convo, "REPLIED", message_id=message.pk)
             ids = {"conversation_id": convo.pk, "channel_account_id": convo.channel_account_id}
             emit(  # para el despachador (F6-04b); solo ids, nunca el texto
@@ -539,6 +552,23 @@ def record_outbound(
                 payload={key: str(value) for key, value in ids.items()},
             )
         return message, created
+
+
+def _channel_takes(
+    alias: str, convo: Conversation, text: str, media: outbound_media.Prepared | None
+) -> None:
+    """`MediaNotSupported` o `TooLongForChannel` antes de crear nada (F7b-16), con la plataforma de
+    la cuenta de la conversación ya bloqueada y en el alcance."""
+    platform = (
+        ChannelAccount.objects.using(alias)
+        .filter(pk=convo.channel_account_id)
+        .values_list("platform", flat=True)
+        .first()
+    ) or ""
+    if media is not None and not takes_media(platform):
+        raise MediaNotSupported
+    if not fits(platform, text):
+        raise TooLongForChannel
 
 
 def queue_confirmation(ctx: TenantContext, *, conversation_id: UUID, body: str) -> Message | None:
@@ -674,7 +704,32 @@ def advance_delivery(
                 ctx, "message.updated", aggregate_type="message", aggregate_id=message.pk,
                 payload={"conversation_id": str(message.conversation_id)},
             )  # fmt: skip
+        failed = message.delivery_status == Delivery.FAILED
+        if moved and failed and message.provider_error_code != "PROVIDER_UNKNOWN":
+            _reply_failed(ctx, alias, message)  # también un `PROVIDER_UNKNOWN` que se corrige
         return message
+
+
+def _reply_failed(ctx: TenantContext, alias: str, message: Message) -> None:
+    """F7b-14: un saliente terminó `FAILED` (no `PROVIDER_UNKNOWN`: pudo salir). Con la
+    conversación bloqueada después del mensaje (nadie bloquea una conversación y luego espera a un
+    mensaje ya escrito: el reclamo los salta), vuelve a mirar «Sin responder»: lo último es
+    nuestro, el cliente escribió y ninguna respuesta desde su último mensaje pudo llegar. Y la
+    solicitud de persona que esa respuesta atendía se reabre si nada la sustituye. Quitar la marca
+    con un mensaje nuevo lo hace la base (`conversations_reply_guard`, migración 0061)."""
+    convo = _locked(alias, message.conversation_id)
+    mine = Message.objects.using(alias).filter(conversation_id=convo.pk)
+    since = mine.filter(direction="INBOUND").aggregate(at=Max("created_at"))["at"]
+    failed = (
+        convo.last_message_direction == "OUTBOUND"
+        and since is not None
+        and not mine.filter(NOT_FAILED, direction="OUTBOUND", created_at__gt=since).exists()
+    )
+    if failed != convo.last_reply_failed:  # la pantalla ya relee con `message.updated`
+        Conversation.objects.using(alias).filter(pk=convo.pk).update(
+            last_reply_failed=failed, updated_at=timezone.now()
+        )
+    attention.reply_failed(ctx, alias, convo, message.pk)
 
 
 def _fail_from(ctx: TenantContext, message_id: UUID, reason: str, was: str) -> Message | None:

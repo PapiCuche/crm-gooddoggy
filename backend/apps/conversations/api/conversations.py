@@ -13,7 +13,7 @@ contacto (`contacts.view` y su alcance); si no, `null`. Los mensajes y el simula
 from typing import Any
 
 from django.db.models import Case, Exists, F, OuterRef, QuerySet, Subquery, When
-from drf_spectacular.utils import extend_schema, extend_schema_view
+from drf_spectacular.utils import extend_schema, extend_schema_field, extend_schema_view
 from rest_framework import generics, serializers
 from rest_framework.filters import BaseFilterBackend
 from rest_framework.request import Request
@@ -22,9 +22,9 @@ from rest_framework.response import Response
 from apps.access.permissions import ScopeFilter, request_context
 from apps.access.selectors import scoped
 from apps.contacts.selectors import contacts
-from apps.conversations import selectors
+from apps.conversations import limits, selectors
 from apps.conversations.api.attention import human_request
-from apps.conversations.models import Conversation, Platform, Status
+from apps.conversations.models import ChannelAccount, Conversation, Platform, Status
 from core.api.pagination import RecencyPagination
 from core.api.schema import errors
 from core.tenancy import context
@@ -46,6 +46,25 @@ class ChannelRefSerializer(serializers.Serializer[Any]):
     id = serializers.UUIDField()
     platform = serializers.ChoiceField(choices=Platform.choices)
     name = serializers.CharField()
+    text_max = serializers.SerializerMethodField(
+        help_text="El tope del texto de una respuesta en este canal (F7b-16), en `text_unit`."
+    )
+    text_unit = serializers.SerializerMethodField(
+        help_text="`CHARACTERS` (puntos de código) o `BYTES` (UTF-8, Instagram)."
+    )
+    accepts_media = serializers.SerializerMethodField(
+        help_text="Si una respuesta puede llevar un adjunto (no en Messenger ni en Instagram)."
+    )
+
+    def get_text_max(self, account: ChannelAccount) -> int:
+        return limits.text_limit(account.platform)[1]
+
+    @extend_schema_field(serializers.ChoiceField(choices=[limits.CHARACTERS, limits.BYTES]))
+    def get_text_unit(self, account: ChannelAccount) -> str:
+        return limits.text_limit(account.platform)[0]
+
+    def get_accepts_media(self, account: ChannelAccount) -> bool:
+        return limits.takes_media(account.platform)
 
 
 class ConversationSerializer(serializers.Serializer[Any]):
@@ -68,6 +87,10 @@ class ConversationSerializer(serializers.Serializer[Any]):
     )
     last_message_direction = serializers.ChoiceField(
         choices=[("INBOUND", "INBOUND"), ("OUTBOUND", "OUTBOUND")], allow_null=True
+    )
+    last_reply_failed = serializers.BooleanField(
+        help_text="F7b-14: lo último es nuestro, pero ninguna respuesta desde el último mensaje "
+        "del cliente le llegó (fallaron): sigue sin responder."
     )
     standby_since = serializers.DateTimeField(
         allow_null=True,
@@ -105,7 +128,8 @@ class ConversationFilterSerializer(BoxFilterSerializer):
     )
     unanswered = serializers.BooleanField(
         required=False,
-        help_text="`true`: solo las abiertas cuyo último mensaje es del cliente (sin responder).",
+        help_text="`true`: solo las abiertas cuyo último mensaje es del cliente o cuya respuesta "
+        "falló (sin responder).",
     )
 
 

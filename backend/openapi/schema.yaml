@@ -3487,7 +3487,7 @@ paths:
         schema:
           type: boolean
         description: '`true`: solo las abiertas cuyo último mensaje es del cliente
-          (sin responder).'
+          o cuya respuesta falló (sin responder).'
       tags:
       - conversations
       security:
@@ -4091,8 +4091,9 @@ paths:
         con la política del texto; idempotente por `client_message_id` (202; 200 con
         el mismo archivo). Pide `messages.send` y `conversations.view`. El archivo
         pasa por el antivirus antes de guardarse. 400 `UNVERIFIED_CONTENT`: el pie
-        de foto lleva la marca `[verificar]`. 409: la política o `CLIENT_MESSAGE_ID_TAKEN`;
-        411 sin `Content-Length`; 413 `MEDIA_TOO_LARGE`; 415 `MEDIA_TYPE_NOT_ALLOWED`
+        de foto lleva la marca `[verificar]`. 409: la política, `CLIENT_MESSAGE_ID_TAKEN`
+        o `MEDIA_NOT_SUPPORTED_BY_CHANNEL` (Messenger e Instagram, antes de leer el
+        archivo); 411 sin `Content-Length`; 413 `MEDIA_TOO_LARGE`; 415 `MEDIA_TYPE_NOT_ALLOWED`
         (el tipo real); 422 `MEDIA_INFECTED` o `MEDIA_TOO_COMPLEX` (pasa los topes
         del antivirus: no se pudo revisar entero); 429 `RATE_LIMITED`; 503 `MEDIA_SCAN_UNAVAILABLE`
         (sin veredicto: nada se guardó, reintentar).'
@@ -4275,12 +4276,13 @@ paths:
         y `conversations.view`; no hace falta ver al contacto (el `body` de la respuesta
         sigue la regla de la lectura). 400 `UNVERIFIED_CONTENT`: el texto lleva la
         marca `[verificar]` del copiloto, también disfrazada (letras parecidas, otro
-        ancho, caracteres que no se ven o mayúsculas). 409: `CONVERSATION_CLOSED`,
-        `CHANNEL_UNAVAILABLE` (canal sin conectar), `CONTACT_BLOCKED`, `WINDOW_CLOSED`
-        (pasó la ventana de atención del canal desde el último mensaje del cliente),
-        `CONSENT_REVOKED` (fuera de la ventana, con la etiqueta Human Agent, el cliente
-        se dio de baja en este canal) o `CLIENT_MESSAGE_ID_TAKEN` (ese id es de otro
-        texto, otra conversación u otra persona).'
+        ancho, caracteres que no se ven o mayúsculas); 400 `TEXT_TOO_LONG_FOR_CHANNEL`:
+        pasa del tope del canal (`channel.text_max` de la conversación, en `channel.text_unit`).
+        409: `CONVERSATION_CLOSED`, `CHANNEL_UNAVAILABLE` (canal sin conectar), `CONTACT_BLOCKED`,
+        `WINDOW_CLOSED` (pasó la ventana de atención del canal desde el último mensaje
+        del cliente), `CONSENT_REVOKED` (fuera de la ventana, con la etiqueta Human
+        Agent, el cliente se dio de baja en este canal) o `CLIENT_MESSAGE_ID_TAKEN`
+        (ese id es de otro texto, otra conversación u otra persona).'
       parameters:
       - in: path
         name: conversation_id
@@ -13595,10 +13597,28 @@ components:
           $ref: '#/components/schemas/PlatformEnum'
         name:
           type: string
+        text_max:
+          type: integer
+          readOnly: true
+          description: El tope del texto de una respuesta en este canal (F7b-16),
+            en `text_unit`.
+        text_unit:
+          allOf:
+          - $ref: '#/components/schemas/TextUnitEnum'
+          description: '`CHARACTERS` (puntos de código) o `BYTES` (UTF-8, Instagram).'
+          readOnly: true
+        accepts_media:
+          type: boolean
+          readOnly: true
+          description: Si una respuesta puede llevar un adjunto (no en Messenger ni
+            en Instagram).
       required:
+      - accepts_media
       - id
       - name
       - platform
+      - text_max
+      - text_unit
     ConditionEnum:
       enum:
       - NEW
@@ -13877,6 +13897,10 @@ components:
           oneOf:
           - $ref: '#/components/schemas/LastMessageDirectionEnum'
           - $ref: '#/components/schemas/NullEnum'
+        last_reply_failed:
+          type: boolean
+          description: 'F7b-14: lo último es nuestro, pero ninguna respuesta desde
+            el último mensaje del cliente le llegó (fallaron): sigue sin responder.'
         standby_since:
           type: string
           format: date-time
@@ -13912,6 +13936,7 @@ components:
       - last_message_at
       - last_message_direction
       - last_message_preview
+      - last_reply_failed
       - number
       - standby_since
       - status
@@ -13975,6 +14000,10 @@ components:
           oneOf:
           - $ref: '#/components/schemas/LastMessageDirectionEnum'
           - $ref: '#/components/schemas/NullEnum'
+        last_reply_failed:
+          type: boolean
+          description: 'F7b-14: lo último es nuestro, pero ninguna respuesta desde
+            el último mensaje del cliente le llegó (fallaron): sigue sin responder.'
         standby_since:
           type: string
           format: date-time
@@ -14034,6 +14063,7 @@ components:
       - last_message_at
       - last_message_direction
       - last_message_preview
+      - last_reply_failed
       - number
       - resolved_at
       - standby_since
@@ -19961,6 +19991,11 @@ components:
             $ref: '#/components/schemas/TestAccount'
       required:
       - accounts
+    TextUnitEnum:
+      enum:
+      - CHARACTERS
+      - BYTES
+      type: string
     TokenRequest:
       type: object
       properties:
