@@ -1,5 +1,6 @@
 "use client";
 
+import { TriangleAlert, X } from "lucide-react";
 import { useFormatter, useTranslations } from "next-intl";
 import { useRef, useState } from "react";
 
@@ -152,6 +153,7 @@ function Account({
               </Row>
             ) : null}
             {token}
+            <TokenExpiry account={account} />
             {checked}
           </dl>
         </>
@@ -176,6 +178,39 @@ function Account({
         </div>
       ) : null}
     </>
+  );
+}
+
+// Cuándo caduca el token de una página (F7b-12b), con la fecha que Meta dio (`token_expires_at` de
+// la credencial viva). Sin credencial viva no hay fila (el token ya dice «Sin token»). Con 10 días o
+// menos, en rojo y con icono (nunca solo color), con el reloj de quien mira y sin redondear, como
+// el primer aviso por correo (`expires_at <= now() + 10 días`); ya pasada, «Caducó el …».
+const SOON_MS = 10 * 24 * 60 * 60 * 1000;
+function TokenExpiry({ account }: { account: ChannelAccount }) {
+  const t = useTranslations("channels.expiry");
+  const format = useFormatter();
+  const [now] = useState(() => Date.now()); // al montar la tarjeta, como en las cotizaciones
+  const { token_expiry: state, token_expires_at: at } = account;
+  if (state == null) return null;
+  const left = state === "AT" && at ? Date.parse(at) - now : NaN;
+  if (Number.isNaN(left)) {
+    return <Row label={t("label")}>{state === "NEVER" ? t("never") : t("unknown")}</Row>;
+  }
+  const date = format.dateTime(new Date(at as string), {
+    ...{ day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" },
+  });
+  const Icon = left <= 0 ? X : TriangleAlert;
+  return (
+    <Row label={t("label")}>
+      {left > SOON_MS ? (
+        date
+      ) : (
+        <span className="text-danger inline-flex items-center gap-1.5 font-medium">
+          <Icon aria-hidden className="size-4 shrink-0" />
+          {left <= 0 ? t("expired", { date }) : t("soon", { date })}
+        </span>
+      )}
+    </Row>
   );
 }
 
