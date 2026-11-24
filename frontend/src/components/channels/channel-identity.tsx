@@ -1,23 +1,14 @@
-import {
-  Camera,
-  CircleHelp,
-  FlaskConical,
-  type LucideIcon,
-  MessageCircle,
-  MessagesSquare,
-} from "lucide-react";
+import { Camera, CircleHelp, FlaskConical, type LucideIcon } from "lucide-react";
+import { MessageCircle, MessagesSquare } from "lucide-react";
 import { useTranslations } from "next-intl";
 
 import { Plain } from "@/components/inbox/plain";
 import type { PlatformEnum } from "@/lib/api/model";
 import { cn } from "@/lib/utils";
 
-// La identidad de cada red (UX-INBOX-01): la única fuente de su icono, su nombre y su color. El
-// color es una capa que se suma al nombre, nunca la única señal: va solo en el icono y en el punto
-// de la fila, jamás en un texto, una marca de entrega o un aviso. Los tonos son los tokens
-// `--channel-*` de `globals.css`, todos ≥3:1 sobre los fondos claros (`channel-identity.test.tsx`).
-// `social`: Instagram y Messenger, cuyos motivos de fallo nombran su red (`failureSocial`, F7b-06f).
-// La Sandbox se rotula «Pruebas» y una red que esta versión no conoce, «Otra red»: las dos neutras.
+// La identidad de cada red (UX-INBOX-01): la única fuente de su icono, su nombre y su tono. El
+// color se suma al nombre, nunca es la única señal: solo icono y punto (tokens `--channel-*`, ≥3:1,
+// probado), jamás texto, entrega o aviso. `social`: los fallos nombran la red (F7b-06f).
 export type Tone = "whatsapp" | "instagram" | "messenger" | "neutral";
 type Identity = { icon: LucideIcon; labelKey: string; tone: Tone; social: boolean };
 export const CHANNELS = {
@@ -62,9 +53,8 @@ export function ChannelMark({ platform }: { platform: string }) {
   );
 }
 
-// La red y, aparte, la cuenta que recibió la conversación (puede haber varias por red): un «·»
-// que el lector de pantalla no lee las separa a la vista, y una coma oculta y un espacio fuera de
-// ella las separan al oído («WhatsApp, Tienda Lima»). La cuenta es texto ajeno: va por `Plain`.
+// La red y aparte la cuenta (hay varias por red): «·» a la vista, oculto al lector, que oye la coma
+// («WhatsApp, Tienda Lima»). La cuenta es texto ajeno: va por `Plain`.
 export function ChannelSource({ platform, account }: { platform: string; account: string }) {
   return (
     <span className="inline-flex min-w-0 items-center gap-1.5">
