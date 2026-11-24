@@ -88,15 +88,20 @@ def deliver(
         with tenant_scope(ctx):
             wait = dt.timedelta(seconds=countdown)
             attempts = commands.release_outbound(ctx, message_id=message_id, wait=wait)
-            if task.request.retries >= MAX_RETRIES or (attempts or 0) > MAX_RETRIES:
+            if attempts is None:  # F7b-18: el plazo ya lo cerró (no se reintenta un `FAILED`)
+                late = SendResult(False, reason="RETRIES_EXHAUSTED", detail=error.detail)
+                commands.settle_outbound(ctx, message_id=message_id, result=late)  # no salió
+                return
+            if task.request.retries >= MAX_RETRIES or attempts > MAX_RETRIES:
                 logger.warning("inbox.dispatch_gave_up", message_id=str(message_id))
                 commands.fail_queued(  # F7b-17: con el código de Meta del último límite
                     ctx, message_id=message_id, reason="RETRIES_EXHAUSTED", detail=error.detail
                 )
                 return
         raise task.retry(exc=error, countdown=countdown, max_retries=MAX_RETRIES) from None
-    with tenant_scope(ctx):
+    with tenant_scope(ctx):  # también corrige un `PROVIDER_UNKNOWN` del plazo (F7b-18)
         commands.settle_outbound(ctx, message_id=message_id, result=result)
+    # Los efectos sobre la cuenta, una vez: `accounts` solo cambia una cuenta que aún estaba viva
     if result.reason == "TOKEN_INVALID":  # Meta no acepta el token: la cuenta deja de enviar
         with tenant_scope(ctx):  # solo si ese token sigue siendo el de la cuenta (¿se rotó?)
             accounts.mark_token_invalid(
