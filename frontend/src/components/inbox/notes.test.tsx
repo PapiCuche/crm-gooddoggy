@@ -269,14 +269,8 @@ describe("notas internas en el cuadro de redacción (F6-05c)", () => {
   }, 20_000);
 
   it("el panel reparte el alto: encabezado y cuadro fijos, solo los mensajes se desplazan", async () => {
-    // iOS no encoge el viewport con el teclado: el panel usa el alto visible mientras se escribe.
     const viewport = Object.assign(new EventTarget(), { height: 500, scale: 1 });
     vi.stubGlobal("visualViewport", viewport);
-    const Observer = class {
-      observe() {}
-      disconnect() {}
-    }; // jsdom no lo trae
-    vi.stubGlobal("ResizeObserver", Observer);
     server();
     show();
     await openChat();

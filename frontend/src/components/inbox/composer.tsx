@@ -225,8 +225,7 @@ function ComposeBox({
   const picker = useRef<HTMLInputElement>(null);
   const settleUntil = useRef(0); // hasta cuándo un Enter no envía lo recién insertado
   const inFlight = useRef(false); // dos toques antes de que se pinte `isPending`: una petición
-  const touch = useCoarse();
-  const tap = touch ? "Touch" : ""; // la ayuda de teclas del teléfono
+  const tap = useCoarse() ? "Touch" : ""; // la ayuda de teclas y la tecla del teléfono
   const [placed, setPlaced] = useState(0); // cada inserción del copiloto: enfocar al final
   const format = useFormatter();
   const labels = useTranslations("inbox.media");
@@ -407,7 +406,7 @@ function ComposeBox({
   const keys = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (quick.onKey(event)) return; // con el selector abierto, Enter elige y no envía
     // Enter envía; Mayús+Enter agrega una línea. Durante una composición (IME) Enter es del IME;
-    // Safari lo entrega ya sin `isComposing`, pero con `keyCode` 229. En un teléfono, solo el botón.
+    // Safari lo entrega ya sin `isComposing`, pero con `keyCode` 229.
     const composing = event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229;
     if (event.key !== "Enter" || event.shiftKey || composing || coarse()) return;
     event.preventDefault();
@@ -477,7 +476,7 @@ function ComposeBox({
         disabled={closed}
         readOnly={send.isPending}
         placeholder={note || closed ? undefined : t("placeholder")}
-        enterKeyHint={touch ? "enter" : "send"}
+        enterKeyHint={tap ? "enter" : "send"}
         {...quick.field}
         aria-describedby={`${field}-count ${field}-keys${note ? ` ${field}-hint` : ""}${file ? ` ${field}-file` : ""}${closed ? ` ${field}-closed` : ""}`}
         aria-invalid={over || problem ? true : undefined}

@@ -186,9 +186,9 @@ export function ChatPanel({
 
   return (
     // Alto: en 390 px la pantalla pierde el título de la página (queda solo para lectores) y el panel
-    // ocupa el alto visible (`--keyboard-vh` en iOS con el teclado) menos la barra y el relleno del
-    // shell (8 rem), nunca menos que el encabezado y el cuadro, que no se comprimen; los mensajes
-    // (`min-h-0`, `contain-size`: no cuentan en ese mínimo) absorben el sobrante y se desplazan.
+    // ocupa lo visible (`--keyboard-vh` en iOS) menos barra y relleno (8rem), con mínimo que deja
+    // sitio a las tres zonas; el encabezado y el cuadro no se comprimen y los mensajes (`min-h-0`)
+    // absorben el sobrante y se desplazan. En escritorio, el alto de siempre.
     <div
       ref={panel}
       className="border-border bg-surface flex h-[calc(var(--keyboard-vh,100dvh)-8rem)] min-h-min flex-col rounded-lg border lg:h-[calc(100dvh-18rem)] lg:min-h-[26rem]"

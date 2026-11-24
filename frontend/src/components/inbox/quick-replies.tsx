@@ -149,8 +149,7 @@ export function useQuickReplies({
     if (composing) return false;
     const enter = event.key === "Enter" && !event.shiftKey;
     if (!open) {
-      // El Enter que eligió, sostenido o repetido al instante, no envía el texto sin revisarlo. En
-      // un teléfono Enter no envía: agrega la línea, como siempre ahí.
+      // El Enter que eligió, sostenido o repetido al instante, no envía el texto sin revisarlo.
       if (!enabled || !enter || coarse() || !(event.repeat || settling.current)) return false;
       event.preventDefault();
       return true;

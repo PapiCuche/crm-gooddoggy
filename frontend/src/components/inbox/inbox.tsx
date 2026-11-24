@@ -24,7 +24,6 @@ const wide = () => typeof matchMedia === "function" && matchMedia("(min-width: 1
 // El Inbox (F6-03), solo lectura: la lista de conversaciones a la izquierda y el chat de la elegida
 // a la derecha. El foco pasa al nombre del chat al abrir una conversación (solo cuando la lista se
 // oculta) y vuelve a su fila al regresar. Sin envío, asignación, notas ni tiempo real.
-// UX-INBOX-03: la abierta va en la URL (`?c=<id>`, solo elige: la API decide).
 export function Inbox() {
   const t = useTranslations("inbox");
   const errors = useTranslations("errors");
@@ -34,8 +33,7 @@ export function Inbox() {
   useInboxRealtime(); // los cambios llegan sin recargar (si el servicio de tiempo real está encendido)
   const [filters, setFilters] = useState<Filters>({ box: "all", status: "", unanswered: false });
   const wanted = useSearchParams()?.get("c") || null;
-  // La fila elegida, solo en su organización.
-  const [picked, setPicked] = useState<{ slug: string; row: Conversation } | null>(null);
+  const [picked, setPicked] = useState<{ slug: string; row: Conversation } | null>(null); // con su organización
   const fromList = picked?.slug === slug && picked.row.id === wanted ? picked.row : null;
   const pushed = useRef(false); // la entrada `?c=` del historial la puso esta pantalla
   const [gone, setGone] = useState<string | null>(null);
@@ -105,12 +103,11 @@ export function Inbox() {
           <NotifyToggle />
         </div>
       </div>
-      {gone ? (
+      {gone && (
         <p role="alert" className="text-danger">
           {gone}
         </p>
-      ) : null}
-      {/* En 390 px el aviso no empuja el chat fuera: se ve en la lista. */}
+      )}
       <div className={cn("empty:hidden", selected && "max-lg:hidden")}>
         <ChannelAlert />
       </div>
@@ -162,12 +159,10 @@ export function Inbox() {
                 />
               ) : null}
             </>
-          ) : wanted && !notFound ? (
-            <p role="status" className="text-muted">
-              {t("chat.loading")}
-            </p>
           ) : (
-            <p className="text-muted max-lg:hidden">{t("chat.choose")}</p>
+            <p className={cn("text-muted", !wanted && "max-lg:hidden")}>
+              {t(wanted ? "chat.loading" : "chat.choose")}
+            </p>
           )}
         </section>
       </div>

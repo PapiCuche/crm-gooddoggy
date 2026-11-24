@@ -467,19 +467,21 @@ describe("cuadro de redacción: Instagram y Messenger", () => {
 
 describe("teclado del teléfono (UX-INBOX-03)", () => {
   let touch = false;
-  beforeEach(() => {
-    touch = false;
+  const start = async (coarse: boolean) => {
+    touch = coarse; // se pregunta en cada tecla: cambiarlo luego cambia lo que hace Enter
     vi.stubGlobal("matchMedia", (query: string) => ({
-      matches: query === "(pointer: coarse)" && touch,
+      matches: query.includes("coarse") && touch,
     }));
-  });
+    const s = server();
+    show();
+    await openChat();
+    return s;
+  };
   const enter = async () => fireEvent.keyDown(await box(), { key: "Enter" }); // `false`: impedido
   const keys = async () => document.getElementById(`${(await box()).id}-keys`);
 
   it("se mira al pulsar: en táctil Enter agrega la línea y no envía; en escritorio envía", async () => {
-    const s = server();
-    show();
-    await openChat();
+    const s = await start(false);
     expect(await box()).toHaveAttribute("enterkeyhint", "send");
     expect(await keys()).toHaveTextContent("Enter envía; Mayús+Enter agrega una línea.");
     await type("Hola");
@@ -493,10 +495,7 @@ describe("teclado del teléfono (UX-INBOX-03)", () => {
   });
 
   it("en táctil lo dicen la ayuda y la tecla; dos toques en «Enviar» mandan una sola petición", async () => {
-    touch = true;
-    const s = server();
-    show();
-    await openChat();
+    const s = await start(true);
     expect(await box()).toHaveAttribute("enterkeyhint", "enter");
     expect(await keys()).toHaveTextContent("Enter agrega una línea; envía con el botón.");
     s.wait();
@@ -510,9 +509,7 @@ describe("teclado del teléfono (UX-INBOX-03)", () => {
   });
 
   it("un envío en curso al cerrar el chat no bloquea el siguiente", async () => {
-    const s = server();
-    show();
-    await openChat();
+    const s = await start(false);
     s.wait();
     await type("Hola");
     fireEvent.click(sendButton());

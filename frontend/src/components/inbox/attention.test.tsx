@@ -172,9 +172,8 @@ describe("Inbox para atender rápido (F6-09)", () => {
   });
 
   it("con el chat abierto en 390 px el aviso no lo empuja: se oculta y sigue en la lista", async () => {
-    const down = page([account("a", { status: "DISCONNECTED" })]);
-    const chat = { [`${BASE}1/`]: ok(rosa), [`${BASE}1/messages/`]: page([]) };
-    mockApi({ [BASE]: page([rosa]), ...chat, [CHANNELS]: down });
+    const down = page([account("a", { status: "ERROR" })]);
+    mockApi({ [BASE]: page([rosa]), [`${BASE}1/`]: ok(rosa), [CHANNELS]: down });
     show(["conversations.view", "channels.manage"]);
     const banner = await screen.findByRole("region", { name: "Cuentas de canal con problemas" });
     expect(banner.parentElement).not.toHaveClass("max-lg:hidden");
