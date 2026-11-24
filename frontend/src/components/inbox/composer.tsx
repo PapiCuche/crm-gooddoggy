@@ -230,9 +230,11 @@ function ComposeBox({
   const key = messagesKey(slug, conversation.id);
   // Con un archivo, el texto es su pie de foto: otro tope, contado en unidades UTF-16. Una respuesta
   // sigue el tope de su canal (F7b-16, `channel.text_max`): Instagram cuenta bytes UTF-8.
-  const { text_max: channelMax, text_unit: unit, accepts_media: media } = conversation.channel;
-  const bytes = !note && !file && unit === "BYTES";
-  const max = file ? CAPTION_MAX : note ? BODY_MAX : channelMax;
+  // Sin los campos (una API anterior, durante un despliegue o un rollback) vale lo de antes.
+  const { text_max, text_unit, accepts_media } = conversation.channel;
+  const media = accepts_media !== false;
+  const bytes = !note && !file && text_unit === "BYTES";
+  const max = file ? CAPTION_MAX : note ? BODY_MAX : (text_max ?? BODY_MAX);
   // El navegador manda cada salto de línea del formulario como `\r\n`: cuenta dos.
   const count = file
     ? text.length + (text.match(/\n/g)?.length ?? 0)
@@ -526,9 +528,9 @@ function ComposeBox({
       {/* El tope se anuncia solo al cruzar el 90 % y el 100 %: el texto depende del nivel, no de la cuenta. */}
       <p aria-live="polite" className="sr-only">
         {over
-          ? t(note ? "overLimit.note" : "overLimit.reply")
+          ? t(note ? "overLimit.note" : bytes ? "overLimit.replyBytes" : "overLimit.reply")
           : count >= max * 0.9
-            ? t("nearLimit")
+            ? t(bytes ? "nearLimitBytes" : "nearLimit")
             : ""}
       </p>
       <div className="flex flex-wrap items-center justify-between gap-2 max-sm:contents">

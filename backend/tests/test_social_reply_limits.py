@@ -12,6 +12,7 @@ import psycopg
 import pytest
 from django.core.exceptions import ObjectDoesNotExist
 from django.test import Client
+from django.utils import timezone
 
 from apps.access.selectors import AccessDenied
 from apps.conversations import limits, meta_page, outbound_media
@@ -25,7 +26,7 @@ from tests.factories import make_user
 from tests.test_authorization import give
 from tests.test_conversation_commands import outbound, run, send, world, writer
 from tests.test_conversations_api import BASE
-from tests.test_conversations_send_api import counts, post
+from tests.test_conversations_send_api import counts, post, set_state
 from tests.test_media_upload_api import blobs, reads, upload
 from tests.test_memberships import ctx, join
 from tests.test_self_context import NOT_FOUND, real_stack, reply, signed
@@ -172,6 +173,27 @@ def test_the_media_route_answers_409_before_reading_or_storing_the_file(
 ) -> None:  # fmt: skip
     refused = upload(agent, talk(world, platform).pk)
     assert (refused.status_code, refused.json()["code"]) == (409, "MEDIA_NOT_SUPPORTED_BY_CHANNEL")
+    assert reads == [] and blobs.objects == {} and nothing_written(migrator)
+
+
+def test_the_scope_and_the_policy_answer_before_the_channel_on_both_routes(
+    world: SimpleNamespace, agent: Client, migrator: DB, reads: list[int], blobs: Any
+) -> None:
+    convo = talk(world, "INSTAGRAM").pk
+    with tenant_scope(ctx(world.a)):  # abierta y de `ana`
+        Conversation.objects.filter(pk=convo).update(assigned_user_id=world.ana.pk)
+    reader = make_user(email="lee@example.com")  # ve toda la organización, envía solo lo suyo
+    wide: dict[str, str | None] = {"conversations.view": "ORGANIZATION", "messages.send": "OWN"}
+    give(world.a, join(world.a, reader).pk, wide)
+    assert reply(upload(signed(reader), convo)) == NOT_FOUND  # no `MEDIA_NOT_SUPPORTED_…`
+    assert reads == []
+    assert reply(post(signed(reader), convo, body="a" * 1001)) == NOT_FOUND
+    set_state(world.a, convo, status="CLOSED", closed_at=timezone.now())
+    closed = post(agent, convo, body="a" * 1001)  # cerrada y demasiado largo: dice lo primero
+    assert (closed.status_code, closed.json()["code"]) == (409, "CONVERSATION_CLOSED")
+    reads.clear()  # la ruta de texto sí lee su cuerpo JSON
+    shut = upload(agent, convo)  # cerrada y con adjunto
+    assert (shut.status_code, shut.json()["code"]) == (409, "CONVERSATION_CLOSED")
     assert reads == [] and blobs.objects == {} and nothing_written(migrator)
 
 

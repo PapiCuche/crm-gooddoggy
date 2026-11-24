@@ -386,6 +386,8 @@ describe("cuadro de redacción: Instagram y Messenger", () => {
   });
   const instagram = channel("INSTAGRAM", 1000, "BYTES") as Partial<Conversation>;
   const messenger = channel("MESSENGER", 2000, "CHARACTERS") as Partial<Conversation>;
+  const live = () =>
+    Array.from(document.querySelectorAll("[aria-live=polite]")).map((one) => one.textContent);
 
   it("Instagram cuenta bytes UTF-8: tildes, emojis y acentos combinados ocupan más", async () => {
     const s = server({ conversation: instagram });
@@ -399,10 +401,12 @@ describe("cuadro de redacción: Instagram y Messenger", () => {
     ] as const) {
       await type(text);
       expect(screen.getByText(new RegExp(`^${bytes} de 1000 bytes`))).toBeInTheDocument();
+      expect(live()).toEqual(["Te acercas al tope de bytes del canal."]);
       expect(sendButton()).toBeEnabled();
     }
     await type("ñ".repeat(500) + "a");
     expect(screen.getByText(/^Te pasaste por 1 byte: este canal acepta hasta 1000/)).toBeVisible();
+    expect(live()).toEqual(["Pasaste el tope de bytes del canal: no se puede enviar."]);
     expect(sendButton()).toBeDisabled();
     fireEvent.keyDown(await box(), { key: "Enter" });
     await settle();
@@ -431,6 +435,17 @@ describe("cuadro de redacción: Instagram y Messenger", () => {
     fireEvent.change(note, { target: { value: "ñ".repeat(1500) } });
     expect(screen.getByText("1500 de 4096 caracteres")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Guardar nota" })).toBeEnabled();
+  });
+
+  it("con una API anterior, sin los campos del canal, todo sigue como antes", async () => {
+    const { id, platform, name } = rosa.channel; // durante un despliegue o un rollback
+    server({ conversation: { channel: { id, platform, name } as Conversation["channel"] } });
+    show();
+    await openChat();
+    await type("ñ".repeat(4096));
+    expect(screen.getByText("4096 de 4096 caracteres")).toBeInTheDocument();
+    expect(sendButton()).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Adjuntar imagen o PDF" })).toBeVisible();
   });
 
   it("si la API lo rechaza igual, lo explica y conserva el texto", async () => {

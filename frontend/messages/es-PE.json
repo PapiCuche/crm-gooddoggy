@@ -2526,6 +2526,7 @@
       "savedHidden": "Nota guardada. No puedes ver a este cliente, así que su texto no se muestra aquí.",
       "deniedNote": "No puedes dejar notas en esta conversación. Puede que ya no esté en tu alcance.",
       "nearLimit": "Te acercas al tope de caracteres.",
+      "nearLimitBytes": "Te acercas al tope de bytes del canal.",
       "attach": "Adjuntar imagen o PDF",
       "attached": "Adjunto: {name}, {detail}",
       "remove": "Quitar el archivo",
@@ -2534,7 +2535,8 @@
       "idTakenGrown": "Puede que la primera parte ya se haya enviado. Revisa el chat y quita del cuadro lo que ya salió antes de volver a enviar.",
       "overLimit": {
         "reply": "Pasaste el tope de caracteres: no se puede enviar.",
-        "note": "Pasaste el tope de caracteres: no se puede guardar."
+        "note": "Pasaste el tope de caracteres: no se puede guardar.",
+        "replyBytes": "Pasaste el tope de bytes del canal: no se puede enviar."
       },
       "placeholder": "Escribe / para usar una respuesta rápida"
     },
