@@ -515,6 +515,82 @@ describe("Inbox, motivo de un fallo: el conjunto cerrado", () => {
     expect(row("e")).not.toHaveTextContent("Código de Meta"); // solo con FAILED
   });
 
+  // F7b-17: la pista del código también llega con subcódigo, pero solo en un rechazo genérico.
+  it("con subcódigo usa la pista del código solo, sin contradecir un motivo propio", async () => {
+    const failed = (id: string, code: string, detail: string) =>
+      message(id, {
+        direction: "OUTBOUND",
+        sender_type: "USER",
+        delivery_status: "FAILED",
+        body: id,
+        provider_error_code: code as Message["provider_error_code"],
+        provider_error_detail: detail,
+      });
+    serve({
+      [LIST]: page([conversation("1", { channel: { ...rosa.channel, platform: "MESSENGER" } })]),
+      [MESSAGES("1")]: page([
+        failed("d", "RETRIES_EXHAUSTED", "613"),
+        failed("c", "WINDOW_CLOSED", "10/2018278"),
+        failed("b", "PROVIDER_REJECTED", "10/2018065"),
+        failed("a", "PROVIDER_REJECTED", "10"),
+      ]),
+    });
+    show();
+    await open(/Rosa Díaz/);
+    const log = await screen.findByRole("list", { name: "Mensajes" });
+    const row = (body: string) =>
+      within(log)
+        .getAllByRole("listitem")
+        .find((li) => li.querySelector("bdi")?.textContent === body)!;
+    const hint = "falta un permiso o el acceso avanzado de Meta";
+    expect(row("a")).toHaveTextContent(`Código de Meta: 10 (${hint}).`);
+    expect(row("b")).toHaveTextContent(`Código de Meta: 10/2018065 (${hint}).`);
+    expect(row("c")).toHaveTextContent("Código de Meta: 10/2018278.");
+    expect(row("c")).not.toHaveTextContent(hint); // la ventana cerrada no es un permiso
+    // Reintentos agotados por un límite: el motivo y el código de Meta del último intento.
+    expect(row("d")).toHaveTextContent(
+      "No se pudo enviar tras varios intentos. Código de Meta: 613.",
+    );
+  });
+
+  // F7b-17: rótulos honestos: «Sin confirmar» no es un fallo; «Reintentando» no es «En cola».
+  it("no rotula como fallo lo que no se sabe y dice cuándo un mensaje reintenta", async () => {
+    const out = (id: string, changes: Partial<Message>) =>
+      message(id, { direction: "OUTBOUND", sender_type: "USER", body: id, ...changes });
+    serve({
+      [LIST]: page([rosa]),
+      [MESSAGES("1")]: page([
+        out("e", { delivery_status: "SENDING", dispatch_attempts: 2 }),
+        out("d", { delivery_status: "FAILED", provider_error_code: "WINDOW_CLOSED" }),
+        out("c", { delivery_status: "FAILED", provider_error_code: "PROVIDER_UNKNOWN" }),
+        out("b", { delivery_status: "QUEUED", dispatch_attempts: 2 }),
+        out("a", { delivery_status: "QUEUED", dispatch_attempts: 0 }),
+      ]),
+    });
+    show();
+    await open(/Rosa Díaz/);
+    const log = await screen.findByRole("list", { name: "Mensajes" });
+    const row = (body: string) =>
+      within(log)
+        .getAllByRole("listitem")
+        .find((li) => li.querySelector("bdi")?.textContent === body)!;
+    expect(row("a")).toHaveTextContent("En cola");
+    expect(row("a")).not.toHaveTextContent("Reintentando");
+    expect(row("b")).toHaveTextContent("Reintentando");
+    expect(row("b")).not.toHaveTextContent("En cola");
+    expect(row("b")).not.toHaveTextContent("2"); // ni el número de intentos
+    expect(row("c")).toHaveTextContent("Sin confirmar");
+    expect(row("c")).toHaveTextContent("Puede que sí se haya enviado");
+    expect(row("c")).not.toHaveTextContent("No se pudo enviar");
+    expect(row("c").querySelectorAll(".text-danger")).toHaveLength(0);
+    expect(row("c").querySelector(".lucide-clock")).not.toBeNull(); // el reloj, no la alerta
+    expect(row("c").querySelector(".lucide-triangle-alert")).toBeNull();
+    expect(row("d")).toHaveTextContent("No se pudo enviar"); // un fallo cierto lo sigue diciendo
+    expect(row("d").querySelector(".lucide-triangle-alert")).not.toBeNull();
+    expect(row("e")).toHaveTextContent("Enviando"); // salió otra vez: ya no espera
+    expect(row("e")).not.toHaveTextContent("Reintentando");
+  });
+
   it("el texto de TOKEN_INVALID manda a quien administra los canales, no a quien escribe", () => {
     expect(messages.inbox.failure.TOKEN_INVALID).toContain("quien administra los canales");
   });

@@ -15289,6 +15289,12 @@ components:
           description: El error del proveedor en números, `código` o `código/subcódigo`
             (p. ej., `131031` o `10/2018278`), solo con `FAILED`; nunca su texto.
             `null` si no lo dio.
+        dispatch_attempts:
+          type: integer
+          readOnly: true
+          description: Cuántas veces el canal no lo aceptó y volvió a la cola para
+            reintentar (p. ej., por un límite de envío); `0` en lo entrante y en lo
+            que no reintentó.
         created_at:
           type: string
           format: date-time
@@ -15322,6 +15328,7 @@ components:
       - delivered_at
       - delivery_status
       - direction
+      - dispatch_attempts
       - failed_at
       - id
       - message_type

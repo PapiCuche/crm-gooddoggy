@@ -92,12 +92,12 @@ def _refused(status: int, raw: bytes, server: type[Exception]) -> SendResult:
     cerrado de `code_for` (el mismo que daría el webhook)."""
     code = field_at(raw, "error", "code")
     code = code if isinstance(code, int) and not isinstance(code, bool) else None
+    detail = error_detail(code, field_at(raw, "error", "error_subcode"))
     if code in TOO_FAST or status == 429:
-        raise TemporaryChannelError
+        raise TemporaryChannelError(detail)  # F7b-17: el código, por si se agotan los reintentos
     if status >= 500:
         raise server
     reason = "TOKEN_INVALID" if status == 401 else code_for(code)
-    detail = error_detail(code, field_at(raw, "error", "error_subcode"))
     return SendResult(False, reason=reason, detail=detail)
 
 

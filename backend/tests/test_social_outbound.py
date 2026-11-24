@@ -259,6 +259,20 @@ def test_a_messenger_reply_throttled_by_meta_goes_back_to_the_queue_and_never_fa
     assert (account_of(world, convo).status, len(graph.sent)) == ("CONNECTED", 0)
 
 
+@pytest.mark.parametrize("name", ["rate_limit", "throttle_messenger"])
+def test_a_reply_that_runs_out_of_retries_on_a_meta_limit_shows_its_code_and_never_its_text(
+    world: SimpleNamespace, graph: FakePageGraph, name: str
+) -> None:
+    """F7b-17: al agotar los reintentos por un límite de Meta, su código (solo números)."""
+    convo = talk(world, "MESSENGER")
+    graph.then(name)
+    message, _ = outbound(world, convo)
+    tasks.deliver(Retrying(tasks.MAX_RETRIES), world.a, message.pk)
+    saved, (_, code, _, text, _) = state(world, message), ERRORS[name]
+    assert (saved.delivery_status, saved.provider_error_code) == ("FAILED", "RETRIES_EXHAUSTED")
+    assert saved.provider_error_detail == str(code) and text not in str(vars(saved))
+
+
 def test_every_code_an_outbound_adapter_retries_is_also_a_throttle_for_the_graph_reads() -> None:
     assert {80001, 80002, 80006} <= set(meta_page.TOO_FAST)
     assert set(meta_page.TOO_FAST) | set(whatsapp.TOO_FAST) <= set(graph_api.THROTTLED)

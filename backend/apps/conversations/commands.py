@@ -732,19 +732,26 @@ def _reply_failed(ctx: TenantContext, alias: str, message: Message) -> None:
     attention.reply_failed(ctx, alias, convo, message.pk)
 
 
-def _fail_from(ctx: TenantContext, message_id: UUID, reason: str, was: str) -> Message | None:
+def _fail_from(
+    ctx: TenantContext, message_id: UUID, reason: str, was: str, detail: str | None = None
+) -> Message | None:
     alias = require_scope(ctx)
     message_id = _uuid(message_id, "mensaje")
     with transaction.atomic(using=alias):
         locked = Message.objects.using(alias).select_for_update(no_key=True)
         if not locked.filter(pk=message_id, delivery_status=was).exists():
             return None  # ya salió, ya se cerró o no existe: no se toca
-        return advance_delivery(ctx, message_id=message_id, status=Delivery.FAILED, reason=reason)
+        return advance_delivery(
+            ctx, message_id=message_id, status=Delivery.FAILED, reason=reason, detail=detail
+        )
 
 
-def fail_queued(ctx: TenantContext, *, message_id: UUID, reason: str) -> Message | None:
-    """Deja `FAILED` un mensaje que sigue `QUEUED` (los reintentos del despachador se agotaron)."""
-    return _fail_from(ctx, message_id, reason, "QUEUED")
+def fail_queued(
+    ctx: TenantContext, *, message_id: UUID, reason: str, detail: str | None = None
+) -> Message | None:
+    """Deja `FAILED` un mensaje que sigue `QUEUED` (los reintentos del despachador se agotaron),
+    con `detail`, el código de Meta del último límite (F7b-17), si lo hubo."""
+    return _fail_from(ctx, message_id, reason, "QUEUED", detail)
 
 
 def fail_sending(ctx: TenantContext, *, message_id: UUID, reason: str) -> Message | None:
@@ -972,7 +979,8 @@ def _recipient(alias: str, convo: Conversation, account: ChannelAccount) -> str:
 def release_outbound(ctx: TenantContext, *, message_id: UUID, wait: dt.timedelta) -> int | None:
     """Devuelve a la cola un `SENDING` que seguro no salió (nunca tras un resultado ambiguo), cuenta
     el intento y no lo deja reintentar antes de `wait` (`not_before`: el barredor de la cola no lo
-    reencola antes). Devuelve los intentos, o `None` si ya no estaba `SENDING`."""
+    reencola antes). Emite `message.updated` (F7b-17). Devuelve los intentos, o `None` si ya no
+    estaba `SENDING`."""
     alias = require_scope(ctx)
     message_id = _uuid(message_id, "mensaje")
     with transaction.atomic(using=alias):
@@ -985,7 +993,12 @@ def release_outbound(ctx: TenantContext, *, message_id: UUID, wait: dt.timedelta
         )  # fmt: skip
         changes = {"delivery_status": [Delivery.SENDING, Delivery.QUEUED]}
         record(ctx, "message.delivery_changed", Entity("message", message_id), changes, None)
-        attempts: int = Message.objects.using(alias).get(pk=message_id).dispatch_attempts
+        message: Message = Message.objects.using(alias).get(pk=message_id)
+        emit(  # F7b-17: la burbuja deja «Enviando» mientras espera el reintento; solo ids
+            ctx, "message.updated", aggregate_type="message", aggregate_id=message_id,
+            payload={"conversation_id": str(message.conversation_id)},
+        )  # fmt: skip
+        attempts: int = message.dispatch_attempts
         return attempts
 
 

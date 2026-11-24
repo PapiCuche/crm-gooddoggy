@@ -29,7 +29,7 @@ INBOUND = "/api/v1/o/org-a/channels/sandbox/inbound/"
 MESSAGE = {
     "id", "direction", "sender_type", "sender_user_id", "message_type", "body",
     "client_message_id", "delivery_status", "created_at", "sent_at", "delivered_at", "read_at",
-    "failed_at", "provider_error_code", "provider_error_detail", "attachment",
+    "failed_at", "provider_error_code", "provider_error_detail", "dispatch_attempts", "attachment",
 }  # fmt: skip
 
 
@@ -176,6 +176,22 @@ def test_a_failed_message_shows_its_closed_reason_and_nothing_else_of_the_failur
     )
     hidden = signed(inbox.vera).get(f"{BASE}{inbox.convs['sam']}/messages/")
     assert hidden.status_code == 404  # el alcance de la lectura no cambia
+
+
+def test_a_message_waiting_to_retry_says_how_many_times_the_channel_returned_it(
+    inbox: SimpleNamespace,
+) -> None:
+    """F7b-17: `dispatch_attempts`, solo lectura, para que la burbuja diga «Reintentando»."""
+    convo = inbox.convs["nobody"]
+    out = {"direction": "OUTBOUND", "sender_type": "USER", "sender_user_id": inbox.ana.pk}
+    say(inbox.a, convo, "a", delivery_status="QUEUED", dispatch_attempts=2, **out)
+    say(inbox.a, convo, "b", delivery_status="QUEUED", **out)
+    say(inbox.a, convo, "del cliente")
+    rows = {
+        r["body"]: r for r in signed(inbox.ana).get(f"{BASE}{convo}/messages/").json()["results"]
+    }
+    assert {k: rows[k]["dispatch_attempts"] for k in rows} == {"a": 2, "b": 0, "del cliente": 0}
+    assert set(rows["a"]) == MESSAGE
 
 
 def post(client: Client, body: Any) -> Any:
