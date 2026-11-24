@@ -90,8 +90,8 @@ describe("Inbox para atender rápido (F6-09)", () => {
     expect(filter).toHaveAttribute("aria-pressed", "false");
     const rows = within(await screen.findByRole("list", { name: /conversaciones/i }));
     expect(rows.getAllByRole("button")).toHaveLength(2);
-    expect(rows.getAllByRole("img", { name: "WhatsApp" })).toHaveLength(1); // la red de cada fila
-    expect(rows.getByRole("img", { name: "Sandbox" })).toBeInTheDocument();
+    expect(rows.getAllByText("WhatsApp")).toHaveLength(1); // la red de cada fila, en texto
+    expect(rows.getByText("Pruebas")).toBeVisible();
     fireEvent.click(filter);
     const list = async () => within(await screen.findByRole("list", { name: /conversaciones/i }));
     await waitFor(async () => expect((await list()).getAllByRole("button")).toHaveLength(1));
@@ -108,7 +108,7 @@ describe("Inbox para atender rápido (F6-09)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Todas" }));
     fireEvent.click(await screen.findByRole("button", { name: /Rosa Díaz/ }));
     const header = (await screen.findByRole("heading", { level: 2 })).closest("header")!;
-    expect(within(header).getByRole("img", { name: "WhatsApp" })).toBeInTheDocument(); // y en el chat
+    expect(within(header).getByText("WhatsApp")).toBeVisible(); // y en el chat
   });
 
   it("el título de la pestaña y el menú cuentan las que esperan; sin permiso no se pregunta", async () => {
