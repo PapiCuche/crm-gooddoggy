@@ -226,7 +226,8 @@ def test_the_send_answer_and_the_webhook_give_the_same_reason_for_each_code(code
     if code in whatsapp.TOO_FAST + whatsapp.AGAIN:  # no lo aceptó: primero se reintenta (F7b-18)
         with pytest.raises(TemporaryChannelError):
             whatsapp._refused(400, raw, AmbiguousChannelError)
-        assert whatsapp.code_for(code) in ("RATE_LIMITED", "PROVIDER_ERROR")
+        limited = code in whatsapp.TOO_FAST
+        assert whatsapp.code_for(code) == ("RATE_LIMITED" if limited else "PROVIDER_ERROR")
         return
     assert whatsapp._refused(400, raw, AmbiguousChannelError).reason == whatsapp.code_for(code)
 

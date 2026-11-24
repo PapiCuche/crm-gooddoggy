@@ -22,7 +22,7 @@ from tests.conftest import migrator_conninfo
 from tests.meta_sim import webhooks
 from tests.test_conversation_commands import audit, outbound, world, writer
 from tests.test_conversations_dispatch import Retrying, state
-from tests.test_conversations_failed_reply import WAITING, chat, fresh_wake, look, move, reopened
+from tests.test_conversations_failed_reply import chat, fresh_wake, look, move, reopened
 from tests.test_delivery_correction import corrections, failed
 from tests.test_delivery_status import run
 from tests.test_memberships import ctx
@@ -32,6 +32,18 @@ from tests.test_whatsapp_outbound import graph, redis, talk
 __all__ = ["channel", "chat", "fresh_wake", "graph", "redis", "world", "writer"]  # los fixtures
 pytestmark = pytest.mark.usefixtures("tenant_db", "channel")
 OK = b'{"messages": [{"id": "wamid.LATE000001"}]}'
+# Los bloqueos que esperan; `pg_locks` muestra los de todos los roles (`pg_stat_activity` no le
+# muestra al migrador la espera de las sesiones de `crm_app`).
+WAITING = "SELECT count(*) FROM pg_locks WHERE NOT granted"
+
+
+def wait_for(migrator: Any, waiting: int) -> None:
+    """Hasta que `waiting` sesiones esperan un bloqueo; si no llega, la prueba falla."""
+    for _ in range(400):
+        if migrator.execute(WAITING).fetchone()[0] >= waiting:
+            return
+        time.sleep(0.05)
+    pytest.fail(f"nunca esperaron {waiting} bloqueos")
 
 
 def error(code: int) -> bytes:
@@ -136,6 +148,31 @@ def test_a_late_refusal_after_the_webhook_corrected_it_changes_nothing_more(
     assert state(world, message).provider_error_code == "QUALITY_BLOCKED"
     assert len(corrections(migrator)) == 1 and seen == [message.pk]
     assert account_audits(migrator) == ["channel_account.degraded"]  # la cuenta, una vez
+
+
+@pytest.mark.parametrize(
+    ("outcome", "status", "action"),
+    [("quality", "DEGRADED", "channel_account.degraded"),
+     ("token", "ERROR", "channel_account.token_invalid")],
+)  # fmt: skip
+def test_a_late_refusal_over_a_message_already_settled_still_changes_the_account_once(
+    world: SimpleNamespace, chat: Conversation, graph: Any, migrator: Any,
+    outcome: str, status: str, action: str,
+) -> None:  # fmt: skip
+    graph.then(outcome)
+    message, _ = outbound(world, chat)
+
+    def webhook_first(claim: channels.Claim) -> SendResult:  # otro motivo, sin tocar la cuenta
+        assert run(failed(message, 131047)) == {"PROCESSED": 1}
+        return whatsapp.WhatsAppAdapter().send(claim)
+
+    late(world, migrator, message, webhook_first)  # `settle_outbound` ya no cambia nada: `None`
+    assert state(world, message).provider_error_code == "WINDOW_CLOSED"  # el primero se queda
+    with tenant_scope(ctx(world.a)):
+        assert ChannelAccount.objects.get(pk=chat.channel_account_id).status == status
+    assert account_audits(migrator) == [action]  # lo que Meta dijo de la cuenta, una vez
+    tasks.deliver(Retrying(0), world.a, message.pk)  # ni se reenvía ni se repite
+    assert account_audits(migrator) == [action] and len(graph.requests) == 1
 
 
 def test_a_refusal_after_meta_reported_the_message_sent_never_fails_it(
@@ -307,10 +344,7 @@ def test_the_sweeper_and_a_late_refusal_at_once_end_with_the_refusal_and_one_hoo
         held.execute("SELECT 1 FROM messages WHERE id = %s FOR UPDATE", [message.pk])
         for waiting, thread in enumerate(threads, start=1):  # en este orden
             thread.start()
-            for _ in range(200):
-                if migrator.execute(WAITING).fetchone()[0] >= waiting:
-                    break
-                time.sleep(0.05)
+            wait_for(migrator, waiting)
     for thread in threads:
         thread.join(timeout=10)
     saved = state(world, message)
