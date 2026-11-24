@@ -232,7 +232,7 @@ function Row({
           {/* El punto de la red (UX-INBOX-01) se suma al nombre de la red de abajo; la elegida sigue
               marcada por su borde y su fondo, y los avisos por su icono y su texto. */}
           <span className="flex min-w-0 items-start gap-2">
-            <ChannelDot platform={row.channel.platform} />
+            <ChannelDot platform={row.channel.platform} className="mt-1.5" />
             <span className="min-w-0 font-medium">
               {name === null ? t("contactUnavailable") : <Plain>{name}</Plain>}
             </span>

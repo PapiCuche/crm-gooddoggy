@@ -62,12 +62,13 @@ export function ChannelMark({ platform }: { platform: string }) {
 }
 
 // El punto de la fila, junto al nombre del cliente: decorativo, la red ya se dice en texto.
-export function ChannelDot({ platform }: { platform: string }) {
+export function ChannelDot({ platform, className }: { platform: string; className?: string }) {
+  const { dot } = TONES[channelOf(platform).tone];
   return (
     <span
       aria-hidden
       data-channel-dot
-      className={cn("size-2 shrink-0 rounded-full", TONES[channelOf(platform).tone].dot)}
+      className={cn("size-2 shrink-0 rounded-full", dot, className)}
     />
   );
 }
