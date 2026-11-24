@@ -19,7 +19,6 @@ export async function generateMetadata(): Promise<Metadata> {
 
 // En Android el teclado encoge el viewport (y `dvh`): el Inbox cabe con el teclado abierto.
 export const viewport: Viewport = { interactiveWidget: "resizes-content" };
-
 export default async function RootLayout({ children }: { children: ReactNode }) {
   // La CSP usa un nonce por petición (src/proxy.ts): ninguna página se prerenderiza en el build.
   await connection();

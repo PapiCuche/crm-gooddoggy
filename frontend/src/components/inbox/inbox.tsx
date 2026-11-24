@@ -3,7 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
-import { useEffect, useRef, useState } from "react";
+import { startTransition, useEffect, useRef, useState } from "react";
 
 import { useTenant } from "@/components/app-shell/tenant-context";
 import { useReads } from "@/components/inventory/cell-picker";
@@ -37,7 +37,6 @@ export function Inbox() {
   const fromList = picked?.slug === slug && picked.row.id === wanted ? picked.row : null;
   const pushed = useRef(false); // la entrada `?c=` del historial la puso esta pantalla
   const [gone, setGone] = useState<string | null>(null);
-  // Un `?c=` que no viene de la lista (recargar, enlace) se lee con el detalle.
   const enabled = !!wanted && !fromList && validId(wanted);
   const deep = useQuery(
     getConversationsRetrieveQueryOptions(slug, wanted ?? "", { query: { enabled, gcTime: 0 } }),
@@ -51,9 +50,9 @@ export function Inbox() {
     pushed.current = false;
     setUrlConversation(null, false); // vuelve a la lista con el texto de siempre
   }, [why]);
-  // El cliente que se ve en el panel (el del detalle, no el de la fila), de la abierta; si no, el chat.
-  const [shown, setCustomer] = useState<{ of: string; contact: ConversationContact } | null>(null);
-  const customer = shown && shown.of === selected?.id ? shown.contact : null;
+  // El cliente que se ve en el panel (el del detalle de la conversación, no el de la fila de la lista);
+  // `null`: se ve el chat.
+  const [customer, setCustomer] = useState<ConversationContact | null>(null);
   const view = customer ? "customer" : "chat";
   const customerHeading = useRef<HTMLHeadingElement>(null);
   const heading = useRef<HTMLHeadingElement>(null);
@@ -120,15 +119,18 @@ export function Inbox() {
             filters={filters}
             onFilters={setFilters}
             selectedId={selectedId}
-            onSelect={(next) => {
-              toChat.current = view === "customer";
-              setCustomer(null);
-              setPicked({ slug, row: next });
-              setGone(null);
-              if (next.id === wanted) return;
-              pushed.current ||= !wanted; // abrir añade una entrada; cambiar la reemplaza
-              setUrlConversation(next.id, !wanted);
-            }}
+            // En la transición en la que Next aplica la URL: nunca un render con la fila nueva y `?c=` viejo.
+            onSelect={(next) =>
+              startTransition(() => {
+                toChat.current = view === "customer";
+                setCustomer(null);
+                setPicked({ slug, row: next });
+                setGone(null);
+                if (next.id === wanted) return;
+                pushed.current ||= !wanted; // abrir añade una entrada; cambiar la reemplaza
+                setUrlConversation(next.id, !wanted);
+              })
+            }
           />
         </section>
         <section aria-label={t("chat.landmark")} className="min-w-0">
@@ -147,7 +149,7 @@ export function Inbox() {
                     if (pushed.current) history.back();
                     else setUrlConversation(null, false);
                   }}
-                  onCustomer={(contact) => setCustomer({ of: selected.id, contact })}
+                  onCustomer={setCustomer}
                 />
               </div>
               {customer ? (

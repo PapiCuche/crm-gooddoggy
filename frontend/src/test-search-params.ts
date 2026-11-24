@@ -1,13 +1,16 @@
-import { useSyncExternalStore } from "react";
+import { startTransition, useEffect, useState } from "react";
 
-// `useSearchParams` en jsdom: `location`, avisado por `history` y `popstate`.
+// `useSearchParams` en jsdom: como en Next, la URL de `history` y `popstate` llega en una transición.
 for (const name of ["pushState", "replaceState"] as const) {
   const original = history[name].bind(history);
   history[name] = (...args) => (original(...args), dispatchEvent(new PopStateEvent("popstate")));
 }
-const listen = (notify: () => void) => {
-  addEventListener("popstate", notify);
-  return () => removeEventListener("popstate", notify);
-};
-export const useSearchParams = () =>
-  new URLSearchParams(useSyncExternalStore(listen, () => location.search));
+export function useSearchParams() {
+  const [search, setSearch] = useState(location.search);
+  useEffect(() => {
+    const sync = () => startTransition(() => setSearch(location.search));
+    addEventListener("popstate", sync);
+    return () => removeEventListener("popstate", sync);
+  }, []);
+  return new URLSearchParams(search);
+}

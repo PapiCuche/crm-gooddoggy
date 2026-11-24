@@ -822,28 +822,22 @@ describe("Inbox, chat (F6-03)", () => {
 describe("móvil: la conversación en la URL (UX-INBOX-03)", () => {
   const ID = "0b9b4a52-6f0e-4c1a-9d1e-5a7c2f3e8b10";
   const row = conversation(ID);
-  const routes = { [LIST]: page([row]), [MESSAGES(ID)]: page([]) };
+  const juan = conversation(`1${ID.slice(1)}`, { contact: { id: "c2", display_name: "Juan" } });
+  const routes = { [LIST]: page([row, juan]) };
   const at = () => new URLSearchParams(location.search).get("c");
   const GONE = { status: 404, body: { code: "NOT_FOUND" } };
 
   it("abrir añade una entrada al historial y «atrás» vuelve a la lista con el foco en la fila", async () => {
-    const other = {
-      ...conversation(`1${ID.slice(1)}`),
-      contact: { id: "c2", display_name: "Juan" },
-    };
-    serve({ ...routes, [LIST]: page([row, other]), [MESSAGES(other.id)]: page([]) });
+    serve(routes);
     show();
     const back = vi.spyOn(history, "back");
     const before = history.length;
-    await open(/Rosa Díaz/);
-    await open(/Juan/); // cambiar de una a otra reemplaza la entrada
     await open(/Rosa Díaz/);
     expect(at()).toBe(ID);
     history.back(); // el gesto del teléfono o el botón del navegador
     await waitFor(() => expect(at()).toBeNull());
     await waitFor(() => expect(screen.queryByRole("heading", { level: 2 })).toBeNull());
     expect(document.activeElement).toBe(document.getElementById(`conversation-${ID}`));
-    // El botón «volver» deshace la misma entrada: no apila otra.
     await open(/Rosa Díaz/);
     fireEvent.click(screen.getByRole("button", { name: "Volver a las conversaciones" }));
     await waitFor(() => expect(at()).toBeNull());
@@ -851,23 +845,40 @@ describe("móvil: la conversación en la URL (UX-INBOX-03)", () => {
     expect(history.length).toBe(before + 1);
   });
 
-  it("un enlace `?c=` abre la conversación sin añadir entradas; volver la cambia por la lista", async () => {
+  it("un enlace `?c=` abre sin añadir entradas; cambiar de conversación y volver no sale del Inbox", async () => {
     history.replaceState(null, "", `/?c=${ID}`);
-    const api = serve({ ...routes, [LIST]: page([]), [DETAIL(ID)]: { status: 200, body: row } }); // la lista no la trae
+    const api = serve({
+      ...routes,
+      [LIST]: page([juan]),
+      [DETAIL(ID)]: { status: 200, body: row },
+    }); // la lista no la trae
     show();
-    const before = history.length;
+    const push = vi.spyOn(history, "pushState");
     expect(await screen.findByRole("heading", { level: 2 })).toHaveTextContent("Rosa Díaz");
     expect(api).toHaveBeenCalledWith(DETAIL(ID).slice(4), expect.anything());
+    await open(/Juan/); // reemplaza la entrada
     const back = vi.spyOn(history, "back");
     fireEvent.click(screen.getByRole("button", { name: "Volver a las conversaciones" }));
     await waitFor(() => expect(at()).toBeNull());
     expect(back).not.toHaveBeenCalled(); // se reemplaza: no saca del Inbox
-    expect(history.length).toBe(before); // «atrás» del navegador sale del Inbox, como siempre
+    expect(push).not.toHaveBeenCalled(); // «atrás» del navegador sale del Inbox, como siempre
+  });
+
+  it("en escritorio, cambiar con la ficha abierta enfoca el chat nuevo sin volver al anterior", async () => {
+    vi.stubGlobal("matchMedia", (query: string) => ({ matches: query.includes("min-width") }));
+    const api = serve(routes);
+    show();
+    await open(/Rosa Díaz/);
+    fireEvent.click(screen.getByRole("button", { name: "Cliente y oportunidades" }));
+    fireEvent.click(screen.getByRole("button", { name: /Juan/ }));
+    await waitFor(() => expect(document.activeElement).toHaveTextContent("Juan"));
+    expect(api.mock.calls.filter(([url]) => String(url) === DETAIL(ID).slice(4))).toHaveLength(1);
   });
 
   it.each([
     ["un 404 de la API", ID, true],
     ["un id que no es un UUID, sin llegar a la API", "../../members", false],
+    ["un UUID en mayúsculas (Django no lo acepta), sin llegar a la API", ID.toUpperCase(), false],
   ])("%s vuelve a la lista con el texto de siempre", async (_name, id, asked) => {
     history.replaceState(null, "", `/?c=${encodeURIComponent(id)}`);
     const api = serve({ [LIST]: page([]), [DETAIL(id)]: GONE });

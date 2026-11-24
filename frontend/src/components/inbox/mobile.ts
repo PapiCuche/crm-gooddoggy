@@ -1,18 +1,15 @@
-"use client";
-
 import { type RefObject, useEffect, useSyncExternalStore } from "react";
 
 // Se mira al pulsar, no al montar: un iPad con teclado físico puede declarar `pointer: fine`.
 export const coarse = () =>
   typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
 const never = () => () => {};
-const desktop = () => false;
 // Para lo que se pinta (ayuda, `enterKeyHint`): se relee en cada render; en el servidor, escritorio.
-export const useCoarse = () => useSyncExternalStore(never, coarse, desktop);
+export const useCoarse = () => useSyncExternalStore(never, coarse, () => false);
 
 // `?c=<id>`: solo un UUID llega a la API (el cliente no codifica la ruta: `../` no entra en ella).
 export const validId = (id: string) =>
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id);
 
 // `history` nativo: Next.js lo integra en su router (`useSearchParams`) sin pedir la página.
 export function setUrlConversation(id: string | null, push: boolean) {
@@ -22,9 +19,8 @@ export function setUrlConversation(id: string | null, push: boolean) {
   history[push ? "pushState" : "replaceState"](null, "", url);
 }
 
-type Box = RefObject<HTMLElement | null>;
 // iOS no encoge el viewport con el teclado (Android sí): mientras se escribe, `--keyboard-vh`.
-export function useKeyboardHeight(panel: Box, scroller: Box) {
+export function useKeyboardHeight(panel: RefObject<HTMLElement | null>, scroller: typeof panel) {
   useEffect(() => {
     const [root, box, viewport] = [panel.current, scroller.current, window.visualViewport];
     if (!root || !box || !viewport) return;
@@ -41,10 +37,9 @@ export function useKeyboardHeight(panel: Box, scroller: Box) {
       root.style.removeProperty("--keyboard-vh");
     };
     const off = new AbortController();
-    const options = { signal: off.signal };
-    box.addEventListener("scroll", mark, options);
-    root.addEventListener("focusin", start, options);
-    root.addEventListener("focusout", stop, options);
+    box.addEventListener("scroll", mark, { signal: off.signal });
+    root.addEventListener("focusin", start, { signal: off.signal });
+    root.addEventListener("focusout", stop, { signal: off.signal });
     keep?.observe(box);
     return () => {
       off.abort();

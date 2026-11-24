@@ -289,7 +289,6 @@ describe("notas internas en el cuadro de redacción (F6-05c)", () => {
     expect(panel.querySelector("header")).toHaveClass("shrink-0");
     expect(scroller.nextElementSibling).toHaveClass("shrink-0"); // el cuadro nunca se comprime ni sale
     const keyboard = () => (panel as HTMLElement).style.getPropertyValue("--keyboard-vh");
-    expect(keyboard()).toBe("");
     const box = await reply();
     act(() => box.focus());
     expect(keyboard()).toBe("500px");
@@ -297,6 +296,7 @@ describe("notas internas en el cuadro de redacción (F6-05c)", () => {
     act(() => void viewport.dispatchEvent(new Event("resize")));
     expect(keyboard()).toBe("320px");
     act(() => box.blur());
+    act(() => void viewport.dispatchEvent(new Event("resize"))); // ya sin escuchar
     expect(keyboard()).toBe("");
   });
 

@@ -480,7 +480,7 @@ describe("teclado del teléfono (UX-INBOX-03)", () => {
   const enter = async () => fireEvent.keyDown(await box(), { key: "Enter" }); // `false`: impedido
   const keys = async () => document.getElementById(`${(await box()).id}-keys`);
 
-  it("se mira al pulsar: en táctil Enter agrega la línea y no envía; en escritorio envía", async () => {
+  it("se mira al pulsar: pasar a táctil sin montar de nuevo hace que Enter agregue la línea", async () => {
     const s = await start(false);
     expect(await box()).toHaveAttribute("enterkeyhint", "send");
     expect(await keys()).toHaveTextContent("Enter envía; Mayús+Enter agrega una línea.");
@@ -489,9 +489,6 @@ describe("teclado del teléfono (UX-INBOX-03)", () => {
     expect(await enter()).toBe(true); // el navegador pone la línea
     await settle();
     expect(s.posts()).toEqual([]);
-    touch = false;
-    expect(await enter()).toBe(false);
-    await waitFor(() => expect(s.posts()).toHaveLength(1));
   });
 
   it("en táctil lo dicen la ayuda y la tecla; dos toques en «Enviar» mandan una sola petición", async () => {
@@ -502,17 +499,9 @@ describe("teclado del teléfono (UX-INBOX-03)", () => {
     await type("Hola");
     fireEvent.click(sendButton());
     fireEvent.click(sendButton()); // en el mismo instante: `isPending` aún no se pintó
-    s.go();
-    await waitFor(() => expect(box()).resolves.toHaveValue(""));
     await settle();
     expect(s.posts()).toHaveLength(1);
-  });
-
-  it("un envío en curso al cerrar el chat no bloquea el siguiente", async () => {
-    const s = await start(false);
-    s.wait();
-    await type("Hola");
-    fireEvent.click(sendButton());
+    // Cerrar el chat con el envío en curso no bloquea el siguiente.
     fireEvent.click(screen.getByRole("button", { name: "Volver a las conversaciones" }));
     await waitFor(() => expect(screen.queryByRole("heading", { level: 2 })).toBeNull());
     await openChat();

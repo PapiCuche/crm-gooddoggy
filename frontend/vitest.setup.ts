@@ -8,5 +8,4 @@ vi.mock("next/navigation", async (original) => ({
   useSearchParams: (await import("./src/test-search-params")).useSearchParams,
 }));
 
-// Sin `globals`, Testing Library no limpia el DOM entre tests; la URL tampoco pasa de uno a otro.
-afterEach(() => (cleanup(), globalThis.history?.replaceState(null, "", "/")));
+afterEach(() => (cleanup(), globalThis.history?.replaceState(null, "", "/"))); // sin `globals`, ni DOM ni URL pasan de un test a otro
