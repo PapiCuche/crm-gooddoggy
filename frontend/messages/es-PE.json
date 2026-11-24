@@ -2577,13 +2577,6 @@
       "filter": "Sin responder",
       "count": "{count, plural, one {# conversación sin responder} other {# conversaciones sin responder}}"
     },
-    "network": {
-      "WHATSAPP": "WhatsApp",
-      "SANDBOX": "Sandbox",
-      "INSTAGRAM": "Instagram",
-      "MESSENGER": "Messenger",
-      "UNKNOWN": "Otra red"
-    },
     "notify": {
       "toggle": "Avisarme de mensajes nuevos",
       "blocked": "El navegador bloqueó los avisos de esta página.",
@@ -2713,7 +2706,9 @@
       "WHATSAPP": "WhatsApp",
       "MESSENGER": "Messenger",
       "INSTAGRAM": "Instagram",
-      "UNKNOWN": "Otro canal"
+      "UNKNOWN": "Otro canal",
+      "TEST": "Pruebas",
+      "OTHER": "Otra red"
     },
     "status": {
       "PENDING": "Pendiente",
