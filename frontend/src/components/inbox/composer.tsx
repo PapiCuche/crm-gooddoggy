@@ -302,6 +302,7 @@ function ComposeBox({
         ...{ delivery_status: note ? null : "QUEUED", created_at: new Date().toISOString() },
         ...{ sent_at: null, delivered_at: null, read_at: null, failed_at: null },
         ...{ provider_error_code: null, provider_error_detail: null, attachment: null },
+        dispatch_attempts: 0,
       };
       client.setQueryData<Pages>(key, (data) =>
         edit(data, (rows, newest) => (newest ? [pending, ...rows] : rows)),

@@ -421,6 +421,31 @@ def test_every_shape_of_answer_is_a_closed_outcome_and_an_unclear_success_is_nev
             whatsapp.WhatsAppAdapter().send(claim)
 
 
+@pytest.mark.parametrize(
+    ("status", "raw", "detail"),
+    [
+        (400, b'{"error": {"code": 130429, "error_subcode": 2494055, "message": "Rate"}}',
+         "130429/2494055"),
+        (400, b'{"error": {"code": 613, "message": "Calls to this api"}}', "613"),
+        (429, b"", None),
+        (429, b'{"error": {"code": "613"}}', None),
+    ],
+)  # fmt: skip
+def test_a_meta_limit_carries_its_code_in_numbers_for_when_the_retries_run_out(
+    monkeypatch: pytest.MonkeyPatch, settings: Any, status: int, raw: bytes, detail: Any
+) -> None:
+    """F7b-17: el error temporal lleva el código del límite y nunca el texto de Meta."""
+    settings.META_ENABLED = True
+    monkeypatch.setattr(http, "request", lambda *a, **k: SimpleNamespace(status=status, data=raw))
+    mine = new_id()
+    box = sealed.seal(TOKEN_PURPOSE, credentials.owner(mine), TEST_TOKEN.encode())
+    claim = channels.Claim(new_id(), mine, "WHATSAPP", PHONE_NUMBER_ID, PHONE, "x",
+                           Credential(owner_id=mine, ciphertext=box))  # fmt: skip
+    with pytest.raises(TemporaryChannelError) as caught:
+        whatsapp.WhatsAppAdapter().send(claim)
+    assert (caught.value.detail, caught.value.args) == (detail, ())
+
+
 def test_only_a_sending_message_can_be_settled_or_returned(world: SimpleNamespace) -> None:
     queued = tables.message(
         world.a, tables.first(world), delivery_status="QUEUED", sender_user_id=world.ana.pk, **OUT

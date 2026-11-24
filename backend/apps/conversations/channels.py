@@ -8,18 +8,26 @@ lanza `TemporaryChannelError` (seguro que no llegó: se devuelve el reclamo y se
 `AmbiguousChannelError` (pudo llegar: no se reenvía a ciegas, Meta no deduplica).
 """
 
+import re
 from dataclasses import dataclass, field
 from typing import Protocol
 from uuid import UUID
 
-from apps.conversations.models import FAILURE_CODES, Credential
+from apps.conversations.models import FAILURE_CODES, META_ERROR, Credential
 
 REASONS = FAILURE_CODES  # los motivos de un `FAILED` (los de la política, el despacho y Meta)
 
 
 class TemporaryChannelError(Exception):
     """Seguro que el canal no recibió el mensaje (no se llegó a él, o «demasiado rápido»): se
-    reintenta con espera creciente."""
+    reintenta con espera creciente. `detail` (F7b-17): el código de Meta del límite (`613`,
+    `4/1234`), que se guarda si los reintentos se agotan; solo números (`META_ERROR`), cualquier
+    otra cosa es `None`. Sin argumentos: el error nunca lleva texto."""
+
+    def __init__(self, detail: str | None = None) -> None:
+        super().__init__()
+        fine = isinstance(detail, str) and re.fullmatch(META_ERROR, detail) is not None
+        self.detail = detail if fine else None
 
 
 class AmbiguousChannelError(Exception):

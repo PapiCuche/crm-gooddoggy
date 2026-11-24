@@ -55,6 +55,13 @@ const MARKS: Record<string, ReactNode> = {
   READ: <CheckCheck aria-hidden className="text-success" />,
   FAILED: <TriangleAlert aria-hidden />,
 };
+// F7b-17: dos rótulos más que no son estados del servidor. `RETRYING`, un `QUEUED` que el canal ya
+// devolvió (`dispatch_attempts` > 0, p. ej. por un límite de envío); `UNCONFIRMED`, un `FAILED` con
+// `PROVIDER_UNKNOWN` (pudo haber salido): ninguno dice «No se pudo enviar».
+const LABELS: Record<string, ReactNode> = {
+  RETRYING: <RefreshCw aria-hidden />,
+  UNCONFIRMED: <Clock aria-hidden />,
+};
 
 // El chat de una conversación (F6-03): los mensajes de `GET …/conversations/{id}/messages/`
 // (F6-02c), de más antiguo a más reciente. La API los da del más nuevo al más antiguo, 50 por
@@ -390,12 +397,19 @@ function Bubble({
   // y una pista corta si es uno conocido. Nunca otro texto del servidor.
   const raw = message.provider_error_detail;
   const detail = state === "FAILED" && raw && META_ERROR.test(raw) ? raw : null;
-  const hint = detail && t.has(`failureMeta.${detail}`) ? t(`failureMeta.${detail}`) : null;
+  // Sin pista para `código/subcódigo` (p. ej. `10/2018065`), la del código solo (`10`), F7b-17. Solo
+  // en un rechazo genérico: con otro motivo el subcódigo ya dijo otra cosa (`10/2018278` es la
+  // ventana cerrada, `200/2534041` los mensajes apagados) y la pista del código lo contradiría.
+  const bare = reason === "PROVIDER_REJECTED" ? detail?.split("/")[0] : null;
+  const known = [detail, bare].find((key) => key && t.has(`failureMeta.${key}`));
+  const hint = known ? t(`failureMeta.${known}`) : null;
   const meta = !detail
     ? null
     : hint
       ? t("failureCodeHint", { code: detail, hint })
       : t("failureCode", { code: detail });
+  const retrying = state === "QUEUED" && message.dispatch_attempts > 0;
+  const shown = retrying ? "RETRYING" : unsure ? "UNCONFIRMED" : state;
   return (
     <li
       className={cn(
@@ -443,15 +457,15 @@ function Bubble({
         <time dateTime={message.created_at}>
           {format.dateTime(new Date(message.created_at), WHEN)}
         </time>
-        {state && STATES.includes(state) && t.has(`delivery.${state}`) ? (
+        {shown && state && STATES.includes(state) && t.has(`delivery.${shown}`) ? (
           <span
             className={cn(
               "inline-flex items-center gap-1 [&_svg]:size-3.5",
-              state === "FAILED" && !unsure && "text-danger font-semibold",
+              shown === "FAILED" && "text-danger font-semibold",
             )}
           >
-            {MARKS[state]}
-            {t(`delivery.${state}`)}
+            {LABELS[shown] ?? MARKS[state]}
+            {t(`delivery.${shown}`)}
           </span>
         ) : null}
       </p>

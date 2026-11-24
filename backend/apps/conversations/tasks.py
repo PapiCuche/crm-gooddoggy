@@ -90,7 +90,9 @@ def deliver(
             attempts = commands.release_outbound(ctx, message_id=message_id, wait=wait)
             if task.request.retries >= MAX_RETRIES or (attempts or 0) > MAX_RETRIES:
                 logger.warning("inbox.dispatch_gave_up", message_id=str(message_id))
-                commands.fail_queued(ctx, message_id=message_id, reason="RETRIES_EXHAUSTED")
+                commands.fail_queued(  # F7b-17: con el código de Meta del último límite
+                    ctx, message_id=message_id, reason="RETRIES_EXHAUSTED", detail=error.detail
+                )
                 return
         raise task.retry(exc=error, countdown=countdown, max_retries=MAX_RETRIES) from None
     with tenant_scope(ctx):

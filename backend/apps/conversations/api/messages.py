@@ -96,6 +96,11 @@ class MessageSerializer(serializers.Serializer[Any]):
         help_text="El error del proveedor en números, `código` o `código/subcódigo` (p. ej., "
         "`131031` o `10/2018278`), solo con `FAILED`; nunca su texto. `null` si no lo dio.",
     )
+    dispatch_attempts = serializers.IntegerField(
+        read_only=True,
+        help_text="Cuántas veces el canal no lo aceptó y volvió a la cola para reintentar (p. ej., "
+        "por un límite de envío); `0` en lo entrante y en lo que no reintentó.",
+    )
     created_at = serializers.DateTimeField()
     sent_at = serializers.DateTimeField(allow_null=True)
     delivered_at = serializers.DateTimeField(allow_null=True)

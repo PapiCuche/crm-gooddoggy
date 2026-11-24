@@ -103,9 +103,9 @@ class PageAdapter:
             raise AmbiguousChannelError  # Meta lo aceptó (200) y no dijo con qué id
         code = field_at(reply.data, "error", "code")
         subcode = field_at(reply.data, "error", "error_subcode")
-        reason = classify(code, subcode)
-        if reason == "RATE_LIMITED":
-            raise TemporaryChannelError  # Meta no lo aceptó: se reintenta con espera
+        reason, detail = classify(code, subcode), error_detail(code, subcode)
+        if reason == "RATE_LIMITED":  # Meta no lo aceptó: se reintenta con espera
+            raise TemporaryChannelError(detail)  # F7b-17: su código, si se agotan los reintentos
         if reason == "PROVIDER_ERROR":
             raise AmbiguousChannelError  # pudo haberse enviado: no se reenvía a ciegas
-        return SendResult(False, reason=reason, detail=error_detail(code, subcode))
+        return SendResult(False, reason=reason, detail=detail)
