@@ -1,8 +1,9 @@
 """El adaptador de WhatsApp (F7-05b; ADR-029 §6, §8): `POST /<versión>/<phone_number_id>/messages`
 por `core.http` con la versión de la Graph API fijada en `META_GRAPH_VERSION`.
 
-Meta no deduplica, así que lo que no se sabe no se reenvía: un fallo antes de enviar o «demasiado
-rápido» es `TemporaryChannelError`; un tiempo agotado, un corte o un 5xx, `AmbiguousChannelError`.
+Meta no deduplica, así que lo que no se sabe no se reenvía: un fallo antes de enviar, «demasiado
+rápido» o un fallo pasajero que Meta rechazó (`AGAIN`, F7b-18) es `TemporaryChannelError`; un tiempo
+agotado, un corte o un 5xx, `AmbiguousChannelError`.
 Un error de Meta se normaliza a un motivo cerrado, nunca su texto. El token se abre solo para esta
 llamada y va en la cabecera; `biz_opaque_callback_data` lleva el id de nuestro mensaje.
 
@@ -49,6 +50,11 @@ TEMPLATES = range(132000, 133000)  # la familia de errores de plantilla de Meta
 # Límites de tasa de Meta (los `RATE_LIMITED` de la tabla): en la respuesta del envío no lo aceptó y
 # se reintenta antes de la tabla.
 TOO_FAST = tuple(code for code, own in CODES.items() if own == "RATE_LIMITED")
+# F7b-18: fallos pasajeros de Meta («Temporary due to downtime», «Message failed to send… Try
+# again», «A service is temporarily unavailable»). Con una respuesta de error que no es 5xx, Meta no
+# lo aceptó: se reintenta. El `1` («Invalid request or possible server error») sigue definitivo; un
+# 5xx sigue ambiguo y en el webhook (ya lo había aceptado) siguen siendo `PROVIDER_ERROR`.
+AGAIN = (2, 131000, 131016)
 
 
 def field_at(raw: bytes, *path: str | int) -> Any:
@@ -88,8 +94,8 @@ def code_for(error_code: Any) -> str:
 
 
 def _refused(status: int, raw: bytes, server: type[Exception]) -> SendResult:
-    """Un rechazo de Meta: «demasiado rápido» se reintenta, un 5xx es `server` y el resto, el motivo
-    cerrado de `code_for` (el mismo que daría el webhook)."""
+    """Un rechazo de Meta: «demasiado rápido» se reintenta, un 5xx es `server`, un fallo pasajero
+    (`AGAIN`) se reintenta y el resto, el motivo cerrado de `code_for` (el del webhook)."""
     code = field_at(raw, "error", "code")
     code = code if isinstance(code, int) and not isinstance(code, bool) else None
     detail = error_detail(code, field_at(raw, "error", "error_subcode"))
@@ -97,6 +103,8 @@ def _refused(status: int, raw: bytes, server: type[Exception]) -> SendResult:
         raise TemporaryChannelError(detail)  # F7b-17: el código, por si se agotan los reintentos
     if status >= 500:
         raise server
+    if code in AGAIN:
+        raise TemporaryChannelError(detail)
     reason = "TOKEN_INVALID" if status == 401 else code_for(code)
     return SendResult(False, reason=reason, detail=detail)
 

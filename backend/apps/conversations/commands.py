@@ -1004,13 +1004,20 @@ def release_outbound(ctx: TenantContext, *, message_id: UUID, wait: dt.timedelta
 
 def settle_outbound(ctx: TenantContext, *, message_id: UUID, result: SendResult) -> Message | None:
     """Cierra un `SENDING` con la respuesta del adaptador: `SENT` (y `DELIVERED` si el canal lo
-    entregó) o `FAILED` con un motivo de `channels.REASONS` (uno raro: `ADAPTER_REJECTED`)."""
+    entregó) o `FAILED` con un motivo de `channels.REASONS` (uno raro: `ADAPTER_REJECTED`). Un
+    rechazo que llega cuando el plazo ya lo cerró con `PROVIDER_UNKNOWN` lo corrige por la misma
+    rama de F7b-15, una vez (F7b-18); con cualquier otro estado, `None` y nada cambia."""
     alias = require_scope(ctx)
     message_id = _uuid(message_id, "mensaje")
     with transaction.atomic(using=alias):
-        held = Message.objects.using(alias).filter(pk=message_id, delivery_status="SENDING")
+        mine = Message.objects.using(alias).filter(pk=message_id)
+        held = mine.filter(delivery_status="SENDING")
         if not held.select_for_update(no_key=True).exists():
-            return None
+            unsure = mine.filter(
+                delivery_status=Delivery.FAILED, provider_error_code="PROVIDER_UNKNOWN"
+            )
+            if result.ok or not unsure.select_for_update(no_key=True).exists():
+                return None  # una aceptación tardía la reconcilia el webhook, no esto
         if not result.ok:
             reason = result.reason if result.reason in REASONS else "ADAPTER_REJECTED"
             return advance_delivery(

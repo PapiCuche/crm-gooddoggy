@@ -223,10 +223,11 @@ def test_every_rate_limited_code_of_the_table_is_retried_first() -> None:
 @pytest.mark.parametrize("code", SYNC)
 def test_the_send_answer_and_the_webhook_give_the_same_reason_for_each_code(code: int) -> None:
     raw = b'{"error": {"code": %d}}' % code
-    if code in whatsapp.TOO_FAST:  # un límite de tasa: no lo aceptó, primero se reintenta
+    if code in whatsapp.TOO_FAST + whatsapp.AGAIN:  # no lo aceptó: primero se reintenta (F7b-18)
         with pytest.raises(TemporaryChannelError):
             whatsapp._refused(400, raw, AmbiguousChannelError)
-        assert whatsapp.code_for(code) == "RATE_LIMITED"
+        limited = code in whatsapp.TOO_FAST
+        assert whatsapp.code_for(code) == ("RATE_LIMITED" if limited else "PROVIDER_ERROR")
         return
     assert whatsapp._refused(400, raw, AmbiguousChannelError).reason == whatsapp.code_for(code)
 
