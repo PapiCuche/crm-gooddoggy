@@ -26,6 +26,7 @@ from apps.conversations.channels import (
     SendResult,
     TemporaryChannelError,
 )
+from apps.conversations.limits import fits  # la tabla de ADR-035 §7, también al encolar
 from apps.conversations.models import EXTERNAL_ID, META_ID
 from apps.conversations.whatsapp import admit, error_detail, field_at
 from core import http
@@ -40,7 +41,6 @@ ACCESS_OFF = (200, 2534041)  # el titular apagó «Allow access to messages» (I
 TOO_FAST = (4, 17, 32, 613, 80001, 80002, 80006)
 SERVER = (1, 2)  # error desconocido o servicio no disponible de Meta: pudo haberse enviado
 CODES = {190: "TOKEN_INVALID", 551: "RECIPIENT_UNREACHABLE"}
-TEXT_LIMITS = {"MESSENGER": ("chars", 2000), "INSTAGRAM": ("bytes", 1000)}  # ADR-035 §7
 
 
 def _int(value: Any) -> int | None:
@@ -60,12 +60,6 @@ def classify(code: Any, subcode: Any) -> str:
     if (code, subcode) == ACCESS_OFF:
         return "MESSAGES_ACCESS_OFF"
     return CODES.get(code, "PROVIDER_REJECTED")
-
-
-def fits(platform: str, text: str) -> bool:
-    """¿Cabe el texto en el canal? Messenger cuenta caracteres; Instagram, bytes UTF-8."""
-    unit, limit = TEXT_LIMITS[platform]
-    return (len(text.encode()) if unit == "bytes" else len(text)) <= limit
 
 
 class PageAdapter:

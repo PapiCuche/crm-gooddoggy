@@ -42,6 +42,7 @@ from apps.audit.services import Entity, record
 from apps.contacts.models import Contact
 from apps.conversations import attention, media, outbound_media
 from apps.conversations.channels import REASONS, Claim, Media, SendResult
+from apps.conversations.limits import fits, takes_media
 from apps.conversations.models import (
     META_ERROR,
     META_ID,
@@ -119,6 +120,15 @@ class UnverifiedContent(Exception):
 
 class StaleVersion(Exception):
     """Otra petición cambió la cuenta después de la versión que se editaba."""
+
+
+class TooLongForChannel(Exception):
+    """El texto pasa del tope del canal de la conversación (`limits`, F7b-16): el canal nunca lo
+    aceptaría."""
+
+
+class MediaNotSupported(Exception):
+    """El canal de la conversación aún no envía medios (Messenger e Instagram, F7b-16)."""
 
 
 def _uuid(value: Any, what: str) -> UUID:
@@ -471,7 +481,8 @@ def record_outbound(
     la respuesta (`CUSTOMER_REPLY`) no. `UnverifiedContent` si el texto (o el pie de foto) lleva la
     marca `[verificar]` (F8-08a). Plantillas: F7-10. Con `media` (F7-09b, el blob limpio ya
     guardado por `outbound_media.prepare`) el mensaje es de su tipo y crea su archivo `CLEAN`; un
-    reintento es el mismo solo con el mismo archivo (`sha256`)."""
+    reintento es el mismo solo con el mismo archivo (`sha256`). `TooLongForChannel` o
+    `MediaNotSupported` si el canal no lo aceptaría (`limits`, F7b-16), sin crear nada."""
     alias = require_scope(ctx)
     if purpose not in PURPOSES:
         raise ValueError("propósito no admitido")
@@ -495,6 +506,7 @@ def record_outbound(
         if earlier is None:  # un reenvío de lo ya guardado se devuelve aunque ya no se pueda enviar
             decision = messaging_decision(convo, alias=alias, purpose=purpose, sender="USER")
             require_allowed(decision)  # cerrada, sin canal, bloqueado, ventana cerrada o baja
+            _channel_takes(alias, convo, text, media)  # F7b-16: lo que el canal nunca aceptaría
             snapshot = decision.as_json()
         elif media and not File.objects.using(alias).filter(
             pk=earlier.file_id, sha256=media.sha256
@@ -539,6 +551,23 @@ def record_outbound(
                 payload={key: str(value) for key, value in ids.items()},
             )
         return message, created
+
+
+def _channel_takes(
+    alias: str, convo: Conversation, text: str, media: outbound_media.Prepared | None
+) -> None:
+    """`MediaNotSupported` o `TooLongForChannel` antes de crear nada (F7b-16), con la plataforma de
+    la cuenta de la conversación ya bloqueada y en el alcance."""
+    platform = (
+        ChannelAccount.objects.using(alias)
+        .filter(pk=convo.channel_account_id)
+        .values_list("platform", flat=True)
+        .first()
+    ) or ""
+    if media is not None and not takes_media(platform):
+        raise MediaNotSupported
+    if not fits(platform, text):
+        raise TooLongForChannel
 
 
 def queue_confirmation(ctx: TenantContext, *, conversation_id: UUID, body: str) -> Message | None:

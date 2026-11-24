@@ -36,7 +36,16 @@ const conversation = (id: string, changes: Partial<Conversation> = {}) =>
     ...{ id, number: `CONV-0000${id}`, status: "OPEN", attention_mode: "HUMAN" },
     ...{ assignee_kind: "UNASSIGNED", assigned_user_id: null, assigned_team_id: null },
     ...{ contact: { id: `c${id}`, display_name: "Rosa Díaz" } },
-    ...{ channel: { id: "ch1", platform: "SANDBOX", name: "Sandbox" } },
+    ...{
+      channel: {
+        id: "ch1",
+        platform: "SANDBOX",
+        name: "Sandbox",
+        text_max: 4096,
+        text_unit: "CHARACTERS",
+        accepts_media: true,
+      },
+    },
     ...{ last_message_at: "2026-11-04T15:30:00Z", last_inbound_at: "2026-11-04T15:30:00Z" },
     ...{ last_message_preview: "Hola, ¿tienen collares?", last_message_direction: "INBOUND" },
     ...{ version: 1, ...changes },
@@ -418,7 +427,9 @@ describe("Inbox, motivo de un fallo: el conjunto cerrado", () => {
         provider_error_code: code as Message["provider_error_code"],
       });
     const odd = platform as Conversation["channel"]["platform"]; // una plataforma rara también
-    const chat = conversation("1", { channel: { id: "ch1", platform: odd, name: "Cuenta" } });
+    const chat = conversation("1", {
+      channel: { ...conversation("1").channel, platform: odd, name: "Cuenta" },
+    });
     serve({
       [LIST]: page([chat]),
       [MESSAGES("1")]: page([
@@ -453,7 +464,14 @@ describe("Inbox, motivo de un fallo: el conjunto cerrado", () => {
         provider_error_detail: detail,
       });
     const chat = conversation("1", {
-      channel: { id: "ch1", platform: "MESSENGER", name: "Cuenta" },
+      channel: {
+        id: "ch1",
+        platform: "MESSENGER",
+        name: "Cuenta",
+        text_max: 2000,
+        text_unit: "CHARACTERS",
+        accepts_media: false,
+      },
     });
     serve({
       [LIST]: page([chat]),

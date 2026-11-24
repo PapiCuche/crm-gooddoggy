@@ -35,7 +35,16 @@ const rosa = {
   ...{ id: "1", number: "CONV-00001", status: "OPEN", attention_mode: "HUMAN" },
   ...{ assignee_kind: "UNASSIGNED", assigned_user_id: null, assigned_team_id: null },
   ...{ contact: { id: "c1", display_name: "Rosa Díaz" } },
-  ...{ channel: { id: "ch1", platform: "WHATSAPP", name: "Tienda Lima" } },
+  ...{
+    channel: {
+      id: "ch1",
+      platform: "WHATSAPP",
+      name: "Tienda Lima",
+      text_max: 4096,
+      text_unit: "CHARACTERS",
+      accepts_media: true,
+    },
+  },
   ...{ last_message_at: "2026-11-04T15:30:00Z", last_inbound_at: "2026-11-04T15:30:00Z" },
   ...{ last_message_preview: "Hola", last_message_direction: "INBOUND", version: 1 },
 } as Conversation;

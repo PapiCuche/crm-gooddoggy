@@ -6,9 +6,16 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { PlatformEnum } from "./platformEnum";
+import type { TextUnitEnum } from "./textUnitEnum";
 
 export interface ChannelRef {
   id: string;
   platform: PlatformEnum;
   name: string;
+  /** El tope del texto de una respuesta en este canal (F7b-16), en `text_unit`. */
+  readonly text_max: number;
+  /** `CHARACTERS` (puntos de código) o `BYTES` (UTF-8, Instagram). */
+  readonly text_unit: TextUnitEnum;
+  /** Si una respuesta puede llevar un adjunto (no en Messenger ni en Instagram). */
+  readonly accepts_media: boolean;
 }

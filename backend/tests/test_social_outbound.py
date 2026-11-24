@@ -16,7 +16,16 @@ import urllib3
 from django.utils import timezone
 from urllib3.exceptions import ReadTimeoutError
 
-from apps.conversations import channels, commands, credentials, meta_page, policy, tasks, whatsapp
+from apps.conversations import (
+    channels,
+    commands,
+    credentials,
+    limits,
+    meta_page,
+    policy,
+    tasks,
+    whatsapp,
+)
 from apps.conversations import graph as graph_api
 from apps.conversations.models import ChannelAccount, Conversation
 from apps.conversations.policy import WindowClosed
@@ -327,11 +336,15 @@ def test_a_malformed_page_id_is_refused_before_any_url_is_built(
 )
 def test_a_text_too_long_for_the_channel_is_rejected_before_meta(
     world: SimpleNamespace, graph: FakePageGraph, platform: str, body: str
-) -> None:
-    saved = send(world, talk(world, platform), body)[1]
-    assert (saved.delivery_status, saved.provider_error_code) == ("FAILED", "ADAPTER_REJECTED")
+) -> None:  # F7b-16: el comando ya lo rechaza al encolar; el adaptador sigue sin enviarlo
+    message, _ = outbound(world, talk(world, platform))
+    with tenant_scope(ctx(world.a)) as tenant:
+        claim = commands.claim_outbound(tenant, message_id=message.pk)
+    assert claim is not None
+    sent = channels.adapter_for(platform).send(dataclasses.replace(claim, body=body))
+    assert (sent.ok, sent.reason) == (False, "ADAPTER_REJECTED")
     assert graph.calls == []
-    assert meta_page.fits("INSTAGRAM", "ñ" * 500) and meta_page.fits("MESSENGER", "ñ" * 2000)
+    assert limits.fits("INSTAGRAM", "ñ" * 500) and limits.fits("MESSENGER", "ñ" * 2000)
 
 
 def test_the_claim_carries_the_identity_of_this_account_and_never_shows_it(

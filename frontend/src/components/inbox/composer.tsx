@@ -67,6 +67,7 @@ const DROP_FILE_ON: ApiErrorKey[] = [
   "MEDIA_TYPE_NOT_ALLOWED",
   "MEDIA_INFECTED",
   "MEDIA_TOO_COMPLEX",
+  "MEDIA_NOT_SUPPORTED_BY_CHANNEL",
 ];
 type Outgoing = SendMessageRequest & { file?: File };
 // Un 409 de la política de envío: lo que cambió puede estar también en la conversación.
@@ -227,10 +228,19 @@ function ComposeBox({
   const labels = useTranslations("inbox.media");
   const note = mode === "note";
   const key = messagesKey(slug, conversation.id);
-  // Con un archivo, el texto es su pie de foto: otro tope, contado en unidades UTF-16.
-  const max = file ? CAPTION_MAX : BODY_MAX;
+  // Con un archivo, el texto es su pie de foto: otro tope, contado en unidades UTF-16. Una respuesta
+  // sigue el tope de su canal (F7b-16, `channel.text_max`): Instagram cuenta bytes UTF-8.
+  // Sin los campos (una API anterior, durante un despliegue o un rollback) vale lo de antes.
+  const { text_max, text_unit, accepts_media } = conversation.channel;
+  const media = accepts_media !== false;
+  const bytes = !note && !file && text_unit === "BYTES";
+  const max = file ? CAPTION_MAX : note ? BODY_MAX : (text_max ?? BODY_MAX);
   // El navegador manda cada salto de línea del formulario como `\r\n`: cuenta dos.
-  const count = file ? text.length + (text.match(/\n/g)?.length ?? 0) : Array.from(text).length;
+  const count = file
+    ? text.length + (text.match(/\n/g)?.length ?? 0)
+    : bytes
+      ? new TextEncoder().encode(text).length
+      : Array.from(text).length;
   // Una nota se admite también en una conversación cerrada; una respuesta no.
   const closed = !note && conversation.status === "CLOSED";
   const over = count > max;
@@ -518,9 +528,9 @@ function ComposeBox({
       {/* El tope se anuncia solo al cruzar el 90 % y el 100 %: el texto depende del nivel, no de la cuenta. */}
       <p aria-live="polite" className="sr-only">
         {over
-          ? t(note ? "overLimit.note" : "overLimit.reply")
+          ? t(note ? "overLimit.note" : bytes ? "overLimit.replyBytes" : "overLimit.reply")
           : count >= max * 0.9
-            ? t("nearLimit")
+            ? t(bytes ? "nearLimitBytes" : "nearLimit")
             : ""}
       </p>
       <div className="flex flex-wrap items-center justify-between gap-2 max-sm:contents">
@@ -547,7 +557,11 @@ function ComposeBox({
               !over && count < max * 0.9 && "max-lg:sr-only",
             )}
           >
-            {over ? t("over", { over: count - max }) : t("count", { count, max })}
+            {bytes
+              ? t(over ? "overBytes" : "countBytes", { count, max, over: count - max })
+              : over
+                ? t("over", { over: count - max })
+                : t("count", { count, max })}
           </span>
         </div>
         {note ? (
@@ -557,6 +571,7 @@ function ComposeBox({
           <div
             className={cn("flex items-center gap-2 max-sm:col-start-2 max-sm:self-center", first)}
           >
+            {/* Messenger e Instagram aún no envían adjuntos (`channel.accepts_media`): sin clip. */}
             <input
               ref={picker}
               type="file"
@@ -567,18 +582,20 @@ function ComposeBox({
                 event.target.value = ""; // el mismo archivo otra vez también avisa
               }}
             />
-            <Button
-              type="button"
-              variant="ghost"
-              className="border-border size-10 rounded-[14px] border px-0 aria-disabled:cursor-not-allowed aria-disabled:opacity-50 lg:size-11"
-              aria-label={t("attach")}
-              title={t("attach")}
-              disabled={closed}
-              aria-disabled={send.isPending}
-              onClick={() => send.isPending || picker.current?.click()}
-            >
-              <Paperclip aria-hidden />
-            </Button>
+            {media ? (
+              <Button
+                type="button"
+                variant="ghost"
+                className="border-border size-10 rounded-[14px] border px-0 aria-disabled:cursor-not-allowed aria-disabled:opacity-50 lg:size-11"
+                aria-label={t("attach")}
+                title={t("attach")}
+                disabled={closed}
+                aria-disabled={send.isPending}
+                onClick={() => send.isPending || picker.current?.click()}
+              >
+                <Paperclip aria-hidden />
+              </Button>
+            ) : null}
             {action}
           </div>
         )}

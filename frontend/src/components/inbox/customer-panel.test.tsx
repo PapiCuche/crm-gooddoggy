@@ -33,7 +33,17 @@ const row = (contact: { id: string; display_name: string | null }) =>
   ({
     ...{ id: "1", number: "CONV-00001", status: "OPEN", attention_mode: "HUMAN", version: 1 },
     ...{ assignee_kind: "UNASSIGNED", assigned_user_id: null, assigned_team_id: null, contact },
-    ...{ channel: { id: "ch1", platform: "SANDBOX", name: "Sandbox" }, assignment_version: 1 },
+    ...{
+      channel: {
+        id: "ch1",
+        platform: "SANDBOX",
+        name: "Sandbox",
+        text_max: 4096,
+        text_unit: "CHARACTERS",
+        accepts_media: true,
+      },
+      assignment_version: 1,
+    },
     ...{ last_message_at: "2026-11-04T15:30:00Z", last_inbound_at: null },
     ...{ last_message_preview: null, last_message_direction: null },
   }) as unknown as Conversation;
