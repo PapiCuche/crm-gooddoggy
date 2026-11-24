@@ -5,7 +5,7 @@ from typing import Any
 from uuid import UUID
 
 from django.conf import settings
-from django.db.models import Exists, OuterRef, Q, QuerySet, Subquery
+from django.db.models import Case, Exists, OuterRef, Q, QuerySet, Subquery, Value, When
 from django.utils import timezone
 
 from apps.contacts.models import Contact
@@ -89,18 +89,26 @@ def servable(conversation_id: UUID, attachment_id: UUID) -> tuple[MessageAttachm
 
 def channel_accounts() -> QuerySet[ChannelAccount]:
     """Las cuentas de canal vivas, cada una con `token_last_four` (el final de su credencial viva,
-    `NULL` si no la tiene) y `has_standby_conversations` (alguna conversación no cerrada de la
-    cuenta en `standby`, ADR-035 §4) en la misma consulta. Nunca se anota nada más de la
-    credencial."""
+    `NULL` si no la tiene), su caducidad (F7b-12b: `token_expires_at` y `token_expiry`, `UNKNOWN`
+    sin leer, `NEVER` leída y sin fecha, `AT` con fecha; `NULL` sin credencial viva) y
+    `has_standby_conversations` (alguna conversación no cerrada de la cuenta en `standby`, ADR-035
+    §4) en la misma consulta. Nunca se anota nada más de la credencial."""
     live = Credential.objects.filter(
         pk=OuterRef("credential_id"), owner_id=OuterRef("pk"), revoked_at__isnull=True
     )  # viva y de esta cuenta: una credencial ajena no se enseña
+    expiry = Case(
+        When(expiry_checked_at__isnull=True, then=Value("UNKNOWN")),
+        When(expires_at__isnull=True, then=Value("NEVER")),
+        default=Value("AT"),
+    )  # `credentials_expiry_ck`: sin leer no hay fecha, así que `AT` siempre la trae
     standby = Conversation.objects.filter(
         channel_account_id=OuterRef("pk"), standby_since__isnull=False
     ).exclude(status=Status.CLOSED)
     found: QuerySet[ChannelAccount] = ChannelAccount.objects.filter(deleted_at__isnull=True)
     return found.annotate(
         token_last_four=Subquery(live.values("last_four")[:1]),
+        token_expires_at=Subquery(live.values("expires_at")[:1]),
+        token_expiry=Subquery(live.annotate(state=expiry).values("state")[:1]),
         has_standby_conversations=Exists(standby),
     )
 

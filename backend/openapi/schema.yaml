@@ -13532,6 +13532,23 @@ components:
           nullable: true
           description: Lo único que se enseña del token; `null` si la cuenta no tiene
             credencial viva.
+        token_expires_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Cuándo caduca el token de la credencial viva, según Meta (F7b-12);
+            `null` si no caduca, no se sabe o no hay credencial viva.
+        token_expiry:
+          nullable: true
+          description: |-
+            `AT`: caduca en `token_expires_at`; `NEVER`: Meta dice que no caduca; `UNKNOWN`: no se sabe todavía (WhatsApp no la lee). `null` sin credencial viva.
+
+            * `UNKNOWN` - UNKNOWN
+            * `NEVER` - NEVER
+            * `AT` - AT
+          oneOf:
+          - $ref: '#/components/schemas/TokenExpiryEnum'
+          - $ref: '#/components/schemas/NullEnum'
         has_standby_conversations:
           type: boolean
           description: 'Instagram o Messenger: alguna conversación no cerrada de la
@@ -13570,6 +13587,8 @@ components:
       - quality_rating
       - status
       - status_detail
+      - token_expires_at
+      - token_expiry
       - token_last_four
       - updated_at
       - version
@@ -20003,6 +20022,16 @@ components:
       - CHARACTERS
       - BYTES
       type: string
+    TokenExpiryEnum:
+      enum:
+      - UNKNOWN
+      - NEVER
+      - AT
+      type: string
+      description: |-
+        * `UNKNOWN` - UNKNOWN
+        * `NEVER` - NEVER
+        * `AT` - AT
     TokenRequest:
       type: object
       properties:
