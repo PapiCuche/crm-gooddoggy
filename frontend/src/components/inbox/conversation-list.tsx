@@ -6,6 +6,7 @@ import { useFormatter, useTranslations } from "next-intl";
 
 import { useTenant } from "@/components/app-shell/tenant-context";
 import { Choice } from "@/components/catalog/product-create";
+import { ChannelDot, ChannelSource } from "@/components/channels/channel-identity";
 import { useReads } from "@/components/inventory/cell-picker";
 import { Button } from "@/components/ui/button";
 import { conversationsList, getConversationsListQueryKey } from "@/lib/api/client";
@@ -18,7 +19,7 @@ import type { ApiError } from "@/lib/http";
 import { cn } from "@/lib/utils";
 
 import { Assignee } from "./assignment";
-import { ChannelMark, useUnanswered } from "./attention";
+import { useUnanswered } from "./attention";
 import { Plain } from "./plain";
 
 export const BOXES = ["all", "mine", "unassigned"] as const;
@@ -228,8 +229,13 @@ function Row({
         )}
       >
         <span className="flex items-start justify-between gap-2">
-          <span className="min-w-0 font-medium">
-            {name === null ? t("contactUnavailable") : <Plain>{name}</Plain>}
+          {/* El punto de la red (UX-INBOX-01) se suma al nombre de la red de abajo; la elegida sigue
+              marcada por su borde y su fondo, y los avisos por su icono y su texto. */}
+          <span className="flex min-w-0 items-start gap-2">
+            <ChannelDot platform={row.channel.platform} className="mt-1.5" />
+            <span className="min-w-0 font-medium">
+              {name === null ? t("contactUnavailable") : <Plain>{name}</Plain>}
+            </span>
           </span>
           <time dateTime={row.last_message_at} className="text-muted shrink-0 text-xs">
             {format.dateTime(new Date(row.last_message_at), SHORT)}
@@ -238,10 +244,7 @@ function Row({
         <span className="text-muted line-clamp-2 text-sm">{preview}</span>
         <span className="text-muted flex flex-wrap gap-x-2 text-xs">
           <span className="font-mono">{row.number}</span>
-          <span className="inline-flex items-center gap-1">
-            <ChannelMark platform={row.channel.platform} />
-            <Plain>{row.channel.name}</Plain>
-          </span>
+          <ChannelSource platform={row.channel.platform} account={row.channel.name} />
           <span>{t(`status.${row.status}`)}</span>
           <span>
             <Assignee who={row} />

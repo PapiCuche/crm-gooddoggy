@@ -1,8 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { Bell, BellOff, Camera, CircleHelp, FlaskConical, MessageCircle } from "lucide-react";
-import { MessagesSquare, TriangleAlert } from "lucide-react";
+import { Bell, BellOff, TriangleAlert } from "lucide-react";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
@@ -19,28 +18,8 @@ import type { ChannelAccount, ConversationsUnansweredCountBox } from "@/lib/api/
 
 import { Plain } from "./plain";
 
-// Lo que ayuda a atender rápido (F6-09): la red de cada conversación, cuántas esperan respuesta, el
-// aviso del navegador y las cuentas de canal que no pueden atender.
-
-// Cada red con su icono (las marcas no están en lucide) y su nombre, que lee el lector de pantalla.
-// Instagram y Messenger ya tienen el suyo; una red que la pantalla no conoce no la rompe.
-const NETWORKS = {
-  WHATSAPP: MessageCircle,
-  SANDBOX: FlaskConical,
-  INSTAGRAM: Camera,
-  MESSENGER: MessagesSquare,
-} as const;
-export function ChannelMark({ platform }: { platform: string }) {
-  const t = useTranslations("inbox.network");
-  const known = Object.hasOwn(NETWORKS, platform);
-  const Icon = known ? NETWORKS[platform as keyof typeof NETWORKS] : CircleHelp;
-  const label = t(known ? (platform as keyof typeof NETWORKS) : "UNKNOWN");
-  return (
-    <span role="img" aria-label={label} title={label} className="inline-flex shrink-0">
-      <Icon aria-hidden className="size-3.5" />
-    </span>
-  );
-}
+// Lo que ayuda a atender rápido (F6-09): cuántas esperan respuesta, el aviso del navegador y las
+// cuentas de canal que no pueden atender. La red de cada conversación está en `channel-identity`.
 
 // Cuántas conversaciones abiertas esperan respuesta (lo último lo dijo el cliente), las que la API
 // deja ver (`conversations.view` y su alcance) en esa bandeja. Cuelga de la clave de la lista: lo

@@ -17,6 +17,10 @@
   --color-ring: var(--ring);
   --color-success: var(--success);
   --color-danger: var(--danger);
+  --color-channel-whatsapp: var(--channel-whatsapp);
+  --color-channel-instagram: var(--channel-instagram);
+  --color-channel-messenger: var(--channel-messenger);
+  --color-channel-neutral: var(--channel-neutral);
   --radius-lg: 0.75rem;
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1); /* entradas y respuesta a una pulsación */
   /* Demo visual (UI-01, congelada): sus propios tokens del Figma, solo bajo /demo. */
@@ -42,6 +46,13 @@
   --ring: #202020;
   --success: #1a7f37; /* 5,1:1 sobre papel y 4,6:1 sobre el lienzo; no sobre miel */
   --danger: #b42318; /* 6,5:1 sobre papel */
+  /* Identidad de canal (UX-INBOX-01): solo icono y punto, nunca texto ni estados, y siempre junto
+     al nombre de la red. ≥3:1 sobre papel, lienzo, hover y la fila elegida (miel al 30 %), probado
+     en channel-identity.test.tsx. El verde de marca de WhatsApp (#25D366) da 2:1 sobre claro. */
+  --channel-whatsapp: #128c50;
+  --channel-instagram: #c13584;
+  --channel-messenger: #006aff;
+  --channel-neutral: var(--muted);
   --gd-foreground: #202020;
   --gd-paper: #ffffff;
   --gd-canvas: #ffffff;

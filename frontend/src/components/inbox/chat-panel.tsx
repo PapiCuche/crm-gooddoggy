@@ -20,6 +20,7 @@ import { useFormatter, useTranslations } from "next-intl";
 import { type ReactNode, type Ref, useLayoutEffect, useRef } from "react";
 
 import { useTenant } from "@/components/app-shell/tenant-context";
+import { ChannelSource, channelOf, useChannelName } from "@/components/channels/channel-identity";
 import { useReads } from "@/components/inventory/cell-picker";
 import { Button } from "@/components/ui/button";
 import {
@@ -39,7 +40,6 @@ import { cn } from "@/lib/utils";
 
 import { useAiExclusion } from "./ai-exclusion";
 import { Assignee, AssignmentActions } from "./assignment";
-import { ChannelMark } from "./attention";
 import { Composer, type Inserter, messagesKey, writableModes } from "./composer";
 import { AI_USE, useCopilot } from "./copilot";
 import { useHumanRequest } from "./human-request";
@@ -245,10 +245,10 @@ export function ChatPanel({
           )}
           <p className="text-muted order-5 flex basis-full flex-wrap items-center gap-x-2 text-xs lg:text-sm">
             <span className="font-mono">{conversation.number}</span>
-            <span className="inline-flex items-center gap-1">
-              <ChannelMark platform={conversation.channel.platform} />
-              <Plain>{conversation.channel.name}</Plain>
-            </span>
+            <ChannelSource
+              platform={conversation.channel.platform}
+              account={conversation.channel.name}
+            />
             <span>{t(`status.${conversation.status}`)}</span>
           </p>
           {name === null ? (
@@ -333,9 +333,6 @@ export function ChatPanel({
 
 const CODES: readonly string[] = Object.values(ProviderErrorCodeEnum);
 const META_ERROR = /^[0-9]{1,10}(\/[0-9]{1,10})?$/; // como `messages_error_detail_ck`
-// La red que nombra el motivo de un fallo en Instagram y Messenger (F7b-06f): un mapa cerrado de la
-// plataforma a su clave de texto; nada se arma con lo que manda el servidor.
-const SOCIAL_NETWORK = { INSTAGRAM: "network.INSTAGRAM", MESSENGER: "network.MESSENGER" } as const;
 // `delivery_status` es un texto libre en el servidor: solo un estado conocido llega a `t()` y a
 // `MARKS` (`t.has` dice que sí de claves del prototipo como `constructor`).
 const STATES: readonly string[] = Object.keys(MARKS);
@@ -360,6 +357,7 @@ function Bubble({
 }) {
   const t = useTranslations("inbox");
   const format = useFormatter();
+  const network = useChannelName();
   // Una nota interna es otra cosa que un mensaje al cliente: va aparte, rotulada y nunca como uno.
   const note = message.message_type === "NOTE" || message.direction === "INTERNAL";
   // Un medio o un entrante que el canal aún no entiende: su propio marcador con el texto fijo. El
@@ -385,13 +383,11 @@ function Bubble({
   const unsure = reason === "PROVIDER_UNKNOWN";
   // Los textos de `failure` que nombran WhatsApp tienen su versión para Instagram y Messenger
   // (`failureSocial`, F7b-06f), con la red de la conversación; las demás plataformas, los de siempre.
-  const social = Object.hasOwn(SOCIAL_NETWORK, platform)
-    ? SOCIAL_NETWORK[platform as keyof typeof SOCIAL_NETWORK]
-    : null;
+  // La red la nombra el mapa cerrado de `channel-identity` (`social`); nada sale del servidor.
   const why = !reason
     ? null
-    : social && t.has(`failureSocial.${reason}`)
-      ? t(`failureSocial.${reason}`, { network: t(social) })
+    : channelOf(platform).social && t.has(`failureSocial.${reason}`)
+      ? t(`failureSocial.${reason}`, { network: network(platform) })
       : t(`failure.${reason}`);
   // El error de Meta en números (F7b-13), junto al motivo: solo con la forma `código[/subcódigo]`,
   // y una pista corta si es uno conocido. Nunca otro texto del servidor.
