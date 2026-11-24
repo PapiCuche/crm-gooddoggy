@@ -1,4 +1,4 @@
-import { cleanup, screen, within } from "@testing-library/react";
+import { act, cleanup, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TenantProvider } from "@/components/app-shell/tenant-context";
@@ -49,6 +49,12 @@ async function rows(accounts: ChannelAccount[]) {
 }
 const red = (cell: HTMLElement | null | undefined) =>
   Boolean(cell?.querySelector(".text-danger")) && Boolean(cell?.querySelector("svg"));
+// El icono de la fila (lucide le pone su nombre en la clase): `x` caducado, `triangle-alert` pronto.
+const icon = (cell: HTMLElement | null | undefined) =>
+  cell
+    ?.querySelector("svg")
+    ?.getAttribute("class")
+    ?.match(/lucide-(x|triangle-alert)\b/)?.[1];
 
 beforeEach(() => vi.useFakeTimers({ toFake: ["Date"], now: NOW }));
 afterEach(() => {
@@ -90,6 +96,36 @@ describe("La caducidad del token en Canales (F7b-12b)", () => {
     expect(gone).toHaveTextContent(/^Caducó el 22 nov\. 2026, 07:00 a\. m\.$/);
     expect(now).toHaveTextContent(/^Caducó el 24 nov\. 2026, 07:00 a\. m\.$/);
     expect([gone, now].every(red)).toBe(true);
+    expect([gone, now].map(icon)).toEqual(["x", "x"]);
+  });
+
+  it("una tarjeta abierta cambia sola al cruzar los 10 días y la caducidad", async () => {
+    vi.useRealTimers();
+    vi.useFakeTimers({
+      ...{ toFake: ["Date", "setTimeout", "clearTimeout"], now: NOW, shouldAdvanceTime: true },
+    });
+    const [ending, nearing] = await rows([
+      account("m1", at(60_000)),
+      account("m2", at(10 * DAY + 60_000)),
+    ]);
+    expect(ending).toHaveTextContent(/\(pronto\)$/);
+    expect([icon(ending), red(nearing)]).toEqual(["triangle-alert", false]);
+    act(() => vi.advanceTimersByTime(2 * 60_000));
+    expect(ending).toHaveTextContent(/^Caducó el 24 nov\. 2026, 07:01 a\. m\.$/);
+    expect(nearing).toHaveTextContent(/^4 dic\. 2026, 07:01 a\. m\. \(pronto\)$/);
+    expect([icon(ending), icon(nearing)]).toEqual(["x", "triangle-alert"]);
+  });
+
+  it("una fecha lejana pasa el tope de `setTimeout` y vuelve a esperar hasta los 10 días", async () => {
+    vi.useRealTimers();
+    vi.useFakeTimers({
+      ...{ toFake: ["Date", "setTimeout", "clearTimeout"], now: NOW, shouldAdvanceTime: true },
+    });
+    const [far] = await rows([account("m1", at(40 * DAY))]);
+    act(() => vi.advanceTimersByTime(2 ** 31 - 1)); // el tope: aún faltan más de 10 días
+    expect(red(far)).toBe(false);
+    act(() => vi.advanceTimersByTime(30 * DAY - (2 ** 31 - 1)));
+    expect(icon(far)).toBe("triangle-alert");
   });
 
   it("sin credencial viva, en WhatsApp o en la Sandbox no hay fila; un `AT` sin fecha no se inventa", async () => {

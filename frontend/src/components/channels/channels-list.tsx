@@ -2,7 +2,7 @@
 
 import { TriangleAlert, X } from "lucide-react";
 import { useFormatter, useTranslations } from "next-intl";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useTenant } from "@/components/app-shell/tenant-context";
 import { CursorList, type CursorListHandle } from "@/components/lists/cursor-list";
@@ -184,15 +184,26 @@ function Account({
 // Cuándo caduca el token de una página (F7b-12b), con la fecha que Meta dio (`token_expires_at` de
 // la credencial viva). Sin credencial viva no hay fila (el token ya dice «Sin token»). Con 10 días o
 // menos, en rojo y con icono (nunca solo color), con el reloj de quien mira y sin redondear, como
-// el primer aviso por correo (`expires_at <= now() + 10 días`); ya pasada, «Caducó el …».
+// el primer aviso por correo (`expires_at <= now() + 10 días`); ya pasada, «Caducó el …». Una
+// tarjeta abierta cambia sola al cruzar cada umbral: un temporizador hasta el siguiente (con el tope
+// de `setTimeout`; si salta antes, se vuelve a programar), que se limpia al cambiar la fecha.
 const SOON_MS = 10 * 24 * 60 * 60 * 1000;
+const MAX_DELAY = 2 ** 31 - 1;
 function TokenExpiry({ account }: { account: ChannelAccount }) {
   const t = useTranslations("channels.expiry");
   const format = useFormatter();
-  const [now] = useState(() => Date.now()); // al montar la tarjeta, como en las cotizaciones
+  const [now, setNow] = useState(() => Date.now()); // al montar; luego, en cada umbral
   const { token_expiry: state, token_expires_at: at } = account;
+  const end = state === "AT" && at ? Date.parse(at) : NaN;
+  useEffect(() => {
+    const left = end - Date.now();
+    const next = left > SOON_MS ? left - SOON_MS : left; // NaN (sin fecha): nada que esperar
+    if (!(next > 0)) return;
+    const timer = setTimeout(() => setNow(Date.now()), Math.min(next, MAX_DELAY));
+    return () => clearTimeout(timer);
+  }, [end, now]);
   if (state == null) return null;
-  const left = state === "AT" && at ? Date.parse(at) - now : NaN;
+  const left = end - now;
   if (Number.isNaN(left)) {
     return <Row label={t("label")}>{state === "NEVER" ? t("never") : t("unknown")}</Row>;
   }
