@@ -231,6 +231,22 @@ def connect_social(
     return account, credential
 
 
+def _by_quality(account: ChannelAccount, quality: str | None) -> None:
+    """La regla de la calidad de WhatsApp (ADR-029 §12), en la comprobación de salud y en la
+    rotación (F7b-19): una `PENDING` con el webhook ya visto pasa a `CONNECTED`; `YELLOW` o `RED`
+    deja `DEGRADED` (`QUALITY_LOW`) y una calidad recuperada vuelve a `CONNECTED` (solo la degradada
+    por calidad). Cambia solo el objeto."""
+    low, was = quality in ("YELLOW", "RED"), account.status
+    if account.status == "PENDING" and account.status_detail is None:  # el webhook ya se vio
+        account.status = "DEGRADED" if low else "CONNECTED"
+    elif account.status == "CONNECTED" and low:
+        account.status = "DEGRADED"
+    elif account.status == "DEGRADED" and account.status_detail == "QUALITY_LOW" and not low:
+        account.status = "CONNECTED"
+    if account.status != was:
+        account.status_detail = "QUALITY_LOW" if account.status == "DEGRADED" else None
+
+
 def rotate_token(
     ctx: TenantContext, *, channel_account_id: UUID, access_token: str,
     platform: str = Platform.WHATSAPP,
@@ -240,7 +256,8 @@ def rotate_token(
     `TOKEN_INVALID`. Una cuenta `ERROR` por `TOKEN_INVALID` no se comprueba nunca, así que sería un
     callejón sin salida: como Meta acaba de verificar el token nuevo contra su mismo número y WABA
     (lo mismo que la comprobación de salud), vuelve a `CONNECTED`, o a `DEGRADED` si la calidad es
-    baja (la base prohíbe volver a `PENDING`). Otro estado no cambia. En Messenger e Instagram
+    baja (la base prohíbe volver a `PENDING`). En WhatsApp, la calidad que Meta acaba de dar se
+    aplica como en la comprobación de salud (`_by_quality`, F7b-19). En Messenger e Instagram
     (F7b-06a) se comprueba la misma página con `graph.page` y no hay calidad ni nivel.
     `DoesNotExist` si no es una cuenta viva de `platform` de esta organización."""
     alias = require_scope(ctx)
@@ -269,6 +286,8 @@ def rotate_token(
         if account.platform in SOCIAL:  # F7b-06g/h: lo que Meta acaba de decir de la página
             account.page_subscribed = seen["subscribed"]
             _follow(account, seen["subscribed"])
+        else:  # F7b-19: la calidad que Meta acaba de dar, como la comprobación de salud
+            _by_quality(account, seen["quality_rating"])
         if account.status != status:
             changed["status"] = [status, account.status]
         if account.status_detail != detail:  # también uno que se limpia (F7b-06h)
@@ -344,17 +363,13 @@ def mark_token_invalid(
                    action="channel_account.token_invalid", credential_id=credential_id)  # fmt: skip
 
 
-def mark_messages_access_off(
-    ctx: TenantContext, *, channel_account_id: UUID, credential_id: UUID | None = None
-) -> bool:
+def mark_messages_access_off(ctx: TenantContext, *, channel_account_id: UUID) -> bool:
     """El titular de Instagram apagó «Allow access to messages» (ADR-035 §3, `200`/`2534041`): la
     cuenta pasa a `ERROR` (`MESSAGES_ACCESS_OFF`) y deja de enviar hasta que se reconecte. `False`
-    si ya estaba `ERROR` o `DISCONNECTED`, o ya no está viva; con `credential_id` (F7b-19), también
-    si la cuenta ya no usa esa credencial (se reconectó después del envío)."""
+    si ya estaba `ERROR` o `DISCONNECTED`, o ya no está viva."""
     only = ("PENDING", "CONNECTED", "DEGRADED")
     return _demote(ctx, channel_account_id, only=only, to="ERROR", detail="MESSAGES_ACCESS_OFF",
-                   action="channel_account.messages_access_off",
-                   credential_id=credential_id)  # fmt: skip
+                   action="channel_account.messages_access_off")  # fmt: skip
 
 
 def mark_degraded(
@@ -362,8 +377,8 @@ def mark_degraded(
 ) -> bool:
     """Meta rechazó un envío por la calidad del número (ADR-029 §8): `CONNECTED` pasa a `DEGRADED`
     (`QUALITY_LOW`), con aviso. `False` si no estaba `CONNECTED`; con `credential_id` (F7b-19),
-    también si la cuenta ya no usa esa credencial: la rotación posterior al envío volvió a leer la
-    calidad de Meta, que es más reciente que el rechazo."""
+    también si la cuenta ya no usa esa credencial: la rotación posterior al envío aplicó la calidad
+    que Meta acababa de dar (`_by_quality`), más reciente que el rechazo."""
     only = ("CONNECTED",)
     return _demote(ctx, channel_account_id, only=only, to="DEGRADED", detail="QUALITY_LOW",
                    action="channel_account.degraded", credential_id=credential_id)  # fmt: skip
@@ -449,15 +464,7 @@ def apply_health(ctx: TenantContext, *, channel_account_id: UUID, quality: str, 
             return False
         before = {"status": account.status, "quality_rating": account.quality_rating,
                   "messaging_limit_tier": account.messaging_limit_tier}  # fmt: skip
-        low = quality in ("YELLOW", "RED")
-        if account.status == "PENDING" and account.status_detail is None:  # el webhook ya se vio
-            account.status = "DEGRADED" if low else "CONNECTED"
-        elif account.status == "CONNECTED" and low:
-            account.status = "DEGRADED"
-        elif account.status == "DEGRADED" and account.status_detail == "QUALITY_LOW" and not low:
-            account.status = "CONNECTED"
-        if account.status != before["status"]:
-            account.status_detail = "QUALITY_LOW" if account.status == "DEGRADED" else None
+        _by_quality(account, quality)
         account.quality_rating, account.messaging_limit_tier = quality, tier
         changes = {key: [was, getattr(account, key)] for key, was in before.items()
                    if getattr(account, key) != was}  # fmt: skip

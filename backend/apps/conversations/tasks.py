@@ -101,8 +101,9 @@ def deliver(
         raise task.retry(exc=error, countdown=countdown, max_retries=MAX_RETRIES) from None
     with tenant_scope(ctx):  # también corrige un `PROVIDER_UNKNOWN` del plazo (F7b-18)
         commands.settle_outbound(ctx, message_id=message_id, result=result)
-    # Los efectos sobre la cuenta, una vez: `accounts` solo cambia una cuenta que aún estaba viva y
-    # solo si la credencial del envío sigue siendo la suya (¿se rotó o reconectó? F7b-19)
+    # Los efectos sobre la cuenta, una vez: `accounts` solo cambia una cuenta que aún estaba viva;
+    # el token y la calidad, solo si la credencial del envío sigue siendo la suya (¿se rotó?
+    # F7b-19). Los mensajes apagados no: la rotación no lee esa opción de Instagram.
     used = claim.credential.pk if claim.credential else None
     if result.reason == "TOKEN_INVALID":  # Meta no acepta el token: la cuenta deja de enviar
         with tenant_scope(ctx):
@@ -114,9 +115,7 @@ def deliver(
             accounts.mark_degraded(ctx, channel_account_id=claim.account_id, credential_id=used)
     elif result.reason == "MESSAGES_ACCESS_OFF":  # Instagram: el titular apagó los mensajes
         with tenant_scope(ctx):
-            accounts.mark_messages_access_off(
-                ctx, channel_account_id=claim.account_id, credential_id=used
-            )
+            accounts.mark_messages_access_off(ctx, channel_account_id=claim.account_id)
 
 
 @subscribe("message.queued")

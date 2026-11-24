@@ -568,7 +568,12 @@ describe("Inbox, motivo de un fallo: el conjunto cerrado", () => {
     const social = { ...rosa.channel, platform: "MESSENGER" as const };
     serve({
       [LIST]: page([conversation("1", { channel: social })]),
-      [MESSAGES("1")]: page([spent("c", 0, "PROVIDER_REJECTED"), spent("b", 3), spent("a", 0)]),
+      [MESSAGES("1")]: page([
+        spent("d", 1),
+        spent("c", 0, "PROVIDER_REJECTED"),
+        spent("b", 3),
+        spent("a", 0),
+      ]),
     });
     show();
     await open(/Rosa Díaz/);
@@ -583,6 +588,7 @@ describe("Inbox, motivo de un fallo: el conjunto cerrado", () => {
       "No se pudo enviar tras varios intentos. Código de Meta: 613.",
     );
     expect(row("c")).toHaveTextContent("Messenger rechazó el mensaje. Código de Meta: 613.");
+    expect(row("d")).toHaveTextContent("No se pudo enviar tras varios intentos."); // un reintento
   });
 
   // F7b-17: rótulos honestos: «Sin confirmar» no es un fallo; «Reintentando» no es «En cola».

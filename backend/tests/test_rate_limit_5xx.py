@@ -21,7 +21,7 @@ from tests.meta_sim import GRAPH_VERSION
 from tests.meta_sim.graph import TEST_TOKEN
 from tests.meta_sim.webhooks import PHONE_NUMBER_ID, WABA_ID
 from tests.test_authorization import give
-from tests.test_conversation_commands import outbound, world, writer
+from tests.test_conversation_commands import audit, outbound, world, writer
 from tests.test_conversations_dispatch import Retrying, state
 from tests.test_late_refusal import account_audits, answers, error, wait_for
 from tests.test_memberships import ctx
@@ -143,15 +143,21 @@ def demotions(migrator: Any) -> list[str]:
     return [a for a in account_audits(migrator) if a in owner]
 
 
-@pytest.mark.parametrize("then", ["nothing", "rotate", "reconnect"])
+@pytest.mark.parametrize("then", ["nothing", "rotate", "rotate_red", "reconnect"])
 def test_a_late_quality_refusal_never_degrades_an_account_the_owner_reconnected(
     world: SimpleNamespace, graph: Any, migrator: Any, manager: None, then: str
 ) -> None:
     convo: Conversation = talk(world)
     old, made = convo.channel_account_id, []
+
+    def red(pk: Any) -> None:  # Meta ya da la calidad baja al rotar
+        graph.quality = "RED"
+        rotate(world, pk)
+
     owner = {
         "nothing": lambda _: None,
         "rotate": lambda pk: rotate(world, pk),
+        "rotate_red": red,
         "reconnect": lambda pk: made.append(reconnect(world, pk)),
     }[then]
     graph.then("quality")  # Meta responde `131048`
@@ -169,6 +175,10 @@ def test_a_late_quality_refusal_never_degrades_an_account_the_owner_reconnected(
     assert demotions(migrator) == []  # ni el estado ni la auditoría (con su evento)
     if then == "rotate":  # Meta acaba de leer la calidad: más reciente que el rechazo
         assert account(world, old) == ("CONNECTED", None)
+    elif then == "rotate_red":  # la rotación ya la degradó (una auditoría): el rechazo no repite
+        assert account(world, old) == ("DEGRADED", "QUALITY_LOW")
+        rotated = [c for a, c, _ in audit(migrator) if a == "channel_account.credentials_rotated"]
+        assert len(rotated) == 1 and rotated[0]["status"] == ["CONNECTED", "DEGRADED"]
     else:  # la cuenta anterior quedó desconectada y la nueva sigue como se conectó
         assert account(world, made[0]) == ("PENDING", "WEBHOOK_NOT_SEEN")
         assert account(world, old) == ("DISCONNECTED", "DISCONNECTED_BY_ADMIN")
@@ -191,9 +201,11 @@ def test_each_late_account_effect_follows_the_credential_of_the_send(
     owner = (lambda pk: rotate(world, pk)) if rotated else (lambda _: None)
     sends = After(lambda _: refused, owner)
     tasks.deliver(Retrying(0), world.a, message.pk, resolve=lambda _: sends)
-    expected = ("CONNECTED", None) if rotated else (status, detail)
+    # La rotación no lee «Allow access to messages» de Instagram: los mensajes apagados valen igual
+    skipped = rotated and reason != "MESSAGES_ACCESS_OFF"
+    expected = ("CONNECTED", None) if skipped else (status, detail)
     assert account(world, convo.channel_account_id) == expected
-    assert len(demotions(migrator)) == (not rotated)
+    assert len(demotions(migrator)) == (not skipped)
 
 
 @pytest.mark.parametrize("first", ["rotate", "refusal"])
@@ -233,5 +245,31 @@ def test_a_rotation_and_a_late_refusal_at_once_serialise_on_the_account_lock(
         thread.join(timeout=10)
     degraded = first == "refusal"  # con la credencial aún vigente, el rechazo vale
     assert done == {"rotate": True, "refusal": degraded}
-    assert account(world, pk) == (("DEGRADED", "QUALITY_LOW") if degraded else ("CONNECTED", None))
+    # y la rotación posterior aplica la calidad que Meta acaba de dar (`GREEN`): vuelve
+    assert account(world, pk) == ("CONNECTED", None)
     assert len(demotions(migrator)) == degraded
+
+
+@pytest.mark.parametrize(
+    ("before", "quality", "after"),
+    [(("CONNECTED", None), "RED", ("DEGRADED", "QUALITY_LOW")),
+     (("CONNECTED", None), "YELLOW", ("DEGRADED", "QUALITY_LOW")),
+     (("CONNECTED", None), "GREEN", ("CONNECTED", None)),
+     (("DEGRADED", "QUALITY_LOW"), "GREEN", ("CONNECTED", None)),
+     (("DEGRADED", "QUALITY_LOW"), "RED", ("DEGRADED", "QUALITY_LOW")),
+     (("ERROR", "MESSAGES_ACCESS_OFF"), "GREEN", ("ERROR", "MESSAGES_ACCESS_OFF"))],
+)  # fmt: skip
+def test_a_rotation_applies_the_quality_meta_just_gave_like_the_health_check(
+    world: SimpleNamespace, graph: Any, migrator: Any, manager: None,
+    before: tuple[str, str | None], quality: str, after: tuple[str, str | None],
+) -> None:  # fmt: skip
+    pk = talk(world).channel_account_id
+    migrator.execute(
+        "UPDATE channel_accounts SET status = %s, status_detail = %s WHERE id = %s", [*before, pk]
+    )
+    graph.quality = quality
+    rotate(world, pk)
+    assert account(world, pk) == after
+    [(action, changes, _)] = [row for row in audit(migrator) if row[0].startswith("channel_acc")]
+    assert action == "channel_account.credentials_rotated"  # una sola auditoría, la de rotar
+    assert changes.get("status") == ([before[0], after[0]] if before != after else None)
