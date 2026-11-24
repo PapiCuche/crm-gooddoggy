@@ -63,7 +63,7 @@ META_ERROR = r"^[0-9]{1,10}(/[0-9]{1,10})?$"  # el error de Meta en números: `c
 
 # Por qué un mensaje saliente quedó `FAILED` (F7-06a; ADR-029 §8): un conjunto cerrado de códigos
 # propios, nunca el título ni el texto del error del proveedor. Los de la política y el despachador
-# y los que salen de la tabla de errores de Meta (`delivery.CODES`). `CONSENT_REVOKED`: F7-08b.
+# y los que salen de la tabla de errores de Meta (`whatsapp.CODES`). `CONSENT_REVOKED`: F7-08b.
 # `MESSAGES_ACCESS_OFF` (F7b-05a, ADR-035 §6): el titular de Instagram apagó el acceso a mensajes.
 FAILURE_CODES = (
     "CONVERSATION_CLOSED", "CHANNEL_UNAVAILABLE", "CONTACT_BLOCKED", "WINDOW_CLOSED",

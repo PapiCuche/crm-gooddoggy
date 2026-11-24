@@ -87,7 +87,11 @@ def failures(migrator: DB, bucket: int, *attempts: int) -> None:
         )
 
 
-def failed_sends(world: SimpleNamespace, migrator: DB, bucket: int, *codes: str) -> None:
+def failed_sends(
+    world: SimpleNamespace, migrator: DB, bucket: int, *codes: str, when: Any = None
+) -> None:
+    """Envíos fallidos a `when` (o en la ventana `bucket`), de una vez: un `FAILED` no cambia de
+    hora después (`messages_failure_settled`, F7b-15)."""
     if (convo := getattr(world, "convo", None)) is None:  # una conversación abierta por contacto
         world.convo = convo = conversation(world.a, world.contact_a, world.account_a)
     for code in codes:
@@ -98,7 +102,7 @@ def failed_sends(world: SimpleNamespace, migrator: DB, bucket: int, *codes: str)
         migrator.execute(
             "UPDATE messages SET delivery_status = 'FAILED', provider_error_code = %s, "
             "failed_at = %s WHERE id = %s",
-            [code, at(bucket), sent.pk],
+            [code, when or at(bucket), sent.pk],
         )
 
 
@@ -258,9 +262,8 @@ def test_the_acceptance_with_the_simulator_a_dead_a_burst_and_a_failed_send_aler
     migrator.execute("UPDATE webhook_ingress SET attempts = 7")
     claimed = ingress.claim()
     assert [ingress.mark(item, "FAILED", reason="ERROR") for item in claimed] == ["DEAD"]
-    failed_sends(world, migrator, bucket_now(), "PROVIDER_ERROR")
+    failed_sends(world, migrator, bucket_now(), "PROVIDER_ERROR", when=timezone.now())
     now = bucket_now()  # todo lo de arriba, en la ventana en curso o la anterior
-    migrator.execute("UPDATE messages SET failed_at = now() WHERE failed_at IS NOT NULL")
     fired = sweep(monkeypatch, now + 1) + sweep(monkeypatch, now + 2)
     assert sorted(fired) == ["ingress_dead", "outbound_failed", "signature_invalid"]
     assert sweep(monkeypatch, now + 2) == []
@@ -342,11 +345,7 @@ def test_the_counts_function_gives_only_counts_and_closed_codes_and_is_locked_do
     now = bucket_now()
     failures(migrator, now - 1, 1, 8)
     failed_sends(world, migrator, now - 1, "PROVIDER_ERROR")
-    failed_sends(world, migrator, now - 1, "RATE_LIMITED")  # falla justo al cerrar: la siguiente
-    migrator.execute(
-        "UPDATE messages SET failed_at = %s WHERE provider_error_code = 'RATE_LIMITED'",
-        [at(now, 0)],
-    )
+    failed_sends(world, migrator, now - 1, "RATE_LIMITED", when=at(now, 0))  # al cerrar: siguiente
     token_invalid(world.a, migrator, now - 1, "555000000099")  # cuenta, pero sin código
     other = make(world.b, status="ERROR", status_detail="PROVIDER_ERROR")  # otro motivo: no cuenta
     migrator.execute(

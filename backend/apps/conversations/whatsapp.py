@@ -37,9 +37,18 @@ logger = get_logger(__name__)
 UPLOAD_SECONDS = 120.0
 PHONE = r"^\+[1-9][0-9]{6,14}$"
 EXTERNAL_ID = r"^[A-Za-z0-9._=-]{1,200}$"  # el `wamid`: se guarda en `messages.external_message_id`
-REASONS = {190: "TOKEN_INVALID", 131047: "WINDOW_CLOSED", 131026: "RECIPIENT_UNREACHABLE"}
-# Límites de tasa de Meta: no lo aceptó, se reintenta.
-TOO_FAST = (4, 17, 613, 80007, 130429, 131056)
+# Código de error de Meta -> código propio (ADR-029 §8), el mismo en la respuesta del envío y en el
+# `failed` del webhook (F7b-15); a reconfirmar con su documentación.
+CODES = {
+    190: "TOKEN_INVALID", 131047: "WINDOW_CLOSED", 131026: "RECIPIENT_UNREACHABLE",
+    130429: "RATE_LIMITED", 131056: "RATE_LIMITED", 131048: "QUALITY_BLOCKED",
+    4: "RATE_LIMITED", 17: "RATE_LIMITED", 613: "RATE_LIMITED", 80007: "RATE_LIMITED",
+    1: "PROVIDER_ERROR", 2: "PROVIDER_ERROR", 131000: "PROVIDER_ERROR", 131016: "PROVIDER_ERROR",
+}  # fmt: skip
+TEMPLATES = range(132000, 133000)  # la familia de errores de plantilla de Meta
+# Límites de tasa de Meta (los `RATE_LIMITED` de la tabla): en la respuesta del envío no lo aceptó y
+# se reintenta antes de la tabla.
+TOO_FAST = tuple(code for code, own in CODES.items() if own == "RATE_LIMITED")
 
 
 def field_at(raw: bytes, *path: str | int) -> Any:
@@ -67,16 +76,27 @@ def error_detail(code: Any, subcode: Any = None) -> str | None:
     return str(code) if subcode is None else f"{code}/{subcode}"
 
 
+def code_for(error_code: Any) -> str:
+    """El código propio de un error de Meta: lo desconocido es `PROVIDER_REJECTED`."""
+    if not isinstance(error_code, int) or isinstance(error_code, bool):
+        return "PROVIDER_REJECTED"
+    return (
+        "TEMPLATE_UNAVAILABLE"
+        if error_code in TEMPLATES
+        else CODES.get(error_code, "PROVIDER_REJECTED")
+    )
+
+
 def _refused(status: int, raw: bytes, server: type[Exception]) -> SendResult:
-    """Un rechazo de Meta: «demasiado rápido» se reintenta, un 5xx es `server` y el resto, un motivo
-    cerrado."""
+    """Un rechazo de Meta: «demasiado rápido» se reintenta, un 5xx es `server` y el resto, el motivo
+    cerrado de `code_for` (el mismo que daría el webhook)."""
     code = field_at(raw, "error", "code")
     code = code if isinstance(code, int) and not isinstance(code, bool) else None
     if code in TOO_FAST or status == 429:
         raise TemporaryChannelError
     if status >= 500:
         raise server
-    reason = "TOKEN_INVALID" if status == 401 else REASONS.get(code or 0, "PROVIDER_REJECTED")
+    reason = "TOKEN_INVALID" if status == 401 else code_for(code)
     detail = error_detail(code, field_at(raw, "error", "error_subcode"))
     return SendResult(False, reason=reason, detail=detail)
 

@@ -617,8 +617,10 @@ def advance_delivery(
 ) -> Message:
     """Hace avanzar el estado de entrega de un mensaje saliente y fija su marca de tiempo (`at`, o
     ahora). Un estado que no es un paso adelante (repetido, tardío o tras `FAILED`) se ignora: ni
-    error ni cambio ni auditoría. Audita `message.delivery_changed`, con el `reason` (un motivo
-    corto de `channels.REASONS`, solo con `FAILED`) en los metadatos. `detail` (F7b-13, solo con
+    error ni cambio ni auditoría. Un `FAILED` con un motivo definitivo sobre un `FAILED` con
+    `PROVIDER_UNKNOWN` corrige el motivo, el detalle y `failed_at` una sola vez (F7b-15). Audita
+    `message.delivery_changed`, con el `reason` (un motivo corto de `channels.REASONS`, solo con
+    `FAILED`) en los metadatos. `detail` (F7b-13, solo con
     `FAILED`): el código numérico del proveedor, que se guarda y no se audita. `ValueError` si el
     estado no existe, el motivo o el detalle no valen o el mensaje no es saliente;
     `DoesNotExist`."""
@@ -638,7 +640,11 @@ def advance_delivery(
         if message.direction != "OUTBOUND":
             raise ValueError("solo lo saliente tiene estado de entrega")
         late = message.provider_error_code == "PROVIDER_UNKNOWN"
-        if not _advances(message.delivery_status, status, late):
+        # F7b-15: un `FAILED` definitivo corrige, una vez, el «no se sabe» del plazo (el estado no
+        # cambia; lo guarda también el disparador `messages_failure_settled`)
+        settles = late and message.delivery_status == status == Delivery.FAILED
+        settles = settles and reason not in (None, "PROVIDER_UNKNOWN")
+        if not (settles or _advances(message.delivery_status, status, late)):
             return message
         old, stamp = message.delivery_status, STAMPS[status]
         # Condicional: el disparador de la base lanza `check_violation` ante un estado atrasado, y
@@ -646,11 +652,13 @@ def advance_delivery(
         # `WHERE` lo hace imposible aunque alguien quite el bloqueo.
         fields = {stamp: at or timezone.now(), "provider_error_code": reason}
         fields["provider_error_detail"] = detail
-        if late:
+        if late and not settles:
             fields["failed_at"] = None  # no falló: salió (lo reconcilia un estado tardío)
         moved = (
             Message.objects.using(alias)
-            .filter(pk=message.pk, delivery_status=old)
+            .filter(
+                pk=message.pk, delivery_status=old, provider_error_code=message.provider_error_code
+            )
             .update(delivery_status=status, **fields)
         )
         message.refresh_from_db(using=alias)
@@ -658,6 +666,9 @@ def advance_delivery(
             changes = {"delivery_status": [old, status]}
             why = None if reason is None else {"reason": reason}
             why = {"reconciled": "PROVIDER_UNKNOWN"} if late else why
+            if settles:  # solo cambió el motivo
+                changes = {"provider_error_code": ["PROVIDER_UNKNOWN", str(reason)]}
+                why = {"reason": str(reason), "corrected": "PROVIDER_UNKNOWN"}
             record(ctx, "message.delivery_changed", Entity("message", message.pk), changes, why)
             emit(  # una pista para la pantalla: solo ids
                 ctx, "message.updated", aggregate_type="message", aggregate_id=message.pk,

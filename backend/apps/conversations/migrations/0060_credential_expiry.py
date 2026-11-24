@@ -76,7 +76,7 @@ def _revoke(apps: Any, schema_editor: Any) -> None:
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("conversations", "0058_validate_error_detail"),
+        ("conversations", "0059_failure_settled_once"),
     ]
 
     operations = [

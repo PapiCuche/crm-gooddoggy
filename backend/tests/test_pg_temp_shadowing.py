@@ -23,6 +23,7 @@ FUNCTIONS = (
     "public.promotion_children_guard()",
     "public.variant_costs_immutable()",
     "public.messages_delivery_advance()",  # F6-01b
+    "public.messages_failure_settled()",  # F7b-15
     "public.channel_accounts_identity_fixed()",  # F7-02a
     "public.messages_queued_organizations(timestamptz, integer)",  # F6-04b, SECURITY DEFINER
     "public.messages_sending_organizations(timestamptz, integer)",  # F7-05c, SECURITY DEFINER
