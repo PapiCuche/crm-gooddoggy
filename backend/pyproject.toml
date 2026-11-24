@@ -443,6 +443,7 @@ protected_modules = [
     "apps.conversations.credentials",
     "apps.conversations.accounts",
     "apps.conversations.quick_replies",
+    "apps.conversations.expiry",
 ]
 allowed_importers = [
     "apps.conversations.api",
@@ -452,6 +453,7 @@ allowed_importers = [
     "apps.conversations.delivery",  # F7-06a: `advance_delivery` y el estado de la cuenta
     "apps.conversations.whatsapp",  # F7-05b: `credentials.open_token`
     "apps.conversations.media",  # F7-09a1c: `credentials.open_token`
+    "apps.conversations.expiry",  # F7b-12: la caducidad que no se sabe, con `open_token`
 ]
 
 [[tool.importlinter.contracts]]

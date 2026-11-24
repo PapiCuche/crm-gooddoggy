@@ -21,7 +21,7 @@ from django.utils import timezone
 
 from apps.access.selectors import AccessDenied, Denied, execution_context, has_permission
 from apps.audit.services import Entity, record
-from apps.conversations import credentials, graph
+from apps.conversations import credentials, expiry, graph
 from apps.conversations.models import (
     META_ID,
     PAGE_OWNER,
@@ -202,6 +202,7 @@ def connect_social(
     # Antes de la unicidad, que decide la base al guardar: suscribir la misma app a una página ya
     # suscrita no cambia nada en Meta, así que una conexión rechazada después no deja nada nuevo.
     graph.subscribe(token, page)
+    known = expiry.read(platform, token)  # F7b-12: `None` si no se sabe, que no impide conectar
     account_id = new_id()
     try:
         with transaction.atomic(using=alias):
@@ -212,7 +213,7 @@ def connect_social(
             with connections[alias].cursor() as cursor:
                 key = f"channel_page:{page}"
                 cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", [key])
-            credential = credentials.store(ctx, account_id, token)
+            credential = credentials.store(ctx, account_id, token, expiry=known)
             account = ChannelAccount.objects.using(alias).create(
                 id=account_id, platform=platform, name=name, external_account_id=external,
                 external_parent_id=page if instagram else None,
@@ -247,12 +248,14 @@ def rotate_token(
     _allowed(ctx)
     account = _live(platform).using(alias).get(pk=channel_account_id)
     seen = _check(token, account)
+    social = account.platform in SOCIAL
+    known = expiry.read(account.platform, token) if social else None  # F7b-12
     with transaction.atomic(using=alias):
         found = _live(platform).using(alias).select_for_update(no_key=True).annotate(db_now=Now())
         account = found.get(pk=channel_account_id)
         old, status, detail = account.credential_id, account.status, account.status_detail
         credentials.revoke(ctx, old)  # antes de guardar la nueva: una viva por cuenta
-        credential = credentials.store(ctx, account.pk, token, rotated=True)
+        credential = credentials.store(ctx, account.pk, token, rotated=True, expiry=known)
         account.credential_id, account.last_healthcheck_at = credential.pk, account.db_now
         account.quality_rating = seen["quality_rating"]
         account.messaging_limit_tier = seen["messaging_limit_tier"]

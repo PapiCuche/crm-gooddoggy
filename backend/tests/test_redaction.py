@@ -35,6 +35,9 @@ def test_redacts_bearer_and_url_credentials() -> None:
     assert (
         redact_text("Authorization: Bearer abcdef123456789") == f"Authorization: Bearer {REDACTED}"
     )
+    app = "100000000000301|" + "metaSimAppSecret0123"  # F7b-12: el token de una app de Meta
+    for text in (f"Authorization: Bearer {app}", f"fallo con {app} al llamar"):
+        assert "metaSimAppSecret0123" not in redact_text(text), text
     url = "postgres://crm_app:" + "s3cr3t" + "@db:5432/crm"
     assert redact_text(url) == f"postgres://{REDACTED}@db:5432/crm"
     assert redact_text("https://x.test/cb?access_token=abc123&ok=1").endswith(f"={REDACTED}&ok=1")
