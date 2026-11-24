@@ -150,7 +150,7 @@ describe("asignación en la pantalla (F6-05b)", () => {
     expect(panel()).not.toHaveClass("max-lg:hidden");
     expect(panel()).toHaveClass("max-lg:absolute"); // se abre sobre los mensajes, sin empujarlos
     expect(toggle).toHaveClass("lg:hidden"); // en escritorio no hay botón: siempre abiertas
-    expect(toggle).toHaveClass("h-11"); // 44 px en móvil
+    expect(toggle).toHaveClass("h-10"); // 40 px en móvil
     header().getByRole("button", { name: "Tomar" }).focus();
     fireEvent.keyDown(panel(), { key: "Escape" });
     expect(toggle).toHaveAttribute("aria-expanded", "false");
