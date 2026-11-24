@@ -254,7 +254,7 @@ describe("notas internas en el cuadro de redacción (F6-05c)", () => {
     const form = (await reply()).closest("form")!;
     expect(form).toHaveClass("max-sm:grid", "max-sm:grid-cols-[minmax(0,1fr)_auto]");
     const send = within(form).getByRole("button", { name: "Enviar" });
-    expect(send).toHaveClass("max-sm:size-10", "max-sm:col-start-2", "max-sm:row-start-1");
+    expect(send).toHaveClass("max-sm:size-11", "max-sm:col-start-2", "max-sm:row-start-1");
     expect(within(send).getByText("Enviar")).toHaveClass("max-sm:sr-only");
     // nota: el cuadro ocupa la fila y debajo van el aviso y «Guardar nota», visible y distinto
     fireEvent.click(mode("Nota interna"));
@@ -269,6 +269,14 @@ describe("notas internas en el cuadro de redacción (F6-05c)", () => {
   }, 20_000);
 
   it("el panel reparte el alto: encabezado y cuadro fijos, solo los mensajes se desplazan", async () => {
+    // iOS no encoge el viewport con el teclado: el panel usa el alto visible mientras se escribe.
+    const viewport = Object.assign(new EventTarget(), { height: 500, scale: 1 });
+    vi.stubGlobal("visualViewport", viewport);
+    const Observer = class {
+      observe() {}
+      disconnect() {}
+    }; // jsdom no lo trae
+    vi.stubGlobal("ResizeObserver", Observer);
     server();
     show();
     await openChat();
@@ -276,8 +284,8 @@ describe("notas internas en el cuadro de redacción (F6-05c)", () => {
     const panel = screen.getByRole("region", { name: "Conversación" }).firstElementChild!
       .firstElementChild!;
     expect(panel).toHaveClass(
-      "h-[calc(100dvh-8rem)]",
-      "min-h-[29rem]",
+      "h-[calc(var(--keyboard-vh,100dvh)-8rem)]",
+      "min-h-min",
       "flex-col",
       "lg:h-[calc(100dvh-18rem)]",
     );
@@ -286,6 +294,16 @@ describe("notas internas en el cuadro de redacción (F6-05c)", () => {
     expect(scroller).toHaveClass("min-h-0", "flex-1", "overflow-y-auto"); // la válvula: absorbe el sobrante y nunca empuja el cuadro fuera
     expect(panel.querySelector("header")).toHaveClass("shrink-0");
     expect(scroller.nextElementSibling).toHaveClass("shrink-0"); // el cuadro nunca se comprime ni sale
+    const keyboard = () => (panel as HTMLElement).style.getPropertyValue("--keyboard-vh");
+    expect(keyboard()).toBe("");
+    const box = await reply();
+    act(() => box.focus());
+    expect(keyboard()).toBe("500px");
+    viewport.height = 320; // se abre el teclado
+    act(() => void viewport.dispatchEvent(new Event("resize")));
+    expect(keyboard()).toBe("320px");
+    act(() => box.blur());
+    expect(keyboard()).toBe("");
   });
 
   it("la descripción del cuadro apunta a elementos que existen: contador, teclas y, en la nota, el aviso", async () => {

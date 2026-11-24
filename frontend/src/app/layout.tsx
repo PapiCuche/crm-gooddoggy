@@ -1,7 +1,7 @@
 import "./globals.css";
 
 import { GeistMono } from "geist/font/mono";
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 import { NextIntlClientProvider } from "next-intl";
 import { getTranslations } from "next-intl/server";
@@ -16,6 +16,9 @@ export async function generateMetadata(): Promise<Metadata> {
   const t = await getTranslations("app");
   return { title: t("name") };
 }
+
+// En Android el teclado encoge el viewport (y `dvh`): el Inbox cabe con el teclado abierto.
+export const viewport: Viewport = { interactiveWidget: "resizes-content" };
 
 export default async function RootLayout({ children }: { children: ReactNode }) {
   // La CSP usa un nonce por petición (src/proxy.ts): ninguna página se prerenderiza en el build.

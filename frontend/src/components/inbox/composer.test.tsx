@@ -464,3 +464,64 @@ describe("cuadro de redacción: Instagram y Messenger", () => {
     expect(await box()).toHaveValue("Hola");
   });
 });
+
+describe("teclado del teléfono (UX-INBOX-03)", () => {
+  let touch = false;
+  beforeEach(() => {
+    touch = false;
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: query === "(pointer: coarse)" && touch,
+    }));
+  });
+  const enter = async () => fireEvent.keyDown(await box(), { key: "Enter" }); // `false`: impedido
+  const keys = async () => document.getElementById(`${(await box()).id}-keys`);
+
+  it("se mira al pulsar: en táctil Enter agrega la línea y no envía; en escritorio envía", async () => {
+    const s = server();
+    show();
+    await openChat();
+    expect(await box()).toHaveAttribute("enterkeyhint", "send");
+    expect(await keys()).toHaveTextContent("Enter envía; Mayús+Enter agrega una línea.");
+    await type("Hola");
+    touch = true; // sin montar de nuevo (p. ej. se soltó el teclado del iPad)
+    expect(await enter()).toBe(true); // el navegador pone la línea
+    await settle();
+    expect(s.posts()).toEqual([]);
+    touch = false;
+    expect(await enter()).toBe(false);
+    await waitFor(() => expect(s.posts()).toHaveLength(1));
+  });
+
+  it("en táctil lo dicen la ayuda y la tecla; dos toques en «Enviar» mandan una sola petición", async () => {
+    touch = true;
+    const s = server();
+    show();
+    await openChat();
+    expect(await box()).toHaveAttribute("enterkeyhint", "enter");
+    expect(await keys()).toHaveTextContent("Enter agrega una línea; envía con el botón.");
+    s.wait();
+    await type("Hola");
+    fireEvent.click(sendButton());
+    fireEvent.click(sendButton()); // en el mismo instante: `isPending` aún no se pintó
+    s.go();
+    await waitFor(() => expect(box()).resolves.toHaveValue(""));
+    await settle();
+    expect(s.posts()).toHaveLength(1);
+  });
+
+  it("un envío en curso al cerrar el chat no bloquea el siguiente", async () => {
+    const s = server();
+    show();
+    await openChat();
+    s.wait();
+    await type("Hola");
+    fireEvent.click(sendButton());
+    fireEvent.click(screen.getByRole("button", { name: "Volver a las conversaciones" }));
+    await waitFor(() => expect(screen.queryByRole("heading", { level: 2 })).toBeNull());
+    await openChat();
+    await type("Otra vez");
+    fireEvent.click(sendButton());
+    await waitFor(() => expect(s.posts()).toHaveLength(2));
+    s.go();
+  });
+});

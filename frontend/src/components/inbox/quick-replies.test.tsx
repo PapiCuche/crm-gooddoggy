@@ -318,6 +318,20 @@ describe("respuestas rápidas en el cuadro de respuesta (F6-08b)", () => {
     await waitFor(() => expect(s.sends()).toHaveLength(1));
   });
 
+  it("en un teléfono el Enter tras elegir agrega la línea (no se impide) y tampoco envía", async () => {
+    vi.stubGlobal("matchMedia", (query: string) => ({ matches: query === "(pointer: coarse)" }));
+    const s = server();
+    show();
+    await openChat();
+    await type("/delivery-l");
+    await waitFor(() => expect(options()).toHaveLength(1));
+    expect(await key("Enter")).toBe(false); // abierta, Enter elige
+    await waitFor(() => expect(box()).resolves.toHaveValue(rendered.text));
+    expect(await key("Enter")).toBe(true);
+    await settle(50);
+    expect(s.sends()).toEqual([]);
+  });
+
   it("el marcado se ve como texto; Tab y salir del cuadro cierran sin descartar; Escape descarta", async () => {
     const html = reply("r1", "delivery", "Envío", ["Delivery", 1]);
     server(undefined, { replies: [{ ...html, body: "<b id=boom>x</b> {{contact.name}}" }] });
