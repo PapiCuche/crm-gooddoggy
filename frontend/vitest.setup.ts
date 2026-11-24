@@ -11,5 +11,5 @@ vi.mock("next/navigation", async (original) => ({
 
 afterEach(() => {
   cleanup(); // sin `globals`, Testing Library no limpia el DOM entre tests
-  history.replaceState(null, "", "/"); // la URL no pasa de un test a otro
+  globalThis.history?.replaceState(null, "", "/"); // la URL no pasa de un test a otro (jsdom)
 });
