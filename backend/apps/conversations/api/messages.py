@@ -142,7 +142,9 @@ REASONS = {
     "CONSENT_REVOKED": "El cliente se dio de baja de los mensajes por iniciativa nuestra en este "
     "canal. Podrás responderle cuando vuelva a escribir.",
     "CLIENT_MESSAGE_ID_TAKEN": "Ese id de mensaje ya se usó para otro envío.",
+    "MEDIA_NOT_SUPPORTED_BY_CHANNEL": "Este canal todavía no admite adjuntos: envía solo texto.",
 }
+TOO_LONG = "El texto es demasiado largo para este canal: acórtalo antes de enviarlo."
 UNVERIFIED = (
     "El mensaje lleva la marca [verificar] (la palabra entre corchetes o paréntesis): escribe tú "
     "el dato correcto antes de enviarlo."
@@ -150,8 +152,9 @@ UNVERIFIED = (
 
 
 def queue(found: Conversation, **wanted: Any) -> tuple[Message, bool]:
-    """`record_outbound` de quien llama, con sus 409 (política o `CLIENT_MESSAGE_ID_TAKEN`) y el 400
-    `UNVERIFIED_CONTENT` (un mensaje fijo: nunca repite el texto)."""
+    """`record_outbound` de quien llama, con sus 409 (política, `CLIENT_MESSAGE_ID_TAKEN` o
+    `MEDIA_NOT_SUPPORTED_BY_CHANNEL`) y sus 400 `UNVERIFIED_CONTENT` y `TEXT_TOO_LONG_FOR_CHANNEL`
+    (mensajes fijos: nunca repiten el texto)."""
     tenant = context.current()
     assert tenant is not None  # noqa: S101 — la ruta es de un tenant
     try:
@@ -166,6 +169,11 @@ def queue(found: Conversation, **wanted: Any) -> tuple[Message, bool]:
         raise ApiError("CLIENT_MESSAGE_ID_TAKEN", 409, REASONS["CLIENT_MESSAGE_ID_TAKEN"]) from None
     except commands.UnverifiedContent:
         raise ApiError("UNVERIFIED_CONTENT", 400, UNVERIFIED) from None
+    except commands.TooLongForChannel:  # F7b-16: un mensaje fijo, nunca el texto ni su largo
+        raise ApiError("TEXT_TOO_LONG_FOR_CHANNEL", 400, TOO_LONG) from None
+    except commands.MediaNotSupported:
+        code = "MEDIA_NOT_SUPPORTED_BY_CHANNEL"
+        raise ApiError(code, 409, REASONS[code]) from None
     if not created and message.sender_user_id != tenant.user_id:  # el id es de otra persona
         raise ApiError("CLIENT_MESSAGE_ID_TAKEN", 409, REASONS["CLIENT_MESSAGE_ID_TAKEN"])
     return message, created
@@ -195,7 +203,9 @@ def queue(found: Conversation, **wanted: Any) -> tuple[Message, bool]:
         "mismo mensaje en un reintento igual. Pide `messages.send` y `conversations.view`; no "
         "hace falta ver al contacto (el `body` de la respuesta sigue la regla de la lectura). 400 "
         "`UNVERIFIED_CONTENT`: el texto lleva la marca `[verificar]` del copiloto, también "
-        "disfrazada (letras parecidas, otro ancho, caracteres que no se ven o mayúsculas). 409: "
+        "disfrazada (letras parecidas, otro ancho, caracteres que no se ven o mayúsculas); 400 "
+        "`TEXT_TOO_LONG_FOR_CHANNEL`: pasa del tope del canal (`channel.text_max` de la "
+        "conversación, en `channel.text_unit`). 409: "
         "`CONVERSATION_CLOSED`, `CHANNEL_UNAVAILABLE` (canal sin conectar), `CONTACT_BLOCKED`, "
         "`WINDOW_CLOSED` (pasó la ventana de atención del canal desde el último mensaje del "
         "cliente), `CONSENT_REVOKED` (fuera de la ventana, con la etiqueta Human Agent, el cliente "

@@ -11,7 +11,8 @@ La URL dura `EXPIRES` segundos, siempre `attachment` con un nombre generado, el 
 `private, no-store` firmados; la respuesta no se guarda en caché y nunca se registra.
 
 `POST …/conversations/{id}/media/` (F7-09b2, `multipart/form-data`): tope por persona, permiso,
-alcance (404), política y `Content-Length` (411, 413) **antes** de analizar o guardar el cuerpo.
+alcance (404), política, un canal sin medios (409, F7b-16) y `Content-Length` (411, 413) **antes**
+de analizar o guardar el cuerpo.
 Recibirlo no: el ASGI de Django lo lee entero antes de la vista, así que el tope del proxy
 (`request_body` en el Caddyfile) es un requisito del despliegue. `outbound_media.Capped` corta al
 pasarse; luego el tipo real (415), el antivirus (F7-15b: 422 `MEDIA_INFECTED`, o
@@ -38,7 +39,7 @@ from rest_framework.views import APIView
 
 from apps.access.permissions import request_context
 from apps.access.selectors import can, scoped
-from apps.conversations import outbound_media, policy, selectors
+from apps.conversations import limits, outbound_media, policy, selectors
 from apps.conversations.api import inputs
 from apps.conversations.api.messages import REASONS, MessageSerializer, queue, shows_body
 from apps.conversations.media import EXTENSIONS
@@ -152,7 +153,8 @@ def _read(request: Request, handler: outbound_media.Capped) -> dict[str, Any]:
         "del texto; idempotente por `client_message_id` (202; 200 con el mismo archivo). Pide "
         "`messages.send` y `conversations.view`. El archivo pasa por el antivirus antes de "
         "guardarse. 400 `UNVERIFIED_CONTENT`: el pie de foto lleva la marca `[verificar]`. 409: "
-        "la política o `CLIENT_MESSAGE_ID_TAKEN`; 411 sin `Content-Length`; 413 "
+        "la política, `CLIENT_MESSAGE_ID_TAKEN` o `MEDIA_NOT_SUPPORTED_BY_CHANNEL` (Messenger e "
+        "Instagram, antes de leer el archivo); 411 sin `Content-Length`; 413 "
         "`MEDIA_TOO_LARGE`; 415 `MEDIA_TYPE_NOT_ALLOWED` (el tipo real); 422 `MEDIA_INFECTED` o "
         "`MEDIA_TOO_COMPLEX` (pasa los topes del antivirus: no se pudo revisar entero); 429 "
         "`RATE_LIMITED`; 503 `MEDIA_SCAN_UNAVAILABLE` (sin veredicto: nada se guardó, reintentar).",
@@ -171,6 +173,9 @@ class SendMediaView(APIView):
         decision = selectors.messaging_decision(found, purpose=policy.CUSTOMER_REPLY, sender="USER")
         if decision.reason is not None:  # antes de guardar nada; el comando la repite
             raise ApiError(decision.reason, 409, REASONS[decision.reason])
+        if not limits.takes_media(found.channel_account.platform):  # F7b-16; también el comando
+            code = "MEDIA_NOT_SUPPORTED_BY_CHANNEL"
+            raise ApiError(code, 409, REASONS[code])
         handler = outbound_media.Capped(max(outbound_media.CAPS.values()))
         try:
             wanted = inputs.SendMediaSerializer(data=_read(request, handler))

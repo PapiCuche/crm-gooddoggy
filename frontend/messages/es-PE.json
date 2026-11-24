@@ -243,7 +243,9 @@
       "MEDIA_INFECTED": "El antivirus encontró un virus en este archivo, así que no se envió. Elige otro archivo.",
       "MEDIA_TOO_COMPLEX": "Este archivo es demasiado complejo para que el antivirus lo revise, así que no se envió. Elige otro archivo.",
       "MEDIA_SCAN_UNAVAILABLE": "No se pudo revisar el archivo con el antivirus, así que no se envió. Vuelve a intentarlo en unos minutos.",
-      "UNVERIFIED_CONTENT": "El texto lleva la marca [verificar] del copiloto. Escribe tú el dato confirmado en su lugar, o quítalo, antes de enviar."
+      "UNVERIFIED_CONTENT": "El texto lleva la marca [verificar] del copiloto. Escribe tú el dato confirmado en su lugar, o quítalo, antes de enviar.",
+      "TEXT_TOO_LONG_FOR_CHANNEL": "El texto es demasiado largo para este canal. Acórtalo antes de enviarlo.",
+      "MEDIA_NOT_SUPPORTED_BY_CHANNEL": "Este canal todavía no admite adjuntos: envía solo texto."
     }
   },
   "auth": {
@@ -2505,6 +2507,8 @@
       },
       "count": "{count} de {max} caracteres",
       "over": "Te pasaste por {over, plural, one {# carácter} other {# caracteres}}.",
+      "countBytes": "{count} de {max} bytes (las tildes y los emojis ocupan más de uno)",
+      "overBytes": "Te pasaste por {over, plural, one {# byte} other {# bytes}}: este canal acepta hasta {max}. Las tildes y los emojis ocupan más de uno.",
       "send": "Enviar",
       "sending": "Enviando…",
       "retry": "Reintentar",
@@ -2523,6 +2527,7 @@
       "savedHidden": "Nota guardada. No puedes ver a este cliente, así que su texto no se muestra aquí.",
       "deniedNote": "No puedes dejar notas en esta conversación. Puede que ya no esté en tu alcance.",
       "nearLimit": "Te acercas al tope de caracteres.",
+      "nearLimitBytes": "Te acercas al tope de bytes del canal.",
       "attach": "Adjuntar imagen o PDF",
       "attached": "Adjunto: {name}, {detail}",
       "remove": "Quitar el archivo",
@@ -2531,7 +2536,8 @@
       "idTakenGrown": "Puede que la primera parte ya se haya enviado. Revisa el chat y quita del cuadro lo que ya salió antes de volver a enviar.",
       "overLimit": {
         "reply": "Pasaste el tope de caracteres: no se puede enviar.",
-        "note": "Pasaste el tope de caracteres: no se puede guardar."
+        "note": "Pasaste el tope de caracteres: no se puede guardar.",
+        "replyBytes": "Pasaste el tope de bytes del canal: no se puede enviar."
       },
       "placeholder": "Escribe / para usar una respuesta rápida"
     },

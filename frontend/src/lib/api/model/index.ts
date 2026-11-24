@@ -387,6 +387,7 @@ export * from "./teamRoleEnum";
 export * from "./teamsListParams";
 export * from "./testAccount";
 export * from "./testAccounts";
+export * from "./textUnitEnum";
 export * from "./tokenRequest";
 export * from "./transfer";
 export * from "./transferCreateRequest";
