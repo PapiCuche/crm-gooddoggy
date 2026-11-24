@@ -1,7 +1,7 @@
 "use client";
 
 import { useInfiniteQuery } from "@tanstack/react-query";
-import { BotOff, Hand, RefreshCw } from "lucide-react";
+import { BotOff, CircleAlert, Hand, RefreshCw } from "lucide-react";
 import { useFormatter, useTranslations } from "next-intl";
 
 import { useTenant } from "@/components/app-shell/tenant-context";
@@ -246,6 +246,13 @@ function Row({
           <span>
             <Assignee who={row} />
           </span>
+          {row.last_reply_failed ? (
+            // F7b-14: lo último es nuestro, pero no le llegó: sigue sin responder
+            <span className="text-danger inline-flex items-center gap-1 font-semibold">
+              <CircleAlert aria-hidden className="size-3" />
+              {t("replyFailed")}
+            </span>
+          ) : null}
           {row.human_request ? (
             <span className="text-foreground inline-flex items-center gap-1 font-semibold">
               <Hand aria-hidden className="size-3" />

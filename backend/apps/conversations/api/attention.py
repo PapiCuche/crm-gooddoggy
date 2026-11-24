@@ -36,7 +36,7 @@ class HumanRequestSerializer(serializers.Serializer[Any]):
     requested_by_user_id = serializers.UUIDField(source="human_requested_by_user_id")
 
     def to_representation(self, instance: Conversation) -> dict[str, Any] | None:
-        if instance.human_requested_at is None:
+        if not attention.waiting(instance):  # F7b-14: atendida por una respuesta, cerrada
             return None
         return super().to_representation(instance)  # type: ignore[no-any-return]
 

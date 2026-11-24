@@ -3487,7 +3487,7 @@ paths:
         schema:
           type: boolean
         description: '`true`: solo las abiertas cuyo último mensaje es del cliente
-          (sin responder).'
+          o cuya respuesta falló (sin responder).'
       tags:
       - conversations
       security:
@@ -13897,6 +13897,10 @@ components:
           oneOf:
           - $ref: '#/components/schemas/LastMessageDirectionEnum'
           - $ref: '#/components/schemas/NullEnum'
+        last_reply_failed:
+          type: boolean
+          description: 'F7b-14: lo último es nuestro, pero ninguna respuesta desde
+            el último mensaje del cliente le llegó (fallaron): sigue sin responder.'
         standby_since:
           type: string
           format: date-time
@@ -13932,6 +13936,7 @@ components:
       - last_message_at
       - last_message_direction
       - last_message_preview
+      - last_reply_failed
       - number
       - standby_since
       - status
@@ -13995,6 +14000,10 @@ components:
           oneOf:
           - $ref: '#/components/schemas/LastMessageDirectionEnum'
           - $ref: '#/components/schemas/NullEnum'
+        last_reply_failed:
+          type: boolean
+          description: 'F7b-14: lo último es nuestro, pero ninguna respuesta desde
+            el último mensaje del cliente le llegó (fallaron): sigue sin responder.'
         standby_since:
           type: string
           format: date-time
@@ -14054,6 +14063,7 @@ components:
       - last_message_at
       - last_message_direction
       - last_message_preview
+      - last_reply_failed
       - number
       - resolved_at
       - standby_since

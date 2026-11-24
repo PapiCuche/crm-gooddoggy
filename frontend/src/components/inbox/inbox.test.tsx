@@ -112,6 +112,20 @@ describe("Inbox, lista (F6-03)", () => {
     expect(row).toHaveAttribute("aria-current", "true");
   });
 
+  it("una conversación cuya respuesta no llegó lo dice en la fila (F7b-14)", async () => {
+    const failed = conversation("2", {
+      ...{ contact: { id: "c2", display_name: "Luis Ramos" }, last_reply_failed: true },
+      ...{ last_message_preview: "Te ayudo", last_message_direction: "OUTBOUND" },
+    });
+    serve({ [LIST]: page([rosa, failed]) });
+    show();
+    const row = await screen.findByRole("button", { name: /Luis Ramos/ });
+    expect(row).toHaveTextContent(
+      "Tú: Te ayudoCONV-00002SandboxAbiertaSin asignarLa respuesta no llegó",
+    );
+    expect(screen.getByRole("button", { name: /Rosa Díaz/ })).not.toHaveTextContent("no llegó");
+  });
+
   it("vacío, fallo con reintento y 403 sin reintento", async () => {
     let reply: { status: number; body?: unknown } = {
       status: 500,

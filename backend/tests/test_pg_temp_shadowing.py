@@ -64,6 +64,7 @@ FUNCTIONS = (
     "public.ai_suggestions_guard()",  # INVOKER
     "public.credentials_expiry_guard()",  # F7b-12, INVOKER
     "public.credentials_expiry_due(boolean, integer)",  # F7b-12, SECURITY DEFINER
+    "public.conversations_reply_guard()",  # F7b-14, INVOKER
 )
 
 

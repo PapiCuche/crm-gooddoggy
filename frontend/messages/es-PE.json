@@ -2373,6 +2373,7 @@
     "refreshing": "Actualizando…",
     "back": "Volver a las conversaciones",
     "you": "Tú:",
+    "replyFailed": "La respuesta no llegó",
     "noAccess": "Sin permiso para ver el contenido",
     "noMessages": "Sin mensajes",
     "contactUnavailable": "Cliente no disponible",

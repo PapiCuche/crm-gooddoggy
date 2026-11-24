@@ -26,7 +26,7 @@ from uuid import UUID
 
 from django.conf import settings
 from django.db import IntegrityError, connections, transaction
-from django.db.models import F, Q
+from django.db.models import F, Max, Q
 from django.utils import timezone
 
 from apps.access.selectors import (
@@ -46,6 +46,7 @@ from apps.conversations.limits import fits, takes_media
 from apps.conversations.models import (
     META_ERROR,
     META_ID,
+    NOT_FAILED,
     PREVIEW_MAX,
     SOCIAL,
     AttentionMode,
@@ -540,7 +541,7 @@ def record_outbound(
                 convo.save(using=alias, update_fields=[*LAST, "updated_at"])
             record(ctx, "message.queued", Entity("message", message.pk), None, _sent(message))
             # F8-08n: el aviso de traspaso no atiende; F8-08l2: sin solicitud no se lee el texto
-            if convo.human_requested_at is not None and not attention.handoff_reply(ctx, text):
+            if attention.waiting(convo) and not attention.handoff_reply(ctx, text):
                 attention.clear(ctx, alias, convo, "REPLIED", message_id=message.pk)
             ids = {"conversation_id": convo.pk, "channel_account_id": convo.channel_account_id}
             emit(  # para el despachador (F6-04b); solo ids, nunca el texto
@@ -703,7 +704,32 @@ def advance_delivery(
                 ctx, "message.updated", aggregate_type="message", aggregate_id=message.pk,
                 payload={"conversation_id": str(message.conversation_id)},
             )  # fmt: skip
+        failed = message.delivery_status == Delivery.FAILED
+        if moved and failed and message.provider_error_code != "PROVIDER_UNKNOWN":
+            _reply_failed(ctx, alias, message)  # también un `PROVIDER_UNKNOWN` que se corrige
         return message
+
+
+def _reply_failed(ctx: TenantContext, alias: str, message: Message) -> None:
+    """F7b-14: un saliente terminó `FAILED` (no `PROVIDER_UNKNOWN`: pudo salir). Con la
+    conversación bloqueada después del mensaje (nadie bloquea una conversación y luego espera a un
+    mensaje ya escrito: el reclamo los salta), vuelve a mirar «Sin responder»: lo último es
+    nuestro, el cliente escribió y ninguna respuesta desde su último mensaje pudo llegar. Y la
+    solicitud de persona que esa respuesta atendía se reabre si nada la sustituye. Quitar la marca
+    con un mensaje nuevo lo hace la base (`conversations_reply_guard`, migración 0061)."""
+    convo = _locked(alias, message.conversation_id)
+    mine = Message.objects.using(alias).filter(conversation_id=convo.pk)
+    since = mine.filter(direction="INBOUND").aggregate(at=Max("created_at"))["at"]
+    failed = (
+        convo.last_message_direction == "OUTBOUND"
+        and since is not None
+        and not mine.filter(NOT_FAILED, direction="OUTBOUND", created_at__gt=since).exists()
+    )
+    if failed != convo.last_reply_failed:  # la pantalla ya relee con `message.updated`
+        Conversation.objects.using(alias).filter(pk=convo.pk).update(
+            last_reply_failed=failed, updated_at=timezone.now()
+        )
+    attention.reply_failed(ctx, alias, convo, message.pk)
 
 
 def _fail_from(ctx: TenantContext, message_id: UUID, reason: str, was: str) -> Message | None:
