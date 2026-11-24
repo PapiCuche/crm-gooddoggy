@@ -553,6 +553,44 @@ describe("Inbox, motivo de un fallo: el conjunto cerrado", () => {
     );
   });
 
+  // F7b-19: un rechazo pasajero tardío sin reintentos no dice «tras varios intentos».
+  it("sin intentos dice «No se pudo enviar.», con intentos «tras varios intentos»", async () => {
+    const spent = (id: string, dispatch_attempts: number, code = "RETRIES_EXHAUSTED") =>
+      message(id, {
+        direction: "OUTBOUND",
+        sender_type: "USER",
+        delivery_status: "FAILED",
+        body: id,
+        provider_error_code: code as Message["provider_error_code"],
+        provider_error_detail: "613",
+        dispatch_attempts,
+      });
+    const social = { ...rosa.channel, platform: "MESSENGER" as const };
+    serve({
+      [LIST]: page([conversation("1", { channel: social })]),
+      [MESSAGES("1")]: page([
+        spent("d", 1),
+        spent("c", 0, "PROVIDER_REJECTED"),
+        spent("b", 3),
+        spent("a", 0),
+      ]),
+    });
+    show();
+    await open(/Rosa Díaz/);
+    const log = await screen.findByRole("list", { name: "Mensajes" });
+    const row = (body: string) =>
+      within(log)
+        .getAllByRole("listitem")
+        .find((li) => li.querySelector("bdi")?.textContent === body)!;
+    expect(row("a")).toHaveTextContent("No se pudo enviar. Código de Meta: 613.");
+    expect(row("a")).not.toHaveTextContent("intentos");
+    expect(row("b")).toHaveTextContent(
+      "No se pudo enviar tras varios intentos. Código de Meta: 613.",
+    );
+    expect(row("c")).toHaveTextContent("Messenger rechazó el mensaje. Código de Meta: 613.");
+    expect(row("d")).toHaveTextContent("No se pudo enviar tras varios intentos."); // un reintento
+  });
+
   // F7b-17: rótulos honestos: «Sin confirmar» no es un fallo; «Reintentando» no es «En cola».
   it("no rotula como fallo lo que no se sabe y dice cuándo un mensaje reintenta", async () => {
     const out = (id: string, changes: Partial<Message>) =>

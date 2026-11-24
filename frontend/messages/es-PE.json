@@ -2472,6 +2472,7 @@
       "QUALITY_BLOCKED": "{network} bloqueó el envío.",
       "PROVIDER_ERROR": "{network} tuvo un problema al procesar el envío."
     },
+    "failureOnce": "No se pudo enviar.",
     "failureCode": "Código de Meta: {code}.",
     "failureCodeHint": "Código de Meta: {code} ({hint}).",
     "failureMeta": {

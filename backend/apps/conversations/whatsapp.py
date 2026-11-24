@@ -48,7 +48,8 @@ CODES = {
 }  # fmt: skip
 TEMPLATES = range(132000, 133000)  # la familia de errores de plantilla de Meta
 # Límites de tasa de Meta (los `RATE_LIMITED` de la tabla): en la respuesta del envío no lo aceptó y
-# se reintenta antes de la tabla.
+# se reintenta antes de la tabla, salvo con un 5xx (F7b-19: Meta no documenta que un 5xx con su
+# código no lo aceptó, así que es ambiguo como cualquier otro 5xx).
 TOO_FAST = tuple(code for code, own in CODES.items() if own == "RATE_LIMITED")
 # F7b-18: fallos pasajeros de Meta («Temporary due to downtime», «Message failed to send… Try
 # again», «A service is temporarily unavailable»). Con una respuesta de error que no es 5xx, Meta no
@@ -94,15 +95,18 @@ def code_for(error_code: Any) -> str:
 
 
 def _refused(status: int, raw: bytes, server: type[Exception]) -> SendResult:
-    """Un rechazo de Meta: «demasiado rápido» se reintenta, un 5xx es `server`, un fallo pasajero
-    (`AGAIN`) se reintenta y el resto, el motivo cerrado de `code_for` (el del webhook)."""
+    """Un rechazo de Meta: un 5xx es `server` con cualquier código (F7b-19: antes que el límite),
+    «demasiado rápido» se reintenta, un fallo pasajero (`AGAIN`) se reintenta y el resto, el motivo
+    cerrado de `code_for` (el del webhook)."""
     code = field_at(raw, "error", "code")
     code = code if isinstance(code, int) and not isinstance(code, bool) else None
     detail = error_detail(code, field_at(raw, "error", "error_subcode"))
+    if status >= 500:  # pudo haberlo aceptado: un `130429` o un `4` no lo aclaran
+        if server is TemporaryChannelError:  # la subida (nunca llega al cliente), con su código
+            raise TemporaryChannelError(detail)
+        raise server
     if code in TOO_FAST or status == 429:
         raise TemporaryChannelError(detail)  # F7b-17: el código, por si se agotan los reintentos
-    if status >= 500:
-        raise server
     if code in AGAIN:
         raise TemporaryChannelError(detail)
     reason = "TOKEN_INVALID" if status == 401 else code_for(code)
