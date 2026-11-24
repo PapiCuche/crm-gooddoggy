@@ -56,7 +56,9 @@ const icon = (cell: HTMLElement | null | undefined) =>
     ?.getAttribute("class")
     ?.match(/lucide-(x|triangle-alert)\b/)?.[1];
 
-beforeEach(() => vi.useFakeTimers({ toFake: ["Date"], now: NOW }));
+// El reloj y los temporizadores, fijos en `NOW`; avanzan solos lo justo para que la lista cargue.
+const FAKE = ["Date", "setTimeout", "clearTimeout"] as const;
+beforeEach(() => vi.useFakeTimers({ toFake: [...FAKE], now: NOW, shouldAdvanceTime: true }));
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
@@ -100,10 +102,6 @@ describe("La caducidad del token en Canales (F7b-12b)", () => {
   });
 
   it("una tarjeta abierta cambia sola al cruzar los 10 días y la caducidad", async () => {
-    vi.useRealTimers();
-    vi.useFakeTimers({
-      ...{ toFake: ["Date", "setTimeout", "clearTimeout"], now: NOW, shouldAdvanceTime: true },
-    });
     const [ending, nearing] = await rows([
       account("m1", at(60_000)),
       account("m2", at(10 * DAY + 60_000)),
@@ -117,10 +115,6 @@ describe("La caducidad del token en Canales (F7b-12b)", () => {
   });
 
   it("una fecha lejana pasa el tope de `setTimeout` y vuelve a esperar hasta los 10 días", async () => {
-    vi.useRealTimers();
-    vi.useFakeTimers({
-      ...{ toFake: ["Date", "setTimeout", "clearTimeout"], now: NOW, shouldAdvanceTime: true },
-    });
     const [far] = await rows([account("m1", at(40 * DAY))]);
     act(() => vi.advanceTimersByTime(2 ** 31 - 1)); // el tope: aún faltan más de 10 días
     expect(red(far)).toBe(false);

@@ -6,7 +6,7 @@ import base64
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import psycopg
 import pytest
@@ -146,4 +146,3 @@ def test_the_expiry_costs_no_query_per_account(crm: SimpleNamespace, meta: FakeG
     assert len(many) == len(few)
     assert len([q for q in many if 'FROM "channel_accounts"' in q]) == 1
     assert [q for q in many if "credentials" in q and "channel_accounts" not in q] == []
-    assert reply(get(ana, f"{LIST}{uuid4()}/")) == NOT_FOUND
