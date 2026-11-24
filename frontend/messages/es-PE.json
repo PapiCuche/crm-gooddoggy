@@ -2440,7 +2440,9 @@
       "SENT": "Enviado",
       "DELIVERED": "Entregado",
       "READ": "Leído",
-      "FAILED": "No se pudo enviar"
+      "FAILED": "No se pudo enviar",
+      "RETRYING": "Reintentando",
+      "UNCONFIRMED": "Sin confirmar"
     },
     "failure": {
       "CONVERSATION_CLOSED": "La conversación estaba cerrada.",

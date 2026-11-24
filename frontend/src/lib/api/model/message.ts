@@ -60,6 +60,8 @@ export interface Message {
    * @nullable
    */
   readonly provider_error_detail: string | null;
+  /** Cuántas veces el canal no lo aceptó y volvió a la cola para reintentar (p. ej., por un límite de envío); `0` en lo entrante y en lo que no reintentó. */
+  readonly dispatch_attempts: number;
   created_at: string;
   /** @nullable */
   sent_at: string | null;

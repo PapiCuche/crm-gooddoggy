@@ -1,6 +1,7 @@
 """F6-04b: la salida de los mensajes en cola (adaptador Sandbox, reintentos, revalidación y
 barredor) con PostgreSQL real y el rol `crm_app`; el outbox y la auditoría, con el rol dueño."""
 
+import datetime as dt
 from types import SimpleNamespace
 from typing import Any
 from uuid import UUID, uuid4
@@ -10,7 +11,7 @@ import pytest
 from django.conf import settings
 from django.utils import timezone
 
-from apps.conversations import channels, commands, tasks
+from apps.conversations import attention, channels, commands, tasks
 from apps.conversations.channels import (
     Claim,
     SendResult,
@@ -234,6 +235,111 @@ def test_when_the_retries_run_out_the_message_fails_without_overriding_a_sent_on
     assert [
         m for _, c, m in audit(migrator) if c.get("delivery_status") == ["QUEUED", "FAILED"]
     ] == [{"reason": "RETRIES_EXHAUSTED"}]
+
+
+def events(migrator: DB) -> list[tuple[Any, ...]]:
+    return migrator.execute(
+        "SELECT event_type, aggregate_id, payload FROM outbox_events ORDER BY occurred_at, id"
+    ).fetchall()
+
+
+def test_a_returned_claim_tells_the_screen_with_only_ids_and_only_when_it_returns(
+    world: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F7b-17: el reclamo devuelto avisa a la burbuja (deja de decir «Enviando»), en la misma
+    transacción que el cambio: si algo falla después, ni cambio ni aviso."""
+    message = queue(world)
+    migrator.execute("DELETE FROM outbox_events")
+    with pytest.raises(RuntimeError, match="retry"):
+        tasks.deliver(
+            Retrying(0), world.a, message.pk, Counting(boom=TemporaryChannelError()).resolve
+        )
+    hint = ("message.updated", message.pk, {"conversation_id": str(message.conversation_id)})
+    assert events(migrator) == [hint, hint]  # el reclamo (SENDING) y la devolución (QUEUED)
+    wait = dt.timedelta(seconds=1)
+    with tenant_scope(ctx(world.a)) as tenant:  # ya no está `SENDING`: nada
+        assert commands.release_outbound(tenant, message_id=message.pk, wait=wait) is None
+    other = queue_in_b(world)
+    migrator.execute("UPDATE messages SET delivery_status = 'SENDING' WHERE id = %s", [other.pk])
+    with tenant_scope(ctx(world.a)) as tenant:  # de otra organización: como si no existiera
+        assert commands.release_outbound(tenant, message_id=other.pk, wait=wait) is None
+    assert len(events(migrator)) == 2
+    migrator.execute("UPDATE messages SET delivery_status = 'SENDING' WHERE id = %s", [message.pk])
+    real = emit
+
+    def broken(*args: Any, **kwargs: Any) -> None:
+        real(*args, **kwargs)
+        raise RuntimeError("después del aviso")
+
+    monkeypatch.setattr(commands, "emit", broken)
+    with tenant_scope(ctx(world.a)) as tenant, pytest.raises(RuntimeError, match="aviso"):
+        commands.release_outbound(tenant, message_id=message.pk, wait=wait)
+    assert state(world, message).delivery_status == "SENDING" and len(events(migrator)) == 2
+
+
+@pytest.mark.parametrize(
+    ("detail", "saved"),
+    [
+        ("613", "613"),
+        ("4/1234", "4/1234"),
+        (None, None),
+        ("Account locked", None),
+        ("1" * 11, None),
+    ],
+)
+def test_when_the_retries_run_out_the_last_meta_code_is_kept_and_the_reply_fails_once(
+    world: SimpleNamespace, monkeypatch: pytest.MonkeyPatch, detail: Any, saved: Any
+) -> None:
+    """F7b-17: el código de Meta del último límite queda en `provider_error_detail` (solo números),
+    por el único camino a `FAILED` (`fail_queued` → `advance_delivery`): «Sin responder» (F7b-14) se
+    marca una vez."""
+    message, calls = queue(world), []
+    real = attention.reply_failed
+
+    def spy(*args: Any) -> None:
+        calls.append(args[-1])
+        real(*args)
+
+    monkeypatch.setattr(attention, "reply_failed", spy)
+    flaky = Counting(boom=TemporaryChannelError(detail))
+    tasks.deliver(Retrying(tasks.MAX_RETRIES), world.a, message.pk, flaky.resolve)
+    tasks.deliver(Retrying(tasks.MAX_RETRIES), world.a, message.pk, flaky.resolve)  # ya cerrado
+    found = state(world, message)
+    assert (found.delivery_status, found.provider_error_code) == ("FAILED", "RETRIES_EXHAUSTED")
+    assert found.provider_error_detail == saved and found.failed_at is not None
+    assert calls == [message.pk] and flaky.calls == 1
+    assert reload(world, Conversation, message.conversation_id).last_reply_failed
+
+
+def test_the_number_of_attempts_and_their_waits_do_not_change(
+    world: SimpleNamespace, migrator: DB
+) -> None:
+    """F7b-17 no cambia cuántas veces ni cuándo se reintenta: seis envíos, cinco esperas."""
+    assert (tasks.MAX_RETRIES, tasks.BACKOFF_SECONDS, tasks.BACKOFF_MAX) == (5, 30, 600)
+    assert tasks.REQUEUE_WAIT == 120
+    message, flaky, asked = queue(world), Counting(boom=TemporaryChannelError("613")), []
+    for retries in range(tasks.MAX_RETRIES + 1):
+        task = Retrying(retries)
+        if retries < tasks.MAX_RETRIES:
+            with pytest.raises(RuntimeError, match="retry"):
+                tasks.deliver(task, world.a, message.pk, flaky.resolve)
+            assert state(world, message).delivery_status == "QUEUED"
+        else:
+            tasks.deliver(task, world.a, message.pk, flaky.resolve)
+        asked += task.asked
+        migrator.execute("UPDATE messages SET not_before = NULL")  # pasada su espera
+    found = state(world, message)
+    assert asked == [30, 60, 120, 240, 480] and flaky.calls == 6
+    assert (found.delivery_status, found.dispatch_attempts) == ("FAILED", 6)
+    assert found.provider_error_detail == "613"
+
+
+def test_a_temporary_error_never_carries_text() -> None:
+    error = TemporaryChannelError("613")
+    assert (error.args, str(error), error.detail) == ((), "", "613")
+    assert TemporaryChannelError(613).detail is None  # type: ignore[arg-type]
+    assert TemporaryChannelError("10/2018065").detail == "10/2018065"
+    assert TemporaryChannelError("613\n").detail is None
 
 
 def test_the_tasks_run_in_the_tenant_of_the_call_and_never_touch_another_organization(
