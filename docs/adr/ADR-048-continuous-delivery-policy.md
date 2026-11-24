@@ -11,7 +11,7 @@
 ### Cómo se despliega hoy (fase 0)
 
 - `images.yml` construye, prueba y publica en GHCR las imágenes del backend, del frontend y del proxy en cada push a `main`, con la etiqueta del SHA, la revisión OCI (`org.opencontainers.image.revision`), la procedencia de BuildKit (`mode=max`) y el SBOM. Su resumen trae el `release.env` de ese SHA: cinco imágenes por digest y `REVISION`. Es el único workflow con `packages: write` y no tiene más secreto que `GITHUB_TOKEN`.
-- El propietario escribe `GO DESPLIEGUE CRM <SHA>`. Un operador entra por SSH, hace `git checkout <SHA>` de `infra/prod` y ejecuta `sudo infra/prod/deploy.sh <release.env>` dentro de `tmux`: valida el release, `pull`, volcado previo cifrado (`backup.sh predeploy`), `migrate`, `up -d --wait`, puerta de salud (`/health/ready`, `smoke.sh`, `/login`) y vuelta atrás automática a `release.env` si la puerta falla. `--rollback` vuelve a `release.env.previous`. Las migraciones nunca se deshacen (expandir y contraer, ADR-033 §7).
+- El propietario escribe `GO DESPLIEGUE CRM <SHA>` (una instrucción del mantenedor que, antes de este ADR, no estaba escrita en el repositorio). Un operador entra por SSH, hace `git checkout <SHA>` de `infra/prod` y ejecuta `sudo infra/prod/deploy.sh <release.env>` dentro de `tmux`: valida el release, `pull`, volcado previo cifrado (`backup.sh predeploy`), `migrate`, `up -d --wait`, puerta de salud (`/health/ready`, `smoke.sh`, `/login`) y vuelta atrás automática a `release.env` si la puerta falla. `--rollback` vuelve a `release.env.previous`. Las migraciones nunca se deshacen (expandir y contraer, ADR-033 §7).
 - Antes de pedir el GO, el programa ensaya el despliegue en local en modo compartido y vigila la otra aplicación del servidor con su comprobación propia, que hoy está fuera del repositorio.
 - ADR-033 §6.2: **CI no tiene secretos de producción y el programa autónomo no tiene acceso al servidor.** El comentario de `images.yml` lo repite: «El despliegue lo lanza una persona».
 
@@ -50,7 +50,7 @@ Sin despliegue: si las tres imágenes propias del candidato tienen la misma conf
 
 #### 2.1 Rutas sensibles (clase B como mínimo)
 
-Las rutas críticas de ADR-030 y las que el propietario pidió tratar a mano:
+Las rutas que ADR-030 (`Proposed`) propone como críticas (su constante `CRITICAL_PATTERNS` no existe todavía en `.github/scripts/pr_governance.py`) y las que el propietario pidió tratar a mano. Esta lista es propia de este ADR y no depende de la aceptación de ADR-030:
 
 - **Autenticación, sesión, segundo factor, tenancy, RLS y permisos:** `backend/apps/accounts/**`, `backend/apps/access/**`, `backend/apps/members/**`, `backend/apps/organizations/**`, `backend/apps/provisioning/**`, `backend/core/tenancy/**`, `backend/core/db/**`, `backend/core/sealed.py`, `backend/core/redaction.py`, `backend/core/http.py`, `backend/config/**` (settings, `urls.py`, `asgi.py`), `frontend/src/proxy.ts`, `frontend/next.config.ts`.
 - **IA:** `backend/apps/ai_gateway/**`, `backend/apps/ai_agents/**`.
@@ -64,7 +64,7 @@ La tabla exacta vive en el repositorio (F1-20a), junto al clasificador, y cambia
 
 Una migración nueva es A3 solo si **todas** sus operaciones están en esta lista y la imagen anterior sigue leyendo y escribiendo con el esquema nuevo:
 
-1. `CreateModel` de una tabla nueva, con `EnableRLS`, `CompositeTenantFK`, `AddIndex` y `AddConstraint` **solo sobre tablas creadas en el mismo release** (`backend/core/db/operations.py`).
+1. `CreateModel` de una tabla nueva, con `EnableRLS` y `CompositeTenantFK` (las operaciones propias de `backend/core/db/operations.py`) y los `AddIndex` y `AddConstraint` de Django, **solo sobre tablas creadas en el mismo release**.
 2. `AddField` en una tabla existente solo si el campo es `null=True` o tiene `db_default` (el valor por omisión queda en la base). Un `default=` de Django en un campo `NOT NULL` no vale: la imagen anterior inserta sin esa columna y la base la rechaza.
 3. `AddIndexConcurrently` en una migración `atomic = False`. Un `AddIndex` normal en una tabla existente bloquea las escrituras mientras se construye: clase B.
 4. Nada más: ni `RunPython`, `RunSQL`, `SeparateDatabaseAndState`, `AlterField`, `RemoveField`, `DeleteModel`, `Rename*`, `AlterUniqueTogether`, `AlterModelTable`, `SecurityDefinerFunction`, disparadores, funciones, políticas ni `AddConstraint` en una tabla existente (un `CHECK` o un `UNIQUE` nuevos pueden rechazar lo que escribe la imagen anterior).
@@ -93,6 +93,7 @@ Cualquier parada de la línea (§9) en fase 2 devuelve el sistema a la fase 1 ha
 ### 4. Quién aprueba
 
 - **Solo el propietario** (y, si lo decide, un suplente nominal con su propia cuenta y 2FA). Es el único revisor obligatorio del entorno `production`, con «Prevent self-review» activado y despliegue solo desde `main`.
+- **Una consecuencia de «Prevent self-review»:** el entorno bloquea que apruebe quien disparó el run. Si el propietario hace él mismo el push a `main`, no puede aprobar ese release. Por eso los merges a `main` los hace la identidad de los agentes, o hay un suplente nominal que aprueba (decisión 3). La cuenta de máquina no es administradora del repositorio y «Allow administrators to bypass» está desactivado en el entorno `production`; sin eso, un administrador se saltaría la aprobación.
 - **Los agentes nunca aprueban.** Requisito previo de la fase 1: los agentes trabajan con una identidad propia (cuenta de máquina o GitHub App) que no es revisora del entorno, y el token del propietario no está en sus sesiones. Sin esa separación, aprobar en GitHub no prueba que lo hizo el propietario, y la fase 1 no entra en vigor.
 - El agente del servidor comprueba él mismo, en la API de GitHub, que el run fue aprobado por una cuenta de la lista `CD_APPROVERS` del servidor (§11). No se fía de lo que diga el run.
 - En fase 0, el GO sigue siendo un mensaje del propietario en la sesión, nunca un texto de un issue o de un PR.
@@ -179,7 +180,7 @@ El agente las comprueba antes de empezar y vuelve a comprobar las marcadas con *
 - Los avisos solo llevan el evento, el SHA corto, la clase, el paso, la duración y el enlace al run. Nunca secretos, valores de entorno, logs de la aplicación ni datos de clientes.
 - La URL del canal es secreta y va en un archivo de `root` `0600`, pasada a `curl` por la entrada estándar, como las de los latidos del backup.
 - El canal no puede ser el propio CRM: si el CRM está caído, el aviso tiene que llegar igual.
-- Con el token de §11, el agente también deja el estado en el registro de despliegues de GitHub, que el propietario ve en la página del entorno.
+- Si el token tiene `Deployments: write` (§11), el agente también deja el estado en el registro de despliegues de GitHub, que el propietario ve en la página del entorno.
 
 ### 11. Mecanismo: aprobación en GitHub y ejecución por un agente del servidor que tira (pull)
 
@@ -195,11 +196,11 @@ push a main → images.yml (imágenes, atestaciones, release.env)
 ```
 
 - **GitHub no tiene ningún secreto de producción ni acceso al servidor:** ADR-033 §6.2 se sigue cumpliendo literalmente. `release.yml` solo tiene `contents: read`, `actions: read` y `deployments: write` de `GITHUB_TOKEN`; `test_workflow_security.py` lo fija.
-- **El servidor no abre ningún puerto nuevo.** El agente consulta la API de GitHub por HTTPS (peticiones condicionales: un 304 no gasta cuota) cada 2 min.
+- **El servidor no abre ningún puerto nuevo.** El agente consulta la API de GitHub por HTTPS cada 2 min, **siempre autenticado** con el token de abajo: la cuota anónima (60 peticiones por hora por IP) no alcanza para sondear cada 2 min, y GitHub solo exime de la cuota las peticiones condicionales (`ETag`, respuesta 304) cuando van autenticadas. Con el token, 30 sondeos por hora caben de sobra en su cuota (5000 por hora) y los 304 no la gastan.
 - **El agente decide con datos locales:** el backup, el disco, la memoria, los locks y la otra aplicación están en el servidor, no en GitHub.
 - **No se fía del run:** acepta un registro solo si lo creó `github-actions[bot]` desde `release.yml` en `main`, si el run tiene la aprobación de una cuenta de `CD_APPROVERS`, y si la tupla de §5 coincide al recalcularla.
 - **Solo despliega lo que ya pasó por `main`:** en las clases A y B, `infra/prod/**` no cambia en el rango (si cambiara, sería C), así que el `checkout` del SHA no cambia el código del agente ni de `deploy.sh`.
-- **Token del servidor** (decisión 4): un token de grano fino solo para este repositorio, con `Deployments: write` y lectura de `Actions`, `Contents`, `Issues` y `Metadata`, con caducidad de 90 días, en `/etc/crm/cd.env` (`root`, `0600`). Si se filtra, permite escribir estados de despliegue falsos, no desplegar: el agente rechaza registros que no creó `github-actions[bot]`. Sin token, el agente funciona igual con la API pública y los estados solo llegan por el canal de avisos.
+- **Token del servidor** (decisión 4, **obligatorio**): un token de grano fino solo para este repositorio, con **lectura** de `Actions`, `Contents`, `Deployments`, `Issues` y `Metadata`, y caducidad de 90 días, en `/etc/crm/cd.env` (`root`, `0600`). Opcional: `Deployments: write`, para que el agente deje el estado en el registro de despliegues de GitHub. Si se filtra, el permiso de lectura sobre un repositorio público no da nada nuevo, y con `Deployments: write` permitiría escribir estados falsos, no desplegar: el agente rechaza registros que no creó `github-actions[bot]`. Sin token el agente no sondea y la fase 1 no entra en vigor.
 - **Modo del agente** en `/etc/crm/cd.conf`: `off` (fase 0), `approve` (fase 1) o `auto` (fase 2). Lo cambia el propietario o el operador por orden suya, en el servidor. Cambiarlo no es un despliegue.
 - El agente es Python 3 del sistema, solo con la biblioteca estándar, y valida cada dato que recibe (SHA de 40 hex, digests `sha256:` de 64 hex, ids numéricos) antes de usarlo. Nunca pasa un dato recibido a una shell.
 
@@ -221,7 +222,7 @@ push a main → images.yml (imágenes, atestaciones, release.env)
 | E. Actualizador por etiqueta (tipo Watchtower) | Nada que escribir | Sigue etiquetas, no digests; no hace volcado previo, ni `migrate`, ni puerta de salud, ni vuelta atrás. Descartada |
 | F. Quedarse en la fase 0 | Nada cambia | El propietario sigue siendo el cuello de botella; ninguna condición se comprueba sola |
 
-Si el propietario quiere el clic antes de que exista el agente, hay un paso intermedio posible (fase 1a): la aprobación en GitHub sustituye al mensaje de GO y el operador sigue ejecutando a mano, con `cd-preflight.sh` (F1-20d). No cambia ADR-033.
+Si el propietario quiere el clic antes de que exista el agente, hay un paso intermedio posible (fase 1a): la aprobación en GitHub sustituye al mensaje de GO y el operador sigue ejecutando a mano, con `cd-preflight.sh` (F1-20d). No cambia ADR-033, pero **exige lo mismo que la fase 1 en §4**: identidades separadas para los agentes (decisión 3), porque sin ellas un clic en GitHub es más débil que el GO por chat. Además, antes de ejecutar, el operador comprueba a mano la tupla de §5 (SHA, huella del `release.env`, base, clase y run aprobado) contra el release que va a desplegar.
 
 ## Consequences
 
@@ -271,9 +272,9 @@ Para la fase 2 (no se detallan aquí): el clasificador como check bloqueante en 
 | # | Decisión | Opciones | Recomendación |
 | --- | --- | --- | --- |
 | 1 | Política y clases | Aceptar §2 (A1, A2, A3, B, C y las rutas sensibles) / cambiarlas | Aceptar. Revisar la tabla de rutas a los 3 meses |
-| 2 | Mecanismo | C (entorno + agente que tira) / A (SSH desde Actions, enmienda ADR-033 §6.2) / 1a (clic en GitHub y ejecución a mano) / quedarse en fase 0 | C. Si se quiere el clic antes, 1a mientras se construye el agente |
-| 3 | Identidad de los agentes | Cuenta de máquina o GitHub App, sin el token del propietario / seguir con el `gh` del propietario (sin fase 1) | Identidad propia; el propietario como único revisor, con «Prevent self-review»; suplente nominal opcional |
-| 4 | Token del servidor | Token de grano fino (Deployments RW; Actions, Contents, Issues y Metadata de lectura; 90 días) / sin token | Con token, para ver el estado en GitHub |
+| 2 | Mecanismo | C (entorno + agente que tira) / A (SSH desde Actions, enmienda ADR-033 §6.2) / 1a (clic en GitHub y ejecución a mano; exige también las identidades separadas de la decisión 3 y que el operador compruebe la tupla de §5) / quedarse en fase 0 | C. Si se quiere el clic antes, 1a mientras se construye el agente |
+| 3 | Identidad de los agentes | Cuenta de máquina o GitHub App, sin el token del propietario / seguir con el `gh` del propietario (sin fase 1 ni 1a) | Identidad propia, que no es administradora; el propietario como único revisor, con «Prevent self-review» y sin bypass de administradores; los merges a `main` los hace esa identidad (o un suplente nominal aprueba) |
+| 4 | Token del servidor | Token de grano fino de lectura (Actions, Contents, Deployments, Issues y Metadata; 90 días), obligatorio para sondear; más `Deployments: write` opcional para ver el estado en GitHub | Token de lectura, más `Deployments: write` para ver el estado |
 | 5 | Ventanas y congelación | Las de §6 / otras | Las de §6, más las campañas de la otra aplicación en el calendario |
 | 6 | Umbrales de §7 y §8 | Los propuestos / otros | Los propuestos; se revisan tras los primeros 10 despliegues |
 | 7 | Vuelta atrás automática en la observación (§9) | Sí, para A y B / solo avisar | Sí, para A y B |

@@ -4,7 +4,7 @@
 - **Date:** 2026-11-24
 - **Deciders:** propietario del producto (pendiente); propuesta de diseño de la serie F5-10 («Sales Intelligence», primer hito).
 - **Work items:** este ADR lo publica #1106 (F0-PROP); la serie F5-10o, F5-10a … F5-10i está en el anexo «Plan de work items» y solo se implementa **si el propietario acepta este ADR**.
-- **Related:** [ADR-001](ADR-001-multi-tenancy.md) y [ADR-002](ADR-002-postgresql-rls.md) (tablas tenant-owned con FORCE RLS y FKs compuestas; sin excepción nueva); [ADR-003](ADR-003-auth-session.md) §5 (permisos con alcance); [ADR-007](ADR-007-conversation-assignment.md) (responsable); [ADR-011](ADR-011-observability-and-logs.md) (auditoría); [ADR-016](ADR-016-api-list-convention.md) §6 (un orden nuevo pide su cursor; este ADR lo usa, no lo enmienda); [ADR-018](ADR-018-owner-role-follows-catalog.md); [ADR-028](ADR-028-store-data-connectors.md) (stock externo fuera); [ADR-034](ADR-034-ai-copilot-first.md) §7, §11 y §12 (sin cambios: Motor A no es IA y Motor B no se implementa con este ADR); [ADR-043](ADR-043-ai-budget-time-zone-lima.md) (el «día» en hora de Lima); [ADR-049](ADR-049-internal-follow-up-automations.md) (propuesta paralela de automatizaciones: se beneficiaría de los eventos `task.*` y `opportunity.*` de F5-10c). Diseño de fase 0: [02 §E.10](../fase-0/02-modelo-de-datos.md) (`leads`, `lead_score_events`), [03 §J.11](../fase-0/03-tenancy-rbac-inbox-ia.md) (Supervisor con reglas deterministas), historias E09-02, E09-03 y E11-19.
+- **Related:** [ADR-001](ADR-001-multi-tenancy.md) y [ADR-002](ADR-002-postgresql-rls.md) (tablas tenant-owned con FORCE RLS y FKs compuestas; sin excepción nueva); [ADR-003](ADR-003-auth-session.md) §5 (permisos con alcance); [ADR-007](ADR-007-conversation-assignment.md) (responsable); [ADR-011](ADR-011-observability-and-logs.md) (auditoría); [ADR-016](ADR-016-api-list-convention.md) §6 (un orden nuevo pide su cursor; este ADR lo usa, no lo enmienda); [ADR-018](ADR-018-owner-role-follows-catalog.md); [ADR-028](ADR-028-store-data-connectors.md) (stock externo fuera); [ADR-034](ADR-034-ai-copilot-first.md) §7, §11 y §12 (sin cambios: Motor A no es IA y Motor B no se implementa con este ADR); `Organization.timezone` (`organizations/models.py:106`, por omisión `America/Lima`) para todo «hoy» y «día»; ADR-043 solo fija el día del presupuesto de IA y no se usa aquí; [ADR-049](ADR-049-internal-follow-up-automations.md) (propuesta paralela de automatizaciones: se beneficiaría de los eventos `task.*` y `opportunity.*` de F5-10c). Diseño de fase 0: [02 §E.10](../fase-0/02-modelo-de-datos.md) (`leads`, `lead_score_events`), [03 §J.11](../fase-0/03-tenancy-rbac-inbox-ia.md) (Supervisor con reglas deterministas), historias E09-02, E09-03 y E11-19.
 
 > **Mientras este ADR esté `Proposed` no se implementa nada.** No crea tablas, permisos, eventos ni pantallas. Es una propuesta para que el propietario decida.
 
@@ -33,7 +33,7 @@ Solo hechos estructurados ya guardados. Cada señal tiene un código, un tipo (`
 |---|---|---|---|---|
 | `UNANSWERED` | URGENCIA | Conversación que cumple `selectors.UNANSWERED` (tras #1102, con su regla de respuestas fallidas); `at = last_inbound_at` | 30; 40 desde 2 h | «escribió hace {tiempo} y todavía espera respuesta» |
 | `REPLY_FAILED` | URGENCIA | `last_reply_failed` (tras #1102) | 15 | «tu última respuesta no le llegó» |
-| `HUMAN_REQUESTED` | URGENCIA | Solicitud de persona abierta (la regla `waiting()` de #1102) | 25 | «pidió que lo atienda una persona» (nunca el motivo `UPSET`) |
+| `HUMAN_REQUESTED` | URGENCIA | Solicitud de persona abierta (la regla `waiting()` de #1102). Ojo: `human_requested_at` la fija el detector de texto del copiloto (`ai_agents/detectors.py`), no solo una acción humana | 25 | «pidió que lo atienda una persona» (nunca el motivo `UPSET`) |
 | `QUOTE_IN_PREPARATION` | INTENCION | Cotización `DRAFT`, `PENDING_APPROVAL` o `APPROVED` creada hace ≤ 7 días | 20 | «tiene una cotización por enviar ({número})» |
 | `QUOTE_SENT_AWAITING` | INTENCION | `SENT`/`VIEWED` vigente; `at = sent_at` | 20 | «tiene una cotización enviada sin respuesta ({número})» |
 | `QUOTE_EXPIRING` | URGENCIA | `SENT`/`VIEWED` con `valid_until` en ≤ 48 h | 20 | «su cotización vence {cuándo}» |
@@ -42,7 +42,7 @@ Solo hechos estructurados ya guardados. Cada señal tiene un código, un tipo (`
 | `QUOTE_DECLINED_RECENT` | INTENCION | `REJECTED` por el cliente hace ≤ 14 días | −20 | «rechazó una cotización hace {tiempo}» |
 | `PAYMENT_PENDING` | INTENCION | Tarea abierta de tipo `COLLECTION` | 30 | «tiene un cobro pendiente» |
 | `FOLLOW_UP_OVERDUE` | URGENCIA | Tarea abierta con `due_at < now` | 25; 35 desde 48 h | «un seguimiento venció hace {tiempo}» |
-| `FOLLOW_UP_DUE_TODAY` | URGENCIA | Tarea abierta que vence hoy (día de Lima) | 10 | «tiene un seguimiento para hoy» |
+| `FOLLOW_UP_DUE_TODAY` | URGENCIA | Tarea abierta que vence hoy (día local de la organización, `Organization.timezone`) | 10 | «tiene un seguimiento para hoy» |
 | `OPPORTUNITY_NEXT_ACTION_DUE` | URGENCIA | Oportunidad `OPEN` con `next_action_at ≤ now` | 15 | «la próxima acción de {número} ya venció» |
 | `OPPORTUNITY_ADVANCED` | INTENCION | Paso a una etapa posterior (`sort_order` mayor) en ≤ 7 días (`opportunity_stage_history`) | 10 | «su oportunidad avanzó de etapa» |
 | `OPPORTUNITY_HIGH_PROBABILITY` | INTENCION | `OPEN` con `probability ≥ 60` | 10 | «su oportunidad tiene probabilidad alta» |
@@ -58,7 +58,7 @@ Solo hechos estructurados ya guardados. Cada señal tiene un código, un tipo (`
 - **Puntaje** = suma de los puntos, acotada a 0–100. **Categoría:** `ALTA` ≥ 60; `MEDIA` 30–59; `BAJA` 1–29, o solo señales negativas; `SIN_DATOS` sin señales.
 - **Intención** (filtro aparte): la suma de las señales `INTENCION`: `ALTA` ≥ 35; `MEDIA` 15–34; `BAJA` 1–14 o negativa; `SIN_DATOS` sin ninguna.
 - **Confianza** (solidez de la evidencia, **no** una probabilidad): `ALTA` con dos o más señales positivas de dos o más tipos de fuente; `MEDIA` con dos de una sola fuente, o una sola de menos de 24 h; `BAJA` en lo demás; nula con `SIN_DATOS`.
-- **Próximo cambio** (`next_recompute_at`): el menor instante futuro en que una regla cambia sola (2 h de espera, 48 h antes del vencimiento, el vencimiento, el `due_at`, el inicio del día de Lima, el fin de cada ventana de 7, 14 o 72 h, `last_activity_at` + 3 días).
+- **Próximo cambio** (`next_recompute_at`): el menor instante futuro en que una regla cambia sola (2 h de espera, 48 h antes del vencimiento, el vencimiento, el `due_at`, el inicio del día local de la organización, el fin de cada ventana de 7, 14 o 72 h, `last_activity_at` + 3 días).
 - **Pesos y umbrales fijos en el código por versión.** Cambiarlos es una versión nueva (`A2`), con su prueba de tabla y su nota en `docs/phases/`; nunca un ajuste por organización en este corte.
 
 ### 4. Explicaciones en español
@@ -96,9 +96,10 @@ La API devuelve **códigos y parámetros** (ids, números `COT-…`/`OPP-…`, h
 
 - **Permisos nuevos:** `sales_priority.view` y `sales_priority.review`, ambos con alcance (◎), en el módulo `sales_intel`. Plantillas propuestas (decisión del propietario): Owner (todo, ADR-018), Administrador y Supervisor con `ORGANIZATION`, Vendedor con `OWN`.
 - **Alcance de una fila:** visible si el contacto está en el alcance de quien consulta (la política de columnas de contactos: responsable y sucursal) **o** si lo está su `conversation_id` (la política del Inbox: asignada a mí, a mi equipo o sin asignar). Fuera de alcance, de otra organización o inexistente: el mismo 404.
-- **Cada señal se filtra por quien mira:** una señal se muestra solo si quien consulta ve su fuente con el permiso de su módulo y su alcance (`quotes.view`, `opportunities.view`, `tasks.view`, `conversations.view`), comprobado por lotes por página. El puntaje y la categoría que se muestran se **recalculan con `engine` sobre las señales visibles**; el orden y los filtros de la lista usan el valor guardado. Quien tiene `ORGANIZATION` ve exactamente lo guardado; para los demás, el orden puede diferir un poco (aceptado y documentado) y la página se recorta con la categoría visible.
+- **Cada señal se filtra por quien mira:** en el detalle y en la explicación de la lista, una señal se muestra solo si quien consulta ve su fuente con el permiso de su módulo y su alcance (`quotes.view`, `opportunities.view`, `tasks.view`, `conversations.view`), comprobado por lotes por página. El puntaje y la categoría que se muestran en esa explicación se **recalculan con `engine` sobre las señales visibles**.
+- **Límite abierto (decisión D-SI-5): los valores guardados no se filtran.** El orden de la lista, los filtros sobre valores guardados (`category`, `intent`, `pending_quote`, `overdue_followup`, `waiting`) y la insignia del Inbox (categoría, puntaje y titular, por el `LEFT JOIN`) usan lo guardado, que se calculó con **todas** las señales del contacto. Quien no ve alguna de las fuentes puede inferir que existe (por ejemplo, filtrar `pending_quote` revela que el contacto tiene una cotización que no puede ver). Este ADR **no afirma que eso sea seguro**. Opciones: (a) la insignia, el orden y esos filtros solo para quien tiene alcance `ORGANIZATION` en `sales_priority.view` y en los módulos de las señales; los demás ven la lista recalculada con sus señales visibles y sin esos filtros; (b) recalcular por página para todos, con el coste de consultas y un orden que ya no coincide con el índice; (c) aceptar la fuga para los cuatro roles de plantilla, porque la fuente de cada señal ya es visible para su responsable. Recomendación: (a) en el primer corte.
 - **Lista:** `GET /api/v1/o/{slug}/sales/attention/` con un `ScorePagination` (cursor de dos valores `score`, `id`, como `RecencyPagination`; ADR-016 §6) y filtros: `category`, `intent`, `channel` (plataforma de `conversation_id`), `assignee` (`me`, un id o `none`: quien atiende la conversación o, sin ella, el responsable del contacto), `last_interaction` (`today`, `7d`, `30d`, `older`), `waiting` (`15m`, `2h`, `24h`), `pending_quote`, `overdue_followup`, `review` (`pending`, `all`). **Detalle:** `GET …/contacts/{id}/sales-priority/`.
-- **Inbox:** la lista de conversaciones añade `priority` (`category`, `score`, código del titular) con un `LEFT JOIN` por `(organization_id, contact_id)`, sin recalcular nada al leer y sin cambiar su orden por recencia; un filtro «Prioridad alta».
+- **Inbox:** la lista de conversaciones añade `priority` (`category`, `score`, código del titular) con un `LEFT JOIN` por `(organization_id, contact_id)`, sin recalcular nada al leer y sin cambiar su orden por recencia; un filtro «Prioridad alta». La insignia y ese filtro usan valores guardados y están sujetos a D-SI-5.
 
 ### 9. Rendimiento
 
@@ -153,7 +154,7 @@ Motor B sería la intención **leída del texto** de una conversación por un mo
 
 - Sin excepción a ADR-001/ADR-002: FORCE RLS, FKs compuestas, organización del contexto, sin `SECURITY DEFINER` que escriba.
 - **Sin texto de clientes** en las tablas, en el outbox, en la auditoría ni en los logs: solo códigos, ids, números de documento y horas. Prueba: el payload y `signals` no contienen ningún campo libre de las fuentes.
-- La explicación nunca revela lo que quien mira no podría ver en su fuente (§8): pruebas de alcance cruzado (vendedor OWN, otro equipo, otra organización).
+- La **explicación** (detalle y razones) no revela lo que quien mira no podría ver en su fuente: se recalcula con las señales visibles (§8), con pruebas de alcance cruzado (vendedor OWN, otro equipo, otra organización). El orden, los filtros sobre valores guardados y la insignia del Inbox **no tienen esa garantía** hasta que el propietario decida D-SI-5 (§8); no se afirma que sean seguros.
 - El ajuste manual no borra el cálculo y queda auditado; `sales_priority_reviews` es de solo inserción por privilegios.
 - Ley 29733: es una priorización **interna** que no decide nada sobre el cliente (una persona decide siempre). Se recomienda que la asesoría confirme si el aviso de datos debe mencionarla (derecho al tratamiento objetivo).
 
@@ -163,12 +164,15 @@ Motor B sería la intención **leída del texto** de una conversación por un mo
 - Observabilidad: contadores del barredor (`refreshed`, `skipped`, `failed`) como `quotes.expired`; alerta si la cola de `sales_intel` crece.
 - `docs/phases/phase-5.md` recibe la serie F5-10; el runbook de activación de IA no cambia hasta que exista Motor B.
 
-## Preguntas para el propietario
+## Decisiones requeridas del propietario
 
-1. **¿Se acepta Motor A** como se describe y la **tabla de señales y pesos `A1`** (§2–§3)? En particular: ¿una cotización aceptada sin venta cerrada (35) debe pesar más que un cliente sin respuesta hace 2 h (40)?
-2. **¿Quién lo ve?** Recomendación: Owner, Administrador y Supervisor con toda la organización; Vendedor con lo suyo (ver y revisar).
-3. **¿Se confirma que no habrá reglas sobre el texto** en Motor A, y que la asesoría revisa si el aviso de datos menciona la priorización interna?
-4. **¿En qué release entra la serie** frente a R0–R4?
+| # | Decisión | Opciones | Recomendación |
+| --- | --- | --- | --- |
+| D-SI-1 | Motor A y la tabla de señales y pesos `A1` (§2 y §3) | Aceptar `A1` tal cual / cambiar pesos o umbrales. Punto a validar: ¿una cotización aceptada sin venta cerrada (35) debe pesar más que un cliente sin respuesta desde hace 2 h (40)? ALTA empieza en 60 | Aceptar `A1` y revisarla con uso real en una versión `A2` |
+| D-SI-2 | Quién ve y quién revisa (`sales_priority.view` y `.review`) | Owner, Administrador y Supervisor con toda la organización y Vendedor con lo suyo / otro reparto | Ese reparto, sujeto a D-SI-5 |
+| D-SI-3 | Texto del cliente y revisión legal | Confirmar que Motor A no usa reglas sobre el texto, salvo la huella de `human_requested_at` (que viene del detector de texto del copiloto, no de una acción humana) / retirar `HUMAN_REQUESTED` de `A1` / permitir reglas sobre el texto; y si la asesoría debe confirmar que el aviso de datos menciona la priorización interna (Ley 29733) antes de usarla en producción | Confirmar sin reglas sobre el texto, dejar `HUMAN_REQUESTED` documentada como derivada del copiloto y pedir la revisión de la asesoría |
+| D-SI-4 | Release de la serie frente a R0 a R4 | Después de cerrar R0 y sin bloquear R1 a R3 / otra / `release:later`. F5-10a es pequeño y puede ir antes para validar las frases | Después de R0, sin bloquear R1 a R3 |
+| D-SI-5 | Visibilidad de los valores guardados (§8): orden, filtros sobre lo guardado e insignia del Inbox | (a) solo con alcance `ORGANIZATION` / (b) recalcular por página para todos / (c) aceptar la inferencia | (a) en el primer corte |
 
 ## Anexo: plan de work items
 
@@ -176,7 +180,7 @@ Orientativo: no se crea ningún issue de implementación hasta que el propietari
 
 | ID | Objetivo en una línea | Depende de | Tamaño estimado |
 | --- | --- | --- | --- |
-| F5-10o | El propietario responde las cuatro preguntas y el ADR pasa a `Accepted` (con lo que cambie) o a `Deprecated` | Este ADR publicado (#1106) | Solo documentación |
+| F5-10o | El propietario responde las cinco decisiones (D-SI-1 a D-SI-5) y el ADR pasa a `Accepted` (con lo que cambie) o a `Deprecated` | Este ADR publicado (#1106) | Solo documentación |
 | F5-10a | Prioridad de un cliente calculada al leer, con sus razones en español, en el panel del cliente del Inbox (primer corte útil, sin tabla) | F5-10o, #1093 | ~750; si se pasa, dividir en motor y API / tarjeta |
 | F5-10b | Motor A completo (`A1`): resto de señales, intención y confianza, y tarjeta en la ficha 360° | F5-10a, #1093 | ~700 |
 | F5-10c | Eventos del outbox de oportunidades, tareas y `quote.created`, solo con ids | F5-10o | ~550 |
