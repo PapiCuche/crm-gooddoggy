@@ -6,7 +6,7 @@ import { useFormatter, useTranslations } from "next-intl";
 
 import { useTenant } from "@/components/app-shell/tenant-context";
 import { Choice } from "@/components/catalog/product-create";
-import { ChannelDot, ChannelMark } from "@/components/channels/channel-identity";
+import { ChannelDot, ChannelSource } from "@/components/channels/channel-identity";
 import { useReads } from "@/components/inventory/cell-picker";
 import { Button } from "@/components/ui/button";
 import { conversationsList, getConversationsListQueryKey } from "@/lib/api/client";
@@ -244,8 +244,7 @@ function Row({
         <span className="text-muted line-clamp-2 text-sm">{preview}</span>
         <span className="text-muted flex flex-wrap gap-x-2 text-xs">
           <span className="font-mono">{row.number}</span>
-          <ChannelMark platform={row.channel.platform} />
-          <Plain>{row.channel.name}</Plain>
+          <ChannelSource platform={row.channel.platform} account={row.channel.name} />
           <span>{t(`status.${row.status}`)}</span>
           <span>
             <Assignee who={row} />

@@ -103,9 +103,9 @@ describe("Inbox, lista (F6-03)", () => {
     expect(screen.getByRole("status")).toHaveTextContent("Cargando conversaciones…");
     const row = await screen.findByRole("button", { name: /Rosa Díaz/ });
     expect(row).toHaveTextContent("Hola, ¿tienen collares?");
-    expect(row).toHaveTextContent("CONV-00001PruebasSandboxAbiertaSin asignar");
+    expect(row).toHaveTextContent("CONV-00001Pruebas·, SandboxAbiertaSin asignar");
     expect(screen.getByRole("button", { name: /Luis Ramos/ })).toHaveTextContent(
-      "Tú: Sí, hayCONV-00002PruebasSandboxPendienteAsignada a ti",
+      "Tú: Sí, hayCONV-00002Pruebas·, SandboxPendienteAsignada a ti",
     );
     expect(row).not.toHaveAttribute("aria-current");
     await open(/Rosa Díaz/);
@@ -121,7 +121,7 @@ describe("Inbox, lista (F6-03)", () => {
     show();
     const row = await screen.findByRole("button", { name: /Luis Ramos/ });
     expect(row).toHaveTextContent(
-      "Tú: Te ayudoCONV-00002PruebasSandboxAbiertaSin asignarLa respuesta no llegó",
+      "Tú: Te ayudoCONV-00002Pruebas·, SandboxAbiertaSin asignarLa respuesta no llegó",
     );
     expect(screen.getByRole("button", { name: /Rosa Díaz/ })).not.toHaveTextContent("no llegó");
   });

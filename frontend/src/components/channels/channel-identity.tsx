@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { useTranslations } from "next-intl";
 
+import { Plain } from "@/components/inbox/plain";
 import type { PlatformEnum } from "@/lib/api/model";
 import { cn } from "@/lib/utils";
 
@@ -57,6 +58,21 @@ export function ChannelMark({ platform }: { platform: string }) {
     <span className="text-foreground inline-flex shrink-0 items-center gap-1 font-medium">
       <Icon aria-hidden className={cn("size-3.5 shrink-0", TONES[tone].icon)} />
       {name(platform)}
+    </span>
+  );
+}
+
+// La red y, aparte, la cuenta que recibió la conversación (puede haber varias por red): un «·»
+// que el lector de pantalla no lee las separa a la vista, y una coma oculta y un espacio fuera de
+// ella las separan al oído («WhatsApp, Tienda Lima»). La cuenta es texto ajeno: va por `Plain`.
+export function ChannelSource({ platform, account }: { platform: string; account: string }) {
+  return (
+    <span className="inline-flex min-w-0 items-center gap-1.5">
+      <ChannelMark platform={platform} />
+      <span aria-hidden className="text-muted">
+        ·
+      </span>
+      <span className="sr-only">,</span> <Plain className="text-muted min-w-0">{account}</Plain>
     </span>
   );
 }

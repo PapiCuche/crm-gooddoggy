@@ -20,7 +20,7 @@ import { useFormatter, useTranslations } from "next-intl";
 import { type ReactNode, type Ref, useLayoutEffect, useRef } from "react";
 
 import { useTenant } from "@/components/app-shell/tenant-context";
-import { ChannelMark, channelOf, useChannelName } from "@/components/channels/channel-identity";
+import { ChannelSource, channelOf, useChannelName } from "@/components/channels/channel-identity";
 import { useReads } from "@/components/inventory/cell-picker";
 import { Button } from "@/components/ui/button";
 import {
@@ -245,8 +245,10 @@ export function ChatPanel({
           )}
           <p className="text-muted order-5 flex basis-full flex-wrap items-center gap-x-2 text-xs lg:text-sm">
             <span className="font-mono">{conversation.number}</span>
-            <ChannelMark platform={conversation.channel.platform} />
-            <Plain>{conversation.channel.name}</Plain>
+            <ChannelSource
+              platform={conversation.channel.platform}
+              account={conversation.channel.name}
+            />
             <span>{t(`status.${conversation.status}`)}</span>
           </p>
           {name === null ? (
