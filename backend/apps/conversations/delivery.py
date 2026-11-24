@@ -11,7 +11,9 @@ de otra organización u otra cuenta no existe; uno que aún no se conoce falla d
 Meta solo se lee el `code`: se reduce a un código propio cerrado (`code_for`, la tabla que comparte
 con la respuesta del envío, F7b-15), se guarda también el número (`provider_error_detail`, F7b-13) y
 nunca se guarda ni se registra su título ni su texto. Un `failed` sobre un `FAILED` que el plazo
-cerró con `PROVIDER_UNKNOWN` lo corrige una vez (F7b-15).
+cerró con `PROVIDER_UNKNOWN` lo corrige una vez (F7b-15). Un `190` o un `131048` cambia también la
+cuenta, solo si la credencial con la que salió el mensaje sigue siendo la suya (F7b-20,
+`_sent_with`): nunca una cuenta rotada después del envío ni una reconectada (otra fila).
 
 Instagram y Messenger (F7b-05c; ADR-035 §5–§6) en `social`: un eco es nuestro si su `app_id` es
 `META_APP_ID` y su `metadata` es la ficha (`echo_token`) de un saliente de **esa** cuenta y **ese**
@@ -46,6 +48,7 @@ from core.tenancy.scope import require_scope
 
 logger = get_logger(__name__)
 STATES = {"sent": "SENT", "delivered": "DELIVERED", "read": "READ", "failed": "FAILED"}
+ON_ACCOUNT = ("TOKEN_INVALID", "QUALITY_BLOCKED")  # los fallos que también cambian la cuenta
 
 
 class NotYet(Exception):  # noqa: N818 — el estado llegó antes que la confirmación del envío
@@ -78,17 +81,19 @@ def _find(alias: str, account: ChannelAccount, wamid: str, opaque: UUID | None) 
     return mine.filter(unsure, pk=opaque, external_message_id__isnull=True).first()
 
 
-def _before_rotation(alias: str, account: ChannelAccount, message: Message) -> bool:
-    """¿Se reclamó el mensaje antes de que existiera la credencial vigente de la cuenta? Entonces un
-    `190` tardío es del token que ya se cambió, no del de ahora."""
-    claimed = message.sending_at
-    made = (
-        Credential.objects.using(alias)
-        .filter(pk=account.credential_id)
-        .values_list("created_at", flat=True)
-        .first()
-    )
-    return claimed is not None and made is not None and claimed < made
+def _sent_with(alias: str, account_id: UUID, message: Message) -> UUID | None:
+    """La credencial con la que salió el mensaje (F7b-20): la de su cuenta viva cuando se reclamó
+    (`sending_at`). El reclamo fija esa hora con la cuenta en `FOR SHARE` (`claim_outbound`) y
+    `rotate_token` y `disconnect` fijan `revoked_at` y `created_at` con ella en `FOR NO KEY UPDATE`:
+    se excluyen, así que con un mismo reloj el orden de las horas es el de los bloqueos. `None` si
+    no se sabe: sin `sending_at`, o no hay exactamente una credencial que lo cubra."""
+    at = message.sending_at
+    if at is None:
+        return None
+    alive = Q(revoked_at__isnull=True) | Q(revoked_at__gt=at)
+    found = Credential.objects.using(alias).filter(alive, owner_id=account_id, created_at__lte=at)
+    only = list(found.values_list("pk", flat=True)[:2])
+    return only[0] if len(only) == 1 else None
 
 
 def apply(ctx: TenantContext, account: ChannelAccount, payload: dict[str, Any]) -> str | None:
@@ -109,7 +114,7 @@ def apply(ctx: TenantContext, account: ChannelAccount, payload: dict[str, Any]) 
         message = _find(alias, account, wamid, _uuid(payload.get("biz_opaque_callback_data")))
         if message is None:
             raise NotYet
-        if reason in ("TOKEN_INVALID", "QUALITY_BLOCKED"):
+        if reason in ON_ACCOUNT:
             # F7b-14: la cuenta que se marcará, antes que la conversación (`_reply_failed`): el
             # orden del reclamo (cuenta → conversación), sin ciclos
             rows = ChannelAccount.objects.using(alias).select_for_update(no_key=True)
@@ -122,12 +127,15 @@ def apply(ctx: TenantContext, account: ChannelAccount, payload: dict[str, Any]) 
         )
         if (moved.delivery_status, moved.provider_error_code) == before:
             return None  # atrasado, repetido o tras un `FAILED` definitivo: nada cambia
-        if reason == "TOKEN_INVALID":
-            if _before_rotation(alias, account, message):
-                return None  # un fallo del token anterior: el nuevo (ya verificado) no se toca
-            accounts.mark_token_invalid(ctx, channel_account_id=account.pk)
-        elif reason == "QUALITY_BLOCKED":
-            accounts.mark_degraded(ctx, channel_account_id=account.pk)
+        # F7b-20: el efecto en la cuenta, solo si la credencial del envío sigue siendo la suya
+        # (`_demote` lo compara con la cuenta bloqueada, como en `tasks.deliver`): un fallo tardío
+        # tras una rotación es del token anterior y la rotación ya leyó la calidad. Sin saber con
+        # cuál salió, ninguno: el próximo envío (con la credencial del reclamo) o la comprobación
+        # de salud lo dirán sin arriesgar bloquear una cuenta sana.
+        if reason not in ON_ACCOUNT or (used := _sent_with(alias, account.pk, message)) is None:
+            return None
+        mark = accounts.mark_token_invalid if reason == "TOKEN_INVALID" else accounts.mark_degraded
+        mark(ctx, channel_account_id=account.pk, credential_id=used)
     return None
 
 
