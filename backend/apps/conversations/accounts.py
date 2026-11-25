@@ -255,10 +255,13 @@ def rotate_token(
     mismo WABA, sustituye al anterior (que se invalida y pierde su cifrado) y limpia
     `TOKEN_INVALID`. Una cuenta `ERROR` por `TOKEN_INVALID` no se comprueba nunca, así que sería un
     callejón sin salida: como Meta acaba de verificar el token nuevo contra su mismo número y WABA
-    (lo mismo que la comprobación de salud), vuelve a `CONNECTED`, o a `DEGRADED` si la calidad es
-    baja (la base prohíbe volver a `PENDING`). En WhatsApp, la calidad que Meta acaba de dar se
-    aplica como en la comprobación de salud (`_by_quality`, F7b-19). En Messenger e Instagram
-    (F7b-06a) se comprueba la misma página con `graph.page` y no hay calidad ni nivel.
+    (lo mismo que la comprobación de salud), sale de `ERROR` como `CONNECTED`. En WhatsApp, después,
+    la calidad que Meta acaba de dar se aplica como en la comprobación de salud (`_by_quality`,
+    F7b-19): `YELLOW` o `RED` deja `DEGRADED`, y una `PENDING` con el webhook ya visto (sin
+    detalle) pasa a `CONNECTED` o `DEGRADED`; la que aún no lo vio (`WEBHOOK_NOT_SEEN`) sigue
+    `PENDING`. Ninguna vuelve a `PENDING` desde otro estado (lo prohíbe el disparador
+    `channel_accounts_identity_fixed`). En Messenger e Instagram (F7b-06a) se comprueba la misma
+    página con `graph.page` y no hay calidad ni nivel.
     `DoesNotExist` si no es una cuenta viva de `platform` de esta organización."""
     alias = require_scope(ctx)
     token = _token(access_token)
@@ -280,9 +283,7 @@ def rotate_token(
         if account.status_detail == "TOKEN_INVALID":
             account.status_detail = None
             if account.status == "ERROR":  # un callejón sin salida: nadie la comprueba en `ERROR`
-                low = seen["quality_rating"] in ("YELLOW", "RED")
-                account.status = "DEGRADED" if low else "CONNECTED"
-                account.status_detail = "QUALITY_LOW" if low else None
+                account.status = "CONNECTED"  # la calidad baja la degrada abajo (`_by_quality`)
         if account.platform in SOCIAL:  # F7b-06g/h: lo que Meta acaba de decir de la página
             account.page_subscribed = seen["subscribed"]
             _follow(account, seen["subscribed"])
@@ -448,17 +449,21 @@ def note_attempt(ctx: TenantContext, *, channel_account_id: UUID) -> None:
     found.update(health_attempt_at=Now())
 
 
-def apply_health(ctx: TenantContext, *, channel_account_id: UUID, quality: str, tier: str) -> bool:
+def apply_health(
+    ctx: TenantContext, *, channel_account_id: UUID, credential_id: UUID, quality: str, tier: str
+) -> bool:
     """Una comprobación de salud correcta (ADR-029 §12): guarda la calidad, el nivel de mensajería
     y la hora; una cuenta `PENDING` con el webhook ya visto pasa a `CONNECTED`; calidad `YELLOW` o
     `RED` deja `DEGRADED` (`QUALITY_LOW`) y calidad recuperada vuelve a `CONNECTED` (solo la
     degradada por calidad). Audita y avisa solo si algo cambió, con ids y valores cerrados.
-    `False` si la cuenta ya no se comprueba (desconectada, en `ERROR`, borrada)."""
+    `False` si la cuenta ya no se comprueba (desconectada, en `ERROR`, borrada) o, como en
+    `apply_subscription`, si ya no usa `credential_id` (F7b-20): se rotó durante la llamada a Meta
+    y la rotación ya aplicó una lectura más reciente; nada se escribe."""
     alias = require_scope(ctx)
     with transaction.atomic(using=alias):
         found = _live().using(alias).select_for_update(no_key=True).annotate(db_now=Now())
         account = found.filter(
-            pk=channel_account_id, status__in=("PENDING", "CONNECTED", "DEGRADED")
+            pk=channel_account_id, status__in=CHECKED, credential_id=credential_id
         ).first()  # fmt: skip
         if account is None:
             return False

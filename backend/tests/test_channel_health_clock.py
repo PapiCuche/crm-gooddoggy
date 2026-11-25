@@ -106,8 +106,9 @@ def test_a_number_check_writes_the_database_time(
     before = db_now()
     with tenant_scope(ctx(world.a)) as tenant:
         done = accounts.apply_health(
-            tenant, channel_account_id=mine, quality="GREEN", tier="TIER_1K"
-        )
+            tenant, channel_account_id=mine, credential_id=key(world.a, mine), quality="GREEN",
+            tier="TIER_1K",
+        )  # fmt: skip
     assert done and before <= stored(world.a, mine) <= db_now()
 
 
@@ -160,12 +161,14 @@ def test_a_number_check_waits_for_the_row_lock_and_reads_the_row_again(
     """Otra transacción tiene la fila y la pone en `ERROR`: la comprobación espera el bloqueo y ya
     no la toca. Sin el `select_for_update` la pisaría con `DEGRADED`."""
     mine, outcome = number(world.a), []
+    used = key(world.a, mine)
 
     def check() -> None:
         try:
             with tenant_scope(ctx(world.a)) as tenant:
                 outcome.append(accounts.apply_health(
-                    tenant, channel_account_id=mine, quality="RED", tier="TIER_1K"
+                    tenant, channel_account_id=mine, credential_id=used, quality="RED",
+                    tier="TIER_1K",
                 ))  # fmt: skip
         finally:
             connections.close_all()

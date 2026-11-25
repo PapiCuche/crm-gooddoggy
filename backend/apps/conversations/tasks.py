@@ -462,9 +462,9 @@ def check_account(organization_id: UUID, account_id: UUID) -> str:
             )  # fmt: skip
         return result
     with tenant_scope(ctx):
-        accounts.apply_health(
-            ctx, channel_account_id=account_id, quality=seen["quality_rating"],
-            tier=seen["messaging_limit_tier"],
+        accounts.apply_health(  # solo si la credencial comprobada sigue siendo la suya (F7b-20)
+            ctx, channel_account_id=account_id, credential_id=credential.pk,
+            quality=seen["quality_rating"], tier=seen["messaging_limit_tier"],
         )  # fmt: skip
     return "OK"
 
