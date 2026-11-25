@@ -44,7 +44,7 @@ export function useReads() {
     read.isError && statusOf(read) !== 401 && statusOf(read) !== 403 ? (
       <Button
         variant="ghost"
-        className="border-border min-h-11 self-start border sm:min-h-9"
+        className="border-border min-h-11 self-start border lg:min-h-9"
         onClick={() => void read.refetch()}
       >
         {errors("retry")}

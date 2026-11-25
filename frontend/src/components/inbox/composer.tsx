@@ -148,7 +148,10 @@ export function Composer({
   const shown: Mode = modes[chosen] ? chosen : modes.reply ? "reply" : "note";
   const both = modes.reply && modes.note;
   return (
-    <div className="border-border flex min-w-0 shrink-0 flex-col gap-2 border-t p-2 lg:p-3">
+    <div
+      data-composer
+      className="border-border flex min-w-0 shrink-0 flex-col gap-2 border-t p-2 lg:p-3"
+    >
       {both || tools ? (
         <div className="flex min-w-0 gap-2">
           {both ? (
@@ -478,7 +481,7 @@ function ComposeBox({
       <label
         htmlFor={field}
         className={cn(
-          "text-sm font-medium max-sm:col-span-2 max-sm:row-start-1",
+          "text-sm font-medium max-sm:col-span-2 max-sm:row-start-1 max-sm:group-data-composing:sr-only",
           tabbed && "max-lg:sr-only",
         )}
       >

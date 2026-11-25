@@ -7,6 +7,7 @@ import {
   Check,
   CheckCheck,
   Clock,
+  Ellipsis,
   RefreshCw,
   FileQuestionMark,
   FileText,
@@ -21,6 +22,7 @@ import { type ReactNode, type Ref, useLayoutEffect, useRef } from "react";
 
 import { useTenant } from "@/components/app-shell/tenant-context";
 import { ChannelSource, channelOf, useChannelName } from "@/components/channels/channel-identity";
+import { ChannelMark } from "@/components/channels/channel-identity";
 import { useReads } from "@/components/inventory/cell-picker";
 import { Button } from "@/components/ui/button";
 import {
@@ -44,7 +46,7 @@ import { Composer, type Inserter, messagesKey, writableModes } from "./composer"
 import { AI_USE, useCopilot } from "./copilot";
 import { useHumanRequest } from "./human-request";
 import { MediaFile } from "./media-file";
-import { useKeyboardHeight } from "./mobile";
+import { useComposing, useKeyboardHeight } from "./mobile";
 import { Plain } from "./plain";
 
 const WHEN = { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" } as const;
@@ -107,11 +109,13 @@ export function ChatPanel({
     conversationId: conversation.id,
     onInsert: (text) => inserter.current?.(text),
   });
-  const human = useHumanRequest(conversation); // con `conversations.view`, como ver el chat
+  const panel = useRef<HTMLDivElement>(null);
+  const [composing, release] = useComposing(panel); // UX-INBOX-03b: lo compacto solo existe entonces
+  const human = useHumanRequest(conversation, composing); // con `conversations.view`, como ver el chat
   const exclusion = useAiExclusion(conversation); // excluirla de la IA (F8-13b)
   const scroller = useRef<HTMLDivElement>(null);
-  const panel = useRef<HTMLDivElement>(null);
   useKeyboardHeight(panel, scroller);
+  const refresh = useRef<HTMLButtonElement>(null);
   const kept = useRef<number | null>(null); // lo que faltaba por desplazar al pedir los anteriores
   const placed = useRef(false);
   const atBottom = useRef(false); // al ocultarse el chat, ¿se leía lo último?
@@ -188,10 +192,12 @@ export function ChatPanel({
     // Alto: en 390 px la pantalla pierde el título de la página (queda solo para lectores) y el panel
     // ocupa lo visible (`--keyboard-vh` en iOS) menos barra y relleno (8rem), con mínimo que deja
     // sitio a las tres zonas; el encabezado y el cuadro no se comprimen y los mensajes (`min-h-0`)
-    // absorben el sobrante y se desplazan. En escritorio, el alto de siempre.
+    // absorben el sobrante y se desplazan. En escritorio, el alto de siempre. UX-INBOX-03b: en `max-sm`
+    // escribiendo, toda la pantalla (sobre barra y relleno, en el flujo) y la cabecera en una fila.
     <div
       ref={panel}
-      className="border-border bg-surface flex h-[calc(var(--keyboard-vh,100dvh)-8rem)] min-h-min flex-col rounded-lg border lg:h-[calc(100dvh-18rem)] lg:min-h-[26rem]"
+      data-composing={composing || undefined}
+      className="group border-border bg-surface flex h-[calc(var(--keyboard-vh,100dvh)-8rem)] min-h-min flex-col rounded-lg border max-sm:data-composing:relative max-sm:data-composing:z-10 max-sm:data-composing:-mx-4 max-sm:data-composing:-mt-[92px] max-sm:data-composing:-mb-8 max-sm:data-composing:h-[var(--keyboard-vh,100dvh)] max-sm:data-composing:rounded-none max-sm:data-composing:border-0 lg:h-[calc(100dvh-18rem)] lg:min-h-[26rem]"
     >
       <header className="border-border relative flex shrink-0 flex-col gap-1 border-b p-2 lg:gap-2 lg:p-3">
         {/* Una sola fila que se parte en líneas. El DOM va en el orden de tabulación que se ve en
@@ -211,14 +217,34 @@ export function ChatPanel({
             <h2
               ref={headingRef}
               tabIndex={-1}
-              className="line-clamp-1 text-base font-semibold focus-visible:outline-none lg:line-clamp-none lg:text-lg"
+              className="line-clamp-1 text-base font-semibold focus-visible:outline-none max-sm:group-data-composing:leading-tight lg:line-clamp-none lg:text-lg"
             >
               {name === null ? t("contactUnavailable") : <Plain>{name}</Plain>}
             </h2>
+            {composing ? (
+              <p className="hidden text-xs max-sm:flex">
+                <ChannelMark platform={conversation.channel.platform} />
+              </p>
+            ) : null}
           </div>
+          {/* «Más» devuelve la cabecera con el foco en «Actualizar»; no quita antes el foco al cuadro. */}
           <Button
             variant="ghost"
-            className="border-border order-3 border max-lg:size-11 max-lg:px-0 lg:order-2 lg:ml-auto"
+            className="border-border order-4 hidden size-11 border px-0 max-sm:group-data-composing:inline-flex"
+            aria-expanded="false"
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => {
+              release();
+              refresh.current?.focus();
+            }}
+          >
+            <Ellipsis aria-hidden />
+            <span className="sr-only">{t("chat.more")}</span>
+          </Button>
+          <Button
+            ref={refresh}
+            variant="ghost"
+            className="border-border order-3 border max-lg:size-11 max-lg:px-0 max-sm:group-data-composing:hidden lg:order-2 lg:ml-auto"
             aria-disabled={list.isFetching}
             onClick={() => {
               if (list.isFetching) return;
@@ -235,7 +261,7 @@ export function ChatPanel({
             <Button
               id="customer-toggle"
               variant="ghost"
-              className="text-foreground border-border order-4 text-xs font-medium max-sm:size-11 max-sm:border max-sm:px-0 sm:h-auto sm:px-0 sm:text-sm sm:underline sm:underline-offset-4 sm:max-lg:min-h-11 lg:order-6 lg:self-start"
+              className="text-foreground border-border order-4 text-xs font-medium max-sm:size-11 max-sm:border max-sm:px-0 max-sm:group-data-composing:hidden sm:h-auto sm:px-0 sm:text-sm sm:underline sm:underline-offset-4 sm:max-lg:min-h-11 lg:order-6 lg:self-start"
               aria-expanded="false" // al abrirse el panel, este botón se oculta con el chat
               aria-controls="customer-panel"
               onClick={() => {
@@ -249,7 +275,7 @@ export function ChatPanel({
               <span className="max-sm:sr-only">{t("customer.open")}</span>
             </Button>
           )}
-          <p className="text-muted order-5 flex basis-full flex-wrap items-center gap-x-2 text-xs lg:text-sm">
+          <p className="text-muted order-5 flex basis-full flex-wrap items-center gap-x-2 text-xs max-sm:group-data-composing:hidden lg:text-sm">
             <span className="font-mono">{conversation.number}</span>
             <ChannelSource
               platform={conversation.channel.platform}
@@ -258,7 +284,7 @@ export function ChatPanel({
             <span>{t(`status.${conversation.status}`)}</span>
           </p>
           {name === null ? (
-            <p className="text-muted order-5 basis-full text-xs lg:text-sm">
+            <p className="text-muted order-5 basis-full text-xs max-sm:group-data-composing:hidden lg:text-sm">
               {t("noAccessContact")}
             </p>
           ) : null}
@@ -269,7 +295,7 @@ export function ChatPanel({
         {detail.data ? (
           <AssignmentActions detail={detail.data} />
         ) : (
-          <p className="text-sm font-medium">
+          <p className="text-sm font-medium max-sm:group-data-composing:hidden">
             <Assignee who={conversation} />
           </p>
         )}
@@ -290,7 +316,7 @@ export function ChatPanel({
         {list.hasNextPage ? (
           <Button
             variant="ghost"
-            className="border-border min-h-11 self-center border sm:min-h-9"
+            className="border-border min-h-11 self-center border lg:min-h-9"
             aria-disabled={list.isFetchingNextPage}
             onClick={() => {
               if (list.isFetchingNextPage) return;
