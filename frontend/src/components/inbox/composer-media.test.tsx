@@ -184,6 +184,29 @@ describe("adjuntar desde el cuadro de redacción (F7-09b3)", () => {
     expect(second!.get("client_message_id")).not.toBe(first!.get("client_message_id"));
   });
 
+  it("tras salir y volver el archivo ya no está: sin él o con otro, el id es otro (UX-INBOX-04)", async () => {
+    const s = server(() => ({ status: 500, body: { code: "INTERNAL_ERROR" } }));
+    show();
+    await openChat();
+    await attach(pdf());
+    fireEvent.change(await caption(), { target: { value: "Su cotización" } });
+    send();
+    await screen.findByRole("alert");
+    fireEvent.click(screen.getByRole("button", { name: "Volver a las conversaciones" }));
+    await waitFor(() => expect(screen.queryByRole("heading", { level: 2 })).toBeNull());
+    await openChat();
+    expect(await screen.findByRole("textbox", { name: /Responder/ })).toHaveValue("Su cotización");
+    send(); // sin el archivo, que no se guarda: otro mensaje
+    await screen.findByRole("alert");
+    await attach(pdf("otra.pdf"));
+    send("Reintentar"); // otro archivo: tampoco es un reintento
+    await waitFor(() => expect(s.forms()).toHaveLength(2));
+    const posts = s.api.mock.calls.filter(([, init]) => init?.method === "POST");
+    const ids = posts.map(([, init]) => (init!.body as FormData).get?.("client_message_id"));
+    ids[1] = JSON.parse(String(posts[1]![1]!.body)).client_message_id;
+    expect(new Set(ids).size).toBe(3);
+  });
+
   it("una imagen con pie de foto lo envía tal cual; solo espacios no cuenta como pie", async () => {
     const s = server(() => ({ status: 202, body: outbound("s1", "IMAGE", "Collar rojo") }));
     show();

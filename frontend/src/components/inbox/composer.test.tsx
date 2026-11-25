@@ -7,6 +7,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
+import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TenantProvider } from "@/components/app-shell/tenant-context";
@@ -48,6 +49,7 @@ const rosa = {
   ...{ last_message_at: "2026-11-04T15:30:00Z", last_inbound_at: null, version: 1 },
   ...{ last_message_preview: null, last_message_direction: null },
 } as unknown as Conversation;
+const juan = { ...rosa, id: "2", contact: { id: "c2", display_name: "Juan Pérez" } };
 const saved = (id: string, body: string, changes: Partial<Message> = {}) =>
   ({
     ...{ id, direction: "OUTBOUND", sender_type: "USER", sender_user_id: "u1" },
@@ -64,8 +66,10 @@ function server(options: { conversation?: Partial<Conversation>; send?: () => Re
   let release = () => {};
   let hold: Promise<void> | null = null;
   const api = mockApi({
-    [LIST]: page([conversation]),
+    [LIST]: page([conversation, juan]),
     [DETAIL]: { status: 200, body: conversation },
+    [`GET ${BASE}/2/`]: { status: 200, body: juan },
+    [`GET ${BASE}/2/messages/`]: page([]),
     [MESSAGES]: () => page([...stored].reverse()),
     [SEND]: () => {
       const reply = options.send?.() ?? { status: 202, body: saved("s1", "ok") };
@@ -99,12 +103,14 @@ const show = (permissions: Grant[] = grants("conversations.view", "messages.send
       <Inbox />
     </TenantProvider>,
   );
-const openChat = async () => {
-  fireEvent.click(await screen.findByRole("button", { name: /Rosa Díaz/ }));
-  await screen.findByRole("heading", { level: 2 }); // el chat se abrió (su lista puede estar vacía)
+// El chat de esa conversación se abrió (su lista de mensajes puede estar vacía).
+const openChat = async (name = /Rosa Díaz/) => {
+  fireEvent.click(await screen.findByRole("button", { name }));
+  await waitFor(() => expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent(name));
 };
-const box = () => screen.findByRole("textbox", { name: "Responder al cliente" });
-const type = async (text: string) => fireEvent.change(await box(), { target: { value: text } });
+const box = (name = "Responder al cliente") => screen.findByRole("textbox", { name });
+const type = async (text: string, name?: string) =>
+  fireEvent.change(await box(name), { target: { value: text } });
 // Lo que un envío indebido haría llega tras unas esperas asíncronas: se deja pasar antes de afirmar.
 const settle = () => act(() => new Promise((resolve) => setTimeout(resolve, 30)));
 const sendButton = (name = "Enviar") => screen.getByRole("button", { name });
@@ -497,8 +503,9 @@ describe("teclado del teléfono (UX-INBOX-03)", () => {
     expect(await keys()).toHaveTextContent("Enter agrega una línea; envía con el botón.");
     s.wait();
     await type("Hola");
-    fireEvent.click(sendButton());
-    fireEvent.click(sendButton()); // en el mismo instante: `isPending` aún no se pintó
+    const button = sendButton();
+    fireEvent.click(button);
+    fireEvent.click(button); // en el mismo instante, el mismo botón
     await settle();
     expect(s.posts()).toHaveLength(1);
     // Cerrar el chat con el envío en curso no bloquea el siguiente.
@@ -509,5 +516,106 @@ describe("teclado del teléfono (UX-INBOX-03)", () => {
     fireEvent.click(sendButton());
     await waitFor(() => expect(s.posts()).toHaveLength(2));
     s.go();
+  });
+});
+
+describe("borradores por organización, conversación y modo (UX-INBOX-04)", () => {
+  const OK: Reply = { status: 202, body: saved("s1", "ok") };
+  const FAIL: Reply = { status: 500, body: { code: "INTERNAL_ERROR" } };
+  const marked = (name: RegExp) =>
+    within(screen.getByRole("button", { name })).queryByText("Borrador") !== null;
+  const toNote = () => fireEvent.click(screen.getByRole("button", { name: "Nota interna" }));
+  const away = async () => (await openChat(/Juan Pérez/), await openChat()); // ir a Juan y volver
+
+  it("cambiar de conversación y volver conserva respuesta y nota, aparte y solo en memoria", async () => {
+    const storage = vi.spyOn(Storage.prototype, "setItem");
+    vi.stubGlobal("indexedDB", { open: vi.fn() });
+    server();
+    show(grants("conversations.view", "messages.send", "messages.note"));
+    await openChat();
+    await type("Hola Rosa");
+    toNote();
+    await type("Pidió delivery", "Nota interna");
+    await openChat(/Juan Pérez/);
+    expect(await box()).toHaveValue(""); // nada de Rosa en el cuadro de Juan
+    toNote();
+    expect(await box("Nota interna")).toHaveValue("");
+    expect([marked(/Rosa Díaz/), marked(/Juan Pérez/)]).toEqual([true, false]);
+    await openChat();
+    expect(await box()).toHaveValue("Hola Rosa"); // abre en «Responder», como siempre
+    toNote();
+    expect(await box("Nota interna")).toHaveValue("Pidió delivery");
+    expect([storage.mock.calls, localStorage.length, sessionStorage.length]).toEqual([[], 0, 0]);
+    expect(indexedDB.open).not.toHaveBeenCalled();
+    storage.mockRestore();
+  });
+
+  it("en vuelo, volver y enviar lleva el mismo id; al terminar con el chat cerrado se vacía", async () => {
+    const s = server();
+    show();
+    await openChat();
+    s.wait();
+    await type("Hola Rosa");
+    fireEvent.click(sendButton());
+    await away();
+    expect(await box()).toHaveValue("Hola Rosa");
+    fireEvent.click(sendButton()); // el servidor no lo duplica: mismo id
+    await openChat(/Juan Pérez/); // el cuadro de Rosa ya no está montado
+    s.go();
+    await waitFor(() => expect(marked(/Rosa Díaz/)).toBe(false));
+    await openChat();
+    expect(await box()).toHaveValue("");
+    const [first, again] = s.ids();
+    expect(again).toBe(first);
+  });
+
+  it("un fallo se queda al salir y volver, con su id; el envío viejo no olvida el nuevo", async () => {
+    const replies = [OK, FAIL];
+    const s = server({ send: () => replies.shift() ?? OK });
+    show();
+    await openChat();
+    s.wait();
+    await type("Hola Rosa");
+    fireEvent.click(sendButton());
+    await away();
+    await type("Otra cosa");
+    fireEvent.click(sendButton());
+    await waitFor(() => expect(s.posts()).toHaveLength(2));
+    s.go(); // el primero sale bien; el segundo falla y se queda, con su id, al salir y volver
+    await screen.findByRole("alert");
+    await away();
+    expect(await box()).toHaveValue("Otra cosa");
+    fireEvent.click(sendButton());
+    await waitFor(() => expect(s.posts()).toHaveLength(3));
+    const [first, second, retry] = s.ids();
+    expect([retry === second, second === first]).toEqual([true, false]);
+  });
+
+  // Misma dirección y mismos ids: la peor coincidencia de claves. Otra persona de la misma
+  // organización es quien entra tras cerrar sesión en la misma pestaña.
+  it.each([
+    ["otra organización", { organization: { ...tenant.organization, id: "o2" } }],
+    ["otra persona de la misma organización", { user: { ...tenant.user, id: "u2" } }],
+  ])("con %s los borradores se vacían y ninguno vuelve", async (_name, change) => {
+    server();
+    const permissions = grants("conversations.view", "messages.send");
+    function Switch() {
+      const [other, setOther] = useState(false);
+      return (
+        <TenantProvider value={{ ...tenant, permissions, ...(other && change) }}>
+          <button onClick={() => setOther(!other)}>Cambiar</button>
+          <Inbox />
+        </TenantProvider>
+      );
+    }
+    renderApp(<Switch />);
+    await openChat();
+    await type("Hola Rosa");
+    for (const round of [1, 2]) {
+      fireEvent.click(screen.getByRole("button", { name: "Cambiar" }));
+      await openChat();
+      expect(await box(), `vuelta ${round}`).toHaveValue("");
+      expect(marked(/Rosa Díaz/)).toBe(false);
+    }
   });
 });

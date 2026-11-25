@@ -286,6 +286,21 @@ describe("panel del copiloto (F8-09a)", () => {
     expect(await box()).toHaveFocus();
   });
 
+  it("lo insertado sigue tras «Volver» (390 px) y reabrir; nada se envía (UX-INBOX-04)", async () => {
+    const s = server();
+    show();
+    await openChat();
+    await draft();
+    fireEvent.click(screen.getByRole("button", { name: "Insertar" }));
+    await waitFor(() => expect(box()).resolves.toHaveValue(SAVED));
+    fireEvent.click(screen.getByRole("button", { name: "Volver a las conversaciones" }));
+    await waitFor(() => expect(screen.queryByRole("heading", { level: 2 })).toBeNull());
+    await openChat();
+    expect(await box()).toHaveValue(SAVED);
+    await wait(SETTLE + 100);
+    expect(s.sent()).toHaveLength(0);
+  });
+
   it("«Descartar» quita la sugerencia sin tocar el cuadro ni llamar a nada", async () => {
     const s = server();
     show();

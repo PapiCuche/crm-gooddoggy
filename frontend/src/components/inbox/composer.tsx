@@ -35,6 +35,7 @@ import { type ApiErrorKey, apiErrorKey } from "@/lib/api-errors";
 import type { ApiError } from "@/lib/http";
 import { cn } from "@/lib/utils";
 
+import { useDrafts, useDraftsValue } from "./drafts";
 import { fileSize } from "./media-file";
 import { coarse, useCoarse } from "./mobile";
 import { useQuickReplies } from "./quick-replies";
@@ -70,7 +71,8 @@ const DROP_FILE_ON: ApiErrorKey[] = [
   "MEDIA_TOO_COMPLEX",
   "MEDIA_NOT_SUPPORTED_BY_CHANNEL",
 ];
-type Outgoing = SendMessageRequest & { file?: File };
+// `draft`: la clave del borrador al enviar; los callbacks corren aunque el cuadro ya no esté montado.
+type Outgoing = SendMessageRequest & { file?: File; draft: string };
 // Un 409 de la política de envío: lo que cambió puede estar también en la conversación.
 const REFRESH_ON = [
   "CONVERSATION_CLOSED",
@@ -215,9 +217,18 @@ function ComposeBox({
   const client = useQueryClient();
   const field = useId();
   const box = useRef<HTMLTextAreaElement>(null);
-  // El intento que falló: su id, el texto con que se probó primero y su archivo.
-  const attempt = useRef<{ id: string; first: string; file: File | null } | null>(null);
-  const [text, setText] = useState("");
+  // El borrador es el texto: se edita siempre por su clave, sobre lo que tiene ahora.
+  const drafts = useDrafts();
+  const draftKey = drafts.key(conversation.id, mode);
+  const text = useDraftsValue((all) => all.get(draftKey).text);
+  const setText = (change: (current: string) => string) =>
+    drafts.update(draftKey, (current) => ({ text: change(current.text) }));
+  // El intento solo se olvida si sigue siendo el de ese envío (otro cuadro pudo empezar otro).
+  const forget = (sent: Outgoing) =>
+    drafts.update(sent.draft, ({ attempt }) =>
+      attempt?.id === sent.client_message_id ? { attempt: null } : {},
+    );
+  const sentFile = useRef<File | null>(null); // el archivo del último intento de este cuadro
   const [problem, setProblem] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
   const [file, setFile] = useState<File | null>(null);
@@ -255,7 +266,7 @@ function ComposeBox({
     conversationId: conversation.id,
     text,
     insert: (value) => {
-      setText(value);
+      setText(() => value);
       setProblem(null);
       box.current?.focus();
       requestAnimationFrame(() => box.current?.setSelectionRange(value.length, value.length));
@@ -280,8 +291,9 @@ function ComposeBox({
   }, [placed]);
 
   const send = useMutation<Message, ApiError, Outgoing>({
-    mutationFn: ({ file: attached, ...request }) =>
-      note
+    mutationFn: ({ file: attached, client_message_id, body }) => {
+      const request = { client_message_id, body }; // la clave del borrador no va a la API
+      return note
         ? conversationNotesCreate(slug, conversation.id, request)
         : attached
           ? conversationMediaSend(slug, conversation.id, {
@@ -290,7 +302,8 @@ function ComposeBox({
               // Sin pie de foto el campo no va: la ruta responde 400 a un `caption` vacío.
               caption: request.body.trim() ? request.body : undefined,
             })
-          : conversationMessagesSend(slug, conversation.id, request),
+          : conversationMessagesSend(slug, conversation.id, request);
+    },
     onSettled: () => (inFlight.current = false),
     onMutate: async (request) => {
       await client.cancelQueries({ queryKey: key });
@@ -316,13 +329,13 @@ function ComposeBox({
       setSaved(null);
     },
     onSuccess: (done, request) => {
-      attempt.current = null; // un id por acción: el siguiente texto lleva otro
+      forget(request); // un id por acción: el siguiente texto lleva otro
       // Quita solo lo enviado: lo insertado mientras salía se queda y no se vuelve a enviar.
-      setText((current) =>
-        current.startsWith(request.body)
+      drafts.update(request.draft, ({ text: current }) => ({
+        text: current.startsWith(request.body)
           ? current.slice(request.body.length).replace(/^\n\n/, "")
           : current,
-      );
+      }));
       setFile((current) => (current === request.file ? null : current)); // solo el que salió
       const mine = `pending-${request.client_message_id}`;
       client.setQueryData<Pages>(key, (data) => {
@@ -349,11 +362,12 @@ function ComposeBox({
       void client.invalidateQueries({ queryKey: key });
       // Ese id ya es de otro envío: reintentar con él chocaría siempre. Si el texto creció tras un
       // fallo, lo primero pudo haber salido: se avisa en lugar de mandarlo otra vez.
-      const grown = attempt.current !== null && attempt.current.first !== request.body;
-      if (error.code === "CLIENT_MESSAGE_ID_TAKEN") attempt.current = null;
+      const tried = drafts.get(request.draft).attempt;
+      const grown = tried !== null && tried.first !== request.body;
+      if (error.code === "CLIENT_MESSAGE_ID_TAKEN") forget(request);
       const reason = failure(error);
       if (DROP_FILE_ON.includes(reason)) {
-        attempt.current = null;
+        forget(request);
         setFile(null);
         setRefusal(errors(`api.${reason}`));
         return;
@@ -379,16 +393,22 @@ function ComposeBox({
     if (inFlight.current || send.isPending || closed || over || empty) return;
     // Reintentar reutiliza el id mientras el texto empiece por el que falló (también con lo que se
     // insertó o escribió después) y el archivo sea el mismo: si el primero llegó al servidor sin
-    // respuesta, el mismo id no deja que salga dos veces. Otro texto empieza un intento nuevo.
-    if (
-      !attempt.current ||
-      !text.startsWith(attempt.current.first) ||
-      attempt.current.file !== file
-    ) {
-      attempt.current = { id: uuid(), first: text, file };
+    // respuesta, el mismo id no deja que salga dos veces. Otro texto empieza un intento nuevo. El
+    // intento vive en el borrador: volver a la conversación y reintentar usa el mismo id.
+    let tried = drafts.get(draftKey).attempt;
+    const sameFile = tried?.media ? file !== null && file === sentFile.current : file === null;
+    if (!tried || !text.startsWith(tried.first) || !sameFile) {
+      tried = { id: uuid(), first: text, media: file !== null };
+      drafts.update(draftKey, () => ({ attempt: tried }));
     }
+    sentFile.current = file;
     inFlight.current = true;
-    send.mutate({ client_message_id: attempt.current.id, body: text, file: file ?? undefined });
+    send.mutate({
+      client_message_id: tried.id,
+      body: text,
+      file: file ?? undefined,
+      draft: draftKey,
+    });
   };
   // Solo JPEG, PNG o PDF dentro de su tope; si no, se explica y el archivo no queda adjunto.
   const pick = (chosen: File | undefined) => {
@@ -487,7 +507,7 @@ function ComposeBox({
           first,
         )}
         onChange={(event) => {
-          setText(event.target.value);
+          setText(() => event.target.value);
           setProblem(null);
           setRefusal(null);
           setSaved(null);

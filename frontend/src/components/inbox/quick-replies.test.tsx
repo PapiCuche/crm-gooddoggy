@@ -282,6 +282,22 @@ describe("respuestas rápidas en el cuadro de respuesta (F6-08b)", () => {
     );
   });
 
+  it("lo insertado queda en el borrador de su conversación al cambiar y volver, sin enviar (UX-INBOX-04)", async () => {
+    const s = server();
+    show();
+    await openChat();
+    await type("/delivery-l");
+    await waitFor(() => expect(options()).toHaveLength(1));
+    await key("Enter");
+    await waitFor(() => expect(box()).resolves.toHaveValue(rendered.text));
+    await openChat(/Juan Pérez/);
+    expect(await box()).toHaveValue("");
+    await openChat();
+    expect(await box()).toHaveValue(rendered.text);
+    await settle(50);
+    expect(s.sends()).toEqual([]);
+  });
+
   it("cambiar de conversación con un `render` pendiente no lleva el texto a la otra", async () => {
     const s = server(undefined, { hold: true });
     show();
