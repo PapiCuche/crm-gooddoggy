@@ -19,7 +19,7 @@ import { ApiError } from "@/lib/http";
 import { cn } from "@/lib/utils";
 
 export const AI_MANAGE = "ai.manage";
-const OUTLINE = "border-border min-h-11 border sm:min-h-9";
+const OUTLINE = "border-border min-h-11 border lg:min-h-9";
 // Lo que se leyó al abrir la confirmación: la pregunta y la petición salen de aquí, nunca del
 // estado vivo (una relectura por tiempo real no puede cambiar lo que se confirma).
 type Asked = { excluded: boolean; version: number };
@@ -123,7 +123,7 @@ export function useAiExclusion(conversation: Conversation) {
     <Button
       ref={opener}
       variant="ghost"
-      className="border-border order-3 border max-lg:size-11 max-lg:px-0 lg:order-2"
+      className="border-border order-3 border max-lg:size-11 max-lg:px-0 max-sm:group-data-composing:hidden lg:order-2"
       title={label}
       aria-expanded={open}
       onClick={() => {
@@ -140,7 +140,7 @@ export function useAiExclusion(conversation: Conversation) {
   const state = (
     <div className="order-5 flex basis-full flex-col gap-1 empty:hidden">
       {excluded ? (
-        <p className="bg-accent/40 border-foreground/30 flex items-center gap-1.5 self-start rounded-[10px] border px-2 py-1 text-xs font-semibold lg:text-sm">
+        <p className="bg-accent/40 border-foreground/30 flex items-center gap-1.5 self-start rounded-[10px] border px-2 py-1 text-xs font-semibold max-sm:group-data-composing:hidden lg:text-sm">
           <BotOff aria-hidden className="size-3.5 shrink-0" />
           {t("badge")}
         </p>
@@ -165,7 +165,7 @@ export function useAiExclusion(conversation: Conversation) {
             </Button>
             <Button
               variant="primary"
-              className="min-h-11 sm:min-h-9"
+              className="min-h-11 lg:min-h-9"
               aria-disabled={busy}
               onClick={() => void confirm(asking)}
             >

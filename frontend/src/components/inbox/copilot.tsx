@@ -212,7 +212,7 @@ export function useCopilot({
       ref={summaryButton}
       type="button"
       variant="ghost"
-      className="border-border h-9 shrink-0 border aria-disabled:cursor-progress aria-disabled:opacity-60 max-sm:w-10 max-sm:px-0"
+      className="border-border h-9 shrink-0 border aria-disabled:cursor-progress aria-disabled:opacity-60 max-lg:h-11 max-sm:w-11 max-sm:px-0"
       aria-disabled={summarize.isPending}
       onClick={() => {
         if (summing.current || summarize.isPending) return;
@@ -229,7 +229,7 @@ export function useCopilot({
       ref={suggestButton}
       type="button"
       variant="accent"
-      className="h-9 shrink-0 aria-disabled:cursor-progress aria-disabled:opacity-60 max-sm:w-10 max-sm:px-0"
+      className="h-9 shrink-0 aria-disabled:cursor-progress aria-disabled:opacity-60 max-lg:h-11 max-sm:w-11 max-sm:px-0"
       aria-disabled={busy}
       onClick={() => {
         if (asking.current || busy) return;
@@ -287,7 +287,7 @@ export function useCopilot({
                 <Button
                   type="button"
                   variant="ghost"
-                  className="border-border h-9 border"
+                  className="border-border h-9 border max-lg:h-11"
                   onClick={() => {
                     setSummary(null);
                     setStatus(t("summaryClosed"));
@@ -314,7 +314,7 @@ export function useCopilot({
                 <Button
                   type="button"
                   variant="primary"
-                  className="h-9 aria-disabled:cursor-progress aria-disabled:opacity-60"
+                  className="h-9 aria-disabled:cursor-progress aria-disabled:opacity-60 max-lg:h-11"
                   aria-disabled={busy}
                   onClick={() => {
                     if (inserting.current || busy) return;
@@ -327,7 +327,7 @@ export function useCopilot({
                 <Button
                   type="button"
                   variant="ghost"
-                  className="border-border h-9 border"
+                  className="border-border h-9 border max-lg:h-11"
                   disabled={insert.isPending}
                   onClick={() => {
                     setDraft(null);

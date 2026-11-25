@@ -478,7 +478,7 @@ function ComposeBox({
       <label
         htmlFor={field}
         className={cn(
-          "text-sm font-medium max-sm:col-span-2 max-sm:row-start-1",
+          "text-sm font-medium max-sm:col-span-2 max-sm:row-start-1 max-sm:group-data-composing:sr-only",
           tabbed && "max-lg:sr-only",
         )}
       >
