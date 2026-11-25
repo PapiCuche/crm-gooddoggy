@@ -1,6 +1,5 @@
-"""F7b-12c (#1103): la pasada de caducidad sin inanición, con espera por credencial y con tope de
-tiempo. Cada filtro de `credentials_expiry_due` (SECURITY DEFINER, como `crm_app` sin tenant) y de
-`expiry._targets` (en el scope de la organización) por separado. Meta, simulada; nunca la real."""
+"""F7b-12c (#1103): la pasada de caducidad sin inanición, con espera y tope. Cada filtro de
+`credentials_expiry_due` (como `crm_app`, sin tenant) y de `expiry._targets`; Meta, simulada."""
 
 import re
 from collections import Counter
@@ -24,6 +23,7 @@ from tests.test_social_token_expiry import DB, at, cred, crm, cut, meta, page_me
 __all__ = ["crm", "meta", "page_meta", "real_stack"]
 pytestmark = pytest.mark.usefixtures("tenant_db")
 SIGNATURE = "public.credentials_expiry_due(boolean, integer)"
+TRIED = "UPDATE credentials SET expiry_attempt_at = now() "
 
 
 def due(unknown: bool) -> list[UUID]:
@@ -58,6 +58,18 @@ def asked(world: SimpleNamespace) -> int:
     return sum(c["path"].endswith("/debug_token") for c in world.meta.graph.calls)
 
 
+def slow(monkeypatch: pytest.MonkeyPatch, name: str, seconds: float) -> None:
+    """Un reloj falso de la pasada que avanza `seconds` en cada llamada a `expiry.<name>`."""
+    clock, real = [0.0], getattr(expiry, name)
+
+    def timed(*args: Any, **kwargs: Any) -> Any:
+        clock[0] += seconds
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(expiry, name, timed)
+    monkeypatch.setattr(expiry, "monotonic", lambda: clock[0])
+
+
 CASES = {  # caso: (caducidad leída en días o None, SQL del migrador, con desconocidas, ¿toca?)
     "first_warning": (9, [], False, True),
     "far": (11, [], False, False),
@@ -67,12 +79,9 @@ CASES = {  # caso: (caducidad leída en días o None, SQL del migrador, con desc
     "unknown_hourly": (None, [], False, False),
     "unknown_daily": (None, [], True, True),
     "known_daily": (40, [], True, False),
-    "tried_an_hour_ago": (None, ["UPDATE credentials SET expiry_attempt_at = "
-                                 "now() - interval '1 hour'"], True, False),
-    "tried_a_day_ago": (None, ["UPDATE credentials SET expiry_attempt_at = "
-                               "now() - interval '23 hours 1 minute'"], True, True),
-    "tried_in_the_future": (None, ["UPDATE credentials SET expiry_attempt_at = "
-                                   "now() + interval '1 hour'"], True, True),
+    "tried_an_hour_ago": (None, [TRIED + "- interval '1 hour'"], True, False),
+    "tried_a_day_ago": (None, [TRIED + "- interval '23 hours 1 minute'"], True, True),
+    "tried_in_the_future": (None, [TRIED + "+ interval '1 hour'"], True, True),
     "revoked": (2, ["UPDATE credentials SET revoked_at = now(), ciphertext = NULL"], False, False),
     "deleted": (2, ["UPDATE channel_accounts SET deleted_at = now(), status = 'DISCONNECTED'"],
                 False, False),
@@ -100,8 +109,7 @@ def test_each_filter_of_the_discovery_and_of_the_targets(
 
 
 def test_the_discovery_keeps_its_guarantees_and_matches_the_python_rules(migrator: DB) -> None:
-    """Propietario, `search_path`, permisos, solo ids; y los estados, la espera y los días que la
-    función escribe en SQL son los de Python (no pueden divergir)."""
+    """Propietario, `search_path`, permisos, solo ids; y su SQL dice lo mismo que Python."""
     row = migrator.execute(
         "SELECT pg_get_userbyid(p.proowner), p.prosecdef, p.proconfig, p.proacl::text[], "
         "pg_get_functiondef(p.oid), pg_get_function_result(p.oid) FROM pg_proc p "
@@ -127,8 +135,7 @@ def test_the_discovery_keeps_its_guarantees_and_matches_the_python_rules(migrato
 def test_a_warned_credential_never_starves_a_pending_one(
     world: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Antes, una credencial avisada a 10 días (más urgente) ocupaba el lote y su organización el
-    tope: la pendiente de otra cuenta u organización no tenía turno."""
+    """Una credencial ya avisada a 10 días no ocupa el lote ni el tope de organizaciones."""
     monkeypatch.setattr(expiry, "BATCH", 1)
     monkeypatch.setattr(expiry, "MAX_ORGS", 1)
     world.meta.graph.debug = {"expires_at": at(5)}
@@ -140,8 +147,8 @@ def test_a_warned_credential_never_starves_a_pending_one(
     assert tasks.token_expiry() == {"WARNED": 1}
     assert tasks.token_expiry() == {"WARNED": 1}
     assert tasks.token_expiry() == {}
-    assert cred(world.a, fresh_a.pk).expiry_warned_days == 10
-    assert cred(world.b, fresh_b.pk).expiry_warned_days == 10
+    warned = (cred(world.a, fresh_a.pk), cred(world.b, fresh_b.pk))
+    assert [c.expiry_warned_days for c in warned] == [10, 10]
     assert cred(world.a, warned_a.pk).expiry_warned_days == 10  # su aviso de 3 días, a su hora
 
 
@@ -168,8 +175,7 @@ def test_an_unanswered_read_is_asked_once_a_day_and_gives_its_turn_to_others(
 def test_the_oldest_turn_goes_first(
     world: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Sin intento primero, después el intento más viejo: entre organizaciones (la función) y
-    entre credenciales de una organización (`_backfill`)."""
+    """Sin intento primero, después el más viejo: entre organizaciones y dentro de una."""
     made = {world.a: page(world, 1, known=False), world.b: page(world, 2, org="b", known=False)}
     low, high = sorted(made)
 
@@ -198,8 +204,7 @@ def test_the_oldest_turn_goes_first(
 def test_a_failed_read_keeps_its_attempt_and_is_not_retried_until_the_wait_ends(
     world: SimpleNamespace, monkeypatch: pytest.MonkeyPatch, failure: str
 ) -> None:
-    """La pregunta se reclama antes de la llamada: si Meta cae o el worker falla, una caída de
-    Meta cuesta un día por credencial, nunca una pregunta por pasada."""
+    """Reclamada antes de la llamada: una caída cuesta un día por credencial, no una por pasada."""
     made = page(world, 1, known=False)
     if failure == "meta_down":
         real = world.meta.graph.handle
@@ -218,14 +223,12 @@ def test_a_failed_read_keeps_its_attempt_and_is_not_retried_until_the_wait_ends(
 def test_a_read_claimed_by_another_pass_is_not_asked_again(
     world: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Dos pasadas a la vez: las dos la eligen; la que llega tarde al `UPDATE` condicional no
-    pregunta (el mismo `UPDATE` espera el bloqueo de la fila y vuelve a evaluar la espera)."""
+    """Dos pasadas la eligen; la que llega tarde al `UPDATE` condicional no pregunta."""
     made, real = page(world, 1, known=False), expiry._targets
 
     def raced(*args: Any) -> Any:
         found = real(*args)
-        migrator.execute("UPDATE credentials SET expiry_attempt_at = now() WHERE id = %s",
-                         [made.pk])  # fmt: skip
+        migrator.execute(TRIED + "WHERE id = %s", [made.pk])
         return found
 
     monkeypatch.setattr(expiry, "_targets", raced)
@@ -237,14 +240,7 @@ def test_the_daily_pass_stops_at_its_time_budget_and_keeps_the_turn(
     world: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     made = [page(world, n, known=False) for n in (1, 2, 3)]
-    clock, real = [0.0], expiry.read
-
-    def slow(*args: Any, **ids: str) -> Any:
-        clock[0] += 70  # cada pregunta a Meta, 70 s
-        return real(*args, **ids)
-
-    monkeypatch.setattr(expiry, "read", slow)
-    monkeypatch.setattr(expiry, "monotonic", lambda: clock[0])
+    slow(monkeypatch, "read", 70)  # cada pregunta a Meta, 70 s
     world.meta.graph.debug = {"expires_at": at(40)}
     assert tasks.token_expiry(backfill=True) == {"READ": 2, "OUT_OF_TIME": 1}
     last = cred(world.a, made[2].pk)
@@ -258,14 +254,7 @@ def test_the_hourly_pass_stops_between_organizations_never_between_claim_and_sen
     world.meta.graph.debug = {"expires_at": at(2)}
     page(world, 1)
     page(world, 2, org="b")
-    clock, real = [0.0], expiry._send
-
-    def slow(*args: Any) -> None:
-        clock[0] += 130
-        real(*args)
-
-    monkeypatch.setattr(expiry, "_send", slow)
-    monkeypatch.setattr(expiry, "monotonic", lambda: clock[0])
+    slow(monkeypatch, "_send", 130)
     assert tasks.token_expiry() == {"WARNED": 1, "OUT_OF_TIME": 1}
     assert tasks.token_expiry() == {"WARNED": 1}
 

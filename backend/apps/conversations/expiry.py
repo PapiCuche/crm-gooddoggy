@@ -6,9 +6,7 @@
 `sweep` (cada hora) avisa (correo a `channels.manage` y alerta) a 10 y 3 días, una vez por umbral
 y token: un `UPDATE` condicional reclama el umbral con su auditoría; el correo sale tras confirmar
 y no se reintenta. Nada lleva el token, su final ni el app secret.
-F7b-12c: solo entra lo que tiene un aviso pendiente o (a diario) una caducidad que se puede
-preguntar; cada pregunta se reclama antes (`expiry_attempt_at`) y no se repite en `WAIT`, y una
-pasada no pasa de `PASS_SECONDS`.
+F7b-12c: cada pregunta a Meta se reclama antes y espera `WAIT`; una pasada, `PASS_SECONDS`.
 """
 
 import datetime as dt
@@ -59,8 +57,7 @@ class Known(NamedTuple):
 
 
 def read(platform: str, token: str, **ids: str) -> Known | None:
-    """La caducidad que cuenta para una cuenta de `platform` con `token`; `None`, no se sabe.
-    `ids` (organización y cuenta, si ya existen) van al registro."""
+    """La caducidad que cuenta en `platform` con `token`; `None`, no se sabe. `ids`: el registro."""
     seen = graph.token_expiry(token)
     if isinstance(seen, str):  # solo el motivo y los ids; los de configuración, como aviso
         level = "warning" if seen in LOUD else "info"
@@ -87,8 +84,7 @@ def askable() -> Q:
 
 
 def _targets(ctx: TenantContext, wanted: Q, *order: Any) -> list[tuple[ChannelAccount, Credential]]:
-    """Las credenciales vivas que cumplen `wanted` de cuentas sociales vivas que se comprueban de
-    una organización accesible, en el orden `order` (el turno)."""
+    """Las credenciales vivas `wanted` de cuentas sociales comprobadas y organización accesible."""
     alias = require_scope(ctx)
     orgs = Organization.objects.using(alias).filter(status__in=ACCESSIBLE_STATUSES)
     if not orgs.filter(pk=ctx.organization_id).exists():
@@ -104,9 +100,8 @@ def _targets(ctx: TenantContext, wanted: Q, *order: Any) -> list[tuple[ChannelAc
 
 
 def _backfill(organization_id: UUID, done: Counter[str], deadline: float) -> None:
-    """Lee en Meta la caducidad que no se sabe, el intento más viejo primero. Cada pregunta se
-    reclama antes (confirmada): si Meta no contesta o el worker cae, no se repite en `WAIT`; otra
-    pasada a la vez no la reclama. El token se abre solo durante la llamada."""
+    """Lee en Meta la caducidad que no se sabe, el intento más viejo primero, reclamando antes cada
+    pregunta (no se repite en `WAIT`). El token se abre solo durante la llamada."""
     ctx = TenantContext(organization_id, "celery")
     with tenant_scope(ctx):
         oldest = F("expiry_attempt_at").asc(nulls_first=True)
@@ -212,10 +207,9 @@ def _send(organization_id: UUID, warning: dict[str, Any]) -> None:
 
 def sweep(*, backfill: bool = False) -> dict[str, int]:
     """Con `backfill`, primero las caducidades que no se saben; después, los avisos. Las
-    organizaciones, de `credentials_expiry_due` (SECURITY DEFINER, solo ids), el turno más viejo
-    primero. Un fallo en una organización no detiene las demás y solo se registra su tipo. Pasados
-    `PASS_SECONDS` no empieza otra organización ni otra pregunta (`OUT_OF_TIME`): sigue la próxima
-    pasada. Nunca corta entre reclamar un aviso y enviarlo."""
+    organizaciones, de `credentials_expiry_due` (SECURITY DEFINER, solo ids). Un fallo en una
+    organización no detiene las demás y solo se registra su tipo. Pasados `PASS_SECONDS`, para
+    (`OUT_OF_TIME`) entre organizaciones o preguntas, nunca entre reclamar un aviso y enviarlo."""
     if not settings.META_ENABLED:
         return {}
     with connection.cursor() as cursor:
