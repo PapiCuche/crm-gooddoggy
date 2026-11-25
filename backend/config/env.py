@@ -122,8 +122,15 @@ def csv_list(name: str) -> list[str]:
 CONNECT_TIMEOUT = 3  # segundos para abrir una conexión con PostgreSQL
 
 
-def database(url: str) -> dict[str, Any]:
-    """Convierte postgres://user:pass@host:port/name en la configuración de Django."""
+def database(url: str, *, asgi: bool = False) -> dict[str, Any]:
+    """Convierte postgres://user:pass@host:port/name en la configuración de Django.
+
+    F1-DB-01 (#1134): el proceso ASGI (`config/asgi.py`: backend y ws) no conserva conexiones.
+    Django atiende cada petición ASGI en un hilo propio y, con `CONN_MAX_AGE`, deja la conexión
+    de ese hilo abierta e inactiva al acabar: se acumulan hasta agotar `max_connections`. Con 0,
+    la cierra al terminar cada petición. Los workers de Celery y los comandos (un hilo que se
+    reutiliza) siguen conservándola 60 s.
+    """
     parts = urlsplit(url)
     if parts.scheme not in ("postgres", "postgresql") or not parts.path.lstrip("/"):
         raise ImproperlyConfigured(
@@ -136,7 +143,7 @@ def database(url: str) -> dict[str, Any]:
         "PASSWORD": unquote(parts.password or ""),
         "HOST": parts.hostname or "",
         "PORT": str(parts.port or ""),
-        "CONN_MAX_AGE": 60,
+        "CONN_MAX_AGE": 0 if asgi else 60,
         "CONN_HEALTH_CHECKS": True,
         # F1-14: un host que no contesta falla en segundos (readiness, web y workers), no cuelga.
         "OPTIONS": {"connect_timeout": CONNECT_TIMEOUT},

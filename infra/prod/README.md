@@ -121,6 +121,23 @@ systemctl list-timers crm-migrate.timer   # la próxima ejecución; el resultado
 
 El mismo `migrate` quita el detalle de la IA de más de 12 meses completos (F8-08k, D-F8-05) cuando `AI_RECORDS_RETENTION` está encendido en `config/settings/base.py` (apagado por omisión). Como guarda el mes UTC entero y el temporizador corre el día 15, en la práctica el detalle dura hasta unos 13,5 meses, y unos 14,5 si se salta una ejecución. Si una tabla está ocupada más de 5 s, avisa en el log (`ai.records_retention_lock_busy`) y lo deja para el siguiente `migrate`.
 
+## Conexiones a PostgreSQL
+
+`backend` y `ws` (uvicorn, `config/asgi.py`) cierran la conexión de cada petición al terminarla (F1-DB-01, #1134): Django atiende cada petición ASGI en un hilo propio y, con conexiones persistentes, la del hilo terminado se quedaba abierta e inactiva hasta agotar `max_connections` (en local, 96 inactivas y el login en 500). Ahora `backend` tiene tantas conexiones como peticiones en curso, y `ws`, una solo mientras consulta la base, no una por socket. Los workers de Celery conservan la suya 60 s: `worker` tiene 2 y `worker-media`, 1. `beat` no se conecta. Con todo en reposo, `crm_app` tiene unas 3 conexiones.
+
+Comprobación de solo lectura, como superusuario y sin cambiar nada:
+
+```bash
+sudo infra/prod/compose.sh exec -T postgres psql -U postgres -d crm -Atc \
+  "SELECT usename, coalesce(state, '-'), count(*) FROM pg_stat_activity WHERE usename IS NOT NULL GROUP BY 1, 2 ORDER BY 3 DESC"
+```
+
+- **Normal:** `crm_app` con menos de 10 conexiones (`idle` incluidas), y en reposo unas 3.
+- **Aviso:** más de 20 conexiones `crm_app` `idle` durante 5 minutos. No se explica por el tráfico: busca qué contenedor las tiene (`client_addr` frente a `docker network inspect`) antes de reiniciar nada.
+- **Crítico:** 80 conexiones o más en total frente a `max_connections` (100, de las que 3 quedan para el superusuario). PostgreSQL empieza a rechazar conexiones y el login responde 500.
+
+No hay tope duro: con unas 90 peticiones a la vez en `backend` se llegaría al límite. Reiniciar servicios o cambiar `max_connections` en producción solo se hace con el GO del propietario.
+
 ## Backup nocturno y despliegues
 
 El backup nocturno (`backup.sh nightly`) toma el mismo lock que `deploy.sh`, `/var/lib/crm-deploy/lock`. Mientras dura, ningún despliegue arranca. Si un despliegue lo tiene, el backup espera hasta una hora (`BACKUP_LOCK_WAIT`). Si sigue puesto, porque un despliegue se cortó y lo dejó, el backup falla con `backup.failed` (`stage=deploy_lock`) y avisa. `backup.sh predeploy` no lo toma: lo lanza `deploy.sh`, que ya lo tiene.
