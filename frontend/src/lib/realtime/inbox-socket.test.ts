@@ -296,3 +296,48 @@ describe("latido", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 });
+
+describe("estado para la pantalla (UX-INBOX-06)", () => {
+  const watch = (create: (url: string) => SocketLike = (url) => new Fake(url)) => {
+    const seen: string[] = [];
+    const stop = connectInbox({
+      ...{ url: "ws://x/ws/o/acme/inbox/", onEvent: () => {}, onResync: () => {} },
+      ...{ onStatus: (status: string) => seen.push(status), create, random: () => 1 },
+    });
+    return { seen, stop };
+  };
+
+  it("conectando, abierta, perdida mientras reintenta y abierta otra vez; un cierre final, cerrada", () => {
+    const { seen } = watch();
+    expect(seen).toEqual(["connecting"]);
+    last().open();
+    last().drop(1006);
+    expect(seen).toEqual(["connecting", "open", "lost"]);
+    vi.advanceTimersByTime(1000);
+    expect(seen.at(-1)).toBe("lost"); // un intento en curso sigue siendo «reconectando»
+    last().drop(1006); // el intento tampoco abre
+    vi.advanceTimersByTime(2000);
+    last().open();
+    expect(seen.at(-1)).toBe("open");
+    last().drop(4403);
+    expect(seen.at(-1)).toBe("closed");
+    vi.advanceTimersByTime(60_000);
+    expect(seen.at(-1)).toBe("closed"); // no reintenta ni cambia
+  });
+
+  it("un `new WebSocket` que lanza cuenta como perdida; tras parar no llega ningún estado", () => {
+    let fail = true;
+    const { seen, stop } = watch((url) => {
+      if (fail) throw new Error("bloqueado");
+      return new Fake(url);
+    });
+    expect(seen).toEqual(["connecting", "lost"]);
+    fail = false;
+    vi.advanceTimersByTime(1000);
+    const socket = last();
+    stop();
+    socket.open();
+    socket.drop(1006);
+    expect(seen).toEqual(["connecting", "lost"]);
+  });
+});

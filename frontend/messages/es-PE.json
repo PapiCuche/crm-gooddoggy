@@ -2586,6 +2586,11 @@
       "blocked": "El navegador bloqueó los avisos de esta página.",
       "title": "Nuevo mensaje"
     },
+    "live": {
+      "lost": "Reconectando…",
+      "offline": "Sin conexión",
+      "closed": "Tiempo real no disponible"
+    },
     "channelAlert": {
       "label": "Cuentas de canal con problemas",
       "down": "está desconectada y no recibe ni envía mensajes.",

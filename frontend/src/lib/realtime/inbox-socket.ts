@@ -75,16 +75,21 @@ export const backoff = (attempt: number) => Math.min(WAIT.max, WAIT.first * 2 **
 // servidor a la vez no vuelvan todos en el mismo instante.
 export const jittered = (wait: number, random: () => number) => wait * (0.5 + 0.5 * random());
 
+// UX-INBOX-06: el estado para la pantalla. `lost`, cerrada y reintentando; `closed`, un cierre final.
+export type SocketStatus = "connecting" | "open" | "lost" | "closed";
+
 export function connectInbox({
   url,
   onEvent,
   onResync,
+  onStatus = () => {},
   create = (target: string) => new WebSocket(target) as unknown as SocketLike,
   random = Math.random,
 }: {
   url: string;
   onEvent: (event: InboxEvent) => void;
   onResync: () => void; // se volvió a conectar tras un corte: lo ocurrido mientras tanto se relee
+  onStatus?: (status: SocketStatus) => void;
   create?: (url: string) => SocketLike;
   random?: () => number;
 }): () => void {
@@ -100,6 +105,7 @@ export function connectInbox({
   function retry() {
     since = 0;
     lost = true;
+    onStatus("lost");
     timer = setTimeout(open, jittered(backoff(attempt++), random));
   }
 
@@ -115,6 +121,7 @@ export function connectInbox({
     current.onopen = () => {
       heart = setInterval(() => current.send(PING), PING_EVERY);
       since = Date.now();
+      onStatus("open");
       if (lost) onResync(); // la primera conexión sin fallos previos no relee: la pantalla acaba de leer
       lost = false;
     };
@@ -130,12 +137,14 @@ export function connectInbox({
       if (FINAL_CLOSES.includes(close.code)) {
         since = 0;
         lost = true;
+        onStatus("closed");
         return;
       }
       retry();
     };
     current.onerror = () => {}; // sigue un `close`, que es lo que trata la reconexión
   }
+  onStatus("connecting");
   open();
 
   return () => {
