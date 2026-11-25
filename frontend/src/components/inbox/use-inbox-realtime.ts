@@ -50,14 +50,12 @@ export function useInboxRealtime(): LiveStatus {
     if (!inboxRealtimeOn() || typeof WebSocket === "undefined") return;
     const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
     const mine = `/api/v1/o/${slug}/conversations/`;
-    // Las claves de la ráfaga, sin repetir; la conversación, en las de mensajes.
     const due = new Map<string, { queryKey: QueryKey; chat?: string }>();
     let timer: ReturnType<typeof setTimeout> | undefined;
     const want = (queryKey: QueryKey, chat?: string) =>
       due.set(JSON.stringify(queryKey), { queryKey, chat });
-    // Un envío propio en curso (la burbuja `pending-…` de #1123): sus mensajes no se releen ahora,
-    // porque la lectura quitaría la burbuja antes de que el servidor tenga el mensaje. Al terminar,
-    // el cuadro de redacción relee esa misma clave, y trae también lo que avisó el evento.
+    // Con un envío propio en curso (burbuja `pending-…`, #1123), releer sus mensajes la quitaría
+    // antes de tiempo: los relee el cuadro de redacción al terminar el envío.
     const sending = (chat: string) =>
       !!client
         .getQueryData<Pages>(messagesKey(slug, chat))
@@ -83,10 +81,12 @@ export function useInboxRealtime(): LiveStatus {
       url: `${proto}//${window.location.host}/ws/o/${encodeURIComponent(slug)}/inbox/`,
       onEvent: reread,
       // Todo lo del Inbox de esta organización: la lista, los detalles y los mensajes.
-      onResync: () =>
+      onResync: () => {
+        due.clear(); // cubre lo pendiente de la ráfaga: no se relee otra vez al cerrar su ventana
         void client.invalidateQueries({
           predicate: ({ queryKey: [first] }) => typeof first === "string" && first.startsWith(mine),
-        }),
+        });
+      },
       onStatus: setSocket, // parada (al salir u otra organización), ya no avisa: `connectInbox`
     });
     return () => {

@@ -90,22 +90,15 @@ export function Inbox() {
         <p className={cn("text-[13px] tracking-wide uppercase", chatShown && "max-lg:hidden")}>
           {t("eyebrow")}
         </p>
-        <div
+        <h1
           className={cn(
-            "flex flex-wrap items-center gap-x-3 gap-y-1",
-            chatShown && "max-lg:contents",
+            "text-[28px] leading-tight font-bold tracking-[0.02em]",
+            chatShown && "max-lg:sr-only",
           )}
         >
-          <h1
-            className={cn(
-              "text-[28px] leading-tight font-bold tracking-[0.02em]",
-              chatShown && "max-lg:sr-only",
-            )}
-          >
-            {t("title")}
-          </h1>
-          <Live status={live} />
-        </div>
+          {t("title")}
+        </h1>
+        <Live status={live} />
         <p className={cn("text-muted", chatShown && "max-lg:hidden")}>
           {t("intro", { organization: organization.name })}
         </p>
@@ -183,7 +176,7 @@ export function Inbox() {
   );
 }
 
-// UX-INBOX-06: el estado del tiempo real junto al título, con icono y texto. Abierta o conectando,
+// UX-INBOX-06: el estado del tiempo real bajo el título, con icono y texto. Abierta o conectando,
 // nada: no se afirma que todo esté al día. Encendido, la región (cortés) existe siempre, sin ocupar
 // sitio; apagado, ni la región.
 const SHOWN = {

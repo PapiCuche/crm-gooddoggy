@@ -3,6 +3,11 @@ import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TenantProvider } from "@/components/app-shell/tenant-context";
+import {
+  getConversationMessagesListQueryKey,
+  getConversationsListQueryKey,
+  getConversationsRetrieveQueryKey,
+} from "@/lib/api/client";
 import type { Conversation, Grant, Message, SelfContext } from "@/lib/api/model";
 import { mockApi, renderApp } from "@/test-utils";
 
@@ -255,20 +260,37 @@ describe("ráfagas y estado de la conexión (UX-INBOX-06)", () => {
   afterEach(() => vi.useRealTimers());
 
   it("tres eventos seguidos: una sola lectura de cada clave, al cerrar la ventana", async () => {
+    const notified = vi.fn();
+    vi.stubGlobal("Notification", Object.assign(notified, { permission: "granted" }));
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    localStorage.setItem("inbox.notify", "on");
     const { reads, state } = server();
     show();
     await openChat();
     act(() => socket().onopen?.({}));
     const before = [reads(""), reads("1/"), reads("1/messages/")];
-    const messages = reads("1/messages/");
     state.texts.push(message("m2", "Dos"), message("m3", "Tres"));
     await say({ type: "message.received", conversation_id: "1", message_id: "m2" });
     await say({ type: "message.updated", conversation_id: "1", message_id: "m2" });
     await say({ type: "message.received", conversation_id: "1", message_id: "m3" });
-    expect(reads("1/messages/")).toBe(messages); // aún dentro de la ventana
+    expect(reads("1/messages/")).toBe(before[2]); // aún dentro de la ventana
     expect(await screen.findByText("Tres")).toBeInTheDocument();
     await wait(400);
-    expect([reads(""), reads("1/"), reads("1/messages/")]).toEqual(before.map((n) => n + 1));
+    expect([reads(""), reads("1/"), reads("1/messages/")]).toEqual(before.map((n) => n! + 1));
+    // Uno cada 200 ms: 0 y 200 salen a los 300 ms; 400, a los 700. Cada entrante avisa ya.
+    fake();
+    notified.mockClear();
+    const start = reads("1/messages/");
+    for (const id of ["m4", "m5", "m6"]) {
+      await say({ type: "message.received", conversation_id: "1", message_id: id });
+      await act(() => vi.advanceTimersByTimeAsync(200));
+    }
+    expect(reads("1/messages/")).toBe(start + 1); // a los 600 ms
+    expect(notified).toHaveBeenCalledTimes(3);
+    await act(() => vi.advanceTimersByTimeAsync(200));
+    expect(reads("1/messages/")).toBe(start + 2);
+    localStorage.clear();
+    vi.restoreAllMocks();
   });
 
   it("los estados llegan a la pantalla: reconectando, sin red y no disponible; abierta, nada", async () => {
@@ -330,18 +352,20 @@ describe("ráfagas y estado de la conexión (UX-INBOX-06)", () => {
         </TenantProvider>
       );
     }
-    renderApp(<Switcher />);
+    const { client } = renderApp(<Switcher />);
     await openChat();
     const acme = socket();
     act(() => acme.onopen?.({}));
     const before = [reads(""), reads("1/messages/")];
     await say({ type: "message.received", conversation_id: "1", message_id: "m2" });
+    const invalidate = vi.spyOn(client, "invalidateQueries");
     act(() => pick("beta"));
     expect(acme.closed).toBe(true);
     expect(socket().url).toBe(`ws://${window.location.host}/ws/o/beta/inbox/`);
     act(() => acme.onclose?.({ code: 1006 })); // el viejo ya no avisa de nada
     await wait(400);
     expect([reads(""), reads("1/messages/")]).toEqual(before);
+    expect(invalidate).not.toHaveBeenCalled(); // lo pendiente de `acme` se descartó
     expect(states().join()).not.toMatch(NONE);
   });
 
@@ -380,7 +404,7 @@ describe("ráfagas y estado de la conexión (UX-INBOX-06)", () => {
     });
     document.cookie = "csrftoken=token-de-prueba"; // un envío lleva la cabecera CSRF
     const send: Grant = { code: "messages.send", scopes: ["ORGANIZATION"] };
-    renderApp(
+    const { client } = renderApp(
       <TenantProvider value={{ ...tenant, permissions: [...tenant.permissions, send] }}>
         <Inbox />
       </TenantProvider>,
@@ -399,9 +423,18 @@ describe("ráfagas y estado de la conexión (UX-INBOX-06)", () => {
     await waitFor(() => expect(count()).toBe(1)); // la burbuja del envío en curso
     const reads = () => api.mock.calls.filter(([url]) => url === `${BASE}/1/messages/`).length;
     const before = reads();
+    const invalidate = vi.spyOn(client, "invalidateQueries");
     await say({ type: "message.received", conversation_id: "1", message_id: "m9" });
+    await say({ type: "message.received", conversation_id: "7", message_id: "m7" });
     await wait(400);
     expect(reads()).toBe(before); // mientras sale, sus mensajes no se releen
+    // la lista y el detalle del chat que envía, sí; los mensajes de otra conversación, también
+    expect(invalidate.mock.calls.map(([filters]) => filters?.queryKey)).toEqual([
+      getConversationsListQueryKey("acme"),
+      getConversationsRetrieveQueryKey("acme", "1"),
+      getConversationsRetrieveQueryKey("acme", "7"),
+      getConversationMessagesListQueryKey("acme", "7"),
+    ]);
     await act(async () => release());
     await waitFor(() => expect(reads()).toBe(before + 1)); // al terminar, el cuadro relee una vez
     await wait(400);
