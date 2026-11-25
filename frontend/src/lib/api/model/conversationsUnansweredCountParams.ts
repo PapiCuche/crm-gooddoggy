@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { ConversationsUnansweredCountBox } from "./conversationsUnansweredCountBox";
+import type { ConversationsUnansweredCountPlatform } from "./conversationsUnansweredCountPlatform";
 
 export type ConversationsUnansweredCountParams = {
   /**
@@ -17,4 +18,14 @@ export type ConversationsUnansweredCountParams = {
    * @minLength 1
    */
   box?: ConversationsUnansweredCountBox;
+  /**
+   * UX-INBOX-02: solo las de cuentas de esa red (`channel.platform`).
+   *
+   * * `SANDBOX` - Sandbox
+   * * `WHATSAPP` - Whatsapp
+   * * `MESSENGER` - Messenger
+   * * `INSTAGRAM` - Instagram
+   * @minLength 1
+   */
+  platform?: ConversationsUnansweredCountPlatform;
 };

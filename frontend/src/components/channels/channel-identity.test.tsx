@@ -116,6 +116,7 @@ describe("identidad de canal (UX-INBOX-01)", () => {
       // La fila elegida: `bg-accent/30` sobre el lienzo de la página o sobre papel.
       "accent/30 + background": over(rgb(token("accent")), 0.3, rgb(token("background"))),
       "accent/30 + surface": over(rgb(token("accent")), 0.3, rgb(token("surface"))),
+      accent: rgb(token("accent")), // el chip de red elegido (UX-INBOX-02)
     };
     const states = [token("success"), token("danger"), token("accent")];
     for (const tone of Object.keys(TONES)) {

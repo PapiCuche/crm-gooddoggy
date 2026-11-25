@@ -6,7 +6,13 @@ import { useFormatter, useTranslations } from "next-intl";
 
 import { useTenant } from "@/components/app-shell/tenant-context";
 import { Choice } from "@/components/catalog/product-create";
-import { ChannelDot, ChannelSource } from "@/components/channels/channel-identity";
+import {
+  ChannelDot,
+  ChannelSource,
+  channelOf,
+  TONES,
+  useChannelName,
+} from "@/components/channels/channel-identity";
 import { useReads } from "@/components/inventory/cell-picker";
 import { Button } from "@/components/ui/button";
 import { conversationsList, getConversationsListQueryKey } from "@/lib/api/client";
@@ -27,16 +33,21 @@ export const STATUSES = [
   ...["", "OPEN", "PENDING", "WAITING_CUSTOMER"],
   ...["WAITING_INTERNAL", "RESOLVED", "CLOSED"],
 ] as const;
+// Las redes del filtro (UX-INBOX-02), las de `Platform` en la API; "" es «Todas las redes».
+export const PLATFORMS = ["", "WHATSAPP", "INSTAGRAM", "MESSENGER", "SANDBOX"] as const;
 const SHORT = { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" } as const;
 export type Filters = {
   box: (typeof BOXES)[number];
   status: (typeof STATUSES)[number];
   unanswered: boolean; // solo las abiertas cuyo último mensaje es del cliente (F6-09)
+  platform: (typeof PLATFORMS)[number]; // solo las de esa red (UX-INBOX-02)
 };
+// ≥44 px de alto bajo 1024 px (táctil); `shrink-0`: en la fila deslizable nada se aplasta.
+const CHIP = "border-border min-h-11 shrink-0 border lg:min-h-9";
 
 // La lista de conversaciones (F6-03): las que devuelve `GET …/conversations/` (F6-02b), la de
-// mensaje más reciente primero, con la bandeja y el estado como filtros. Quién ve qué lo decide
-// la API (`conversations.view` y su alcance); un 403 solo se explica. Un fallo al cargar más o al
+// mensaje más reciente primero, con la bandeja, la red y el estado como filtros (en el servidor).
+// Quién ve qué lo decide la API (`conversations.view` y su alcance); un 403 solo se explica. Un fallo al cargar más o al
 // actualizar no borra lo que ya se muestra: se avisa debajo y el botón reintenta.
 export function ConversationList({
   filters,
@@ -57,8 +68,10 @@ export function ConversationList({
     ...(filters.box === "all" ? {} : { box: filters.box }),
     ...(filters.status ? { status: filters.status } : {}),
     ...(filters.unanswered ? { unanswered: true } : {}),
+    ...(filters.platform ? { platform: filters.platform } : {}),
   };
-  const waiting = useUnanswered(filters.box);
+  const waiting = useUnanswered({ box: filters.box, platform: filters.platform });
+  const network = useChannelName();
   // Cada filtro es su propia lista; los filtros viajan también con «Cargar más».
   const list = useInfiniteQuery<PaginatedConversationList, ApiError>({
     queryKey: [...getConversationsListQueryKey(slug, params), "pages"],
@@ -94,9 +107,11 @@ export function ConversationList({
   } else if (rows.length === 0) {
     body = (
       <p className="text-muted">
-        {filters.box === "all" && !filters.status && !filters.unanswered
+        {filters.box === "all" && !filters.status && !filters.unanswered && !filters.platform
           ? t("empty")
-          : t("emptyFiltered")}
+          : filters.platform
+            ? t("emptyNetwork", { network: network(filters.platform) })
+            : t("emptyFiltered")}
       </p>
     );
   } else {
@@ -117,54 +132,81 @@ export function ConversationList({
   return (
     <div className="flex min-w-0 flex-col gap-4">
       <div role="group" aria-label={t("filters.landmark")} className="flex flex-col gap-3">
-        <div role="group" aria-label={t("filters.box")} className="flex flex-wrap gap-2">
-          {BOXES.map((box) => (
-            <Button
-              key={box}
-              variant={filters.box === box ? "accent" : "ghost"}
-              className="border-border min-h-11 border sm:min-h-9"
-              aria-pressed={filters.box === box}
-              onClick={() => onFilters({ ...filters, box })}
-            >
-              {t(`filters.boxes.${box}`)}
-            </Button>
-          ))}
-          <Button
-            variant={filters.unanswered ? "accent" : "ghost"}
-            className="border-border min-h-11 border sm:min-h-9"
-            aria-pressed={filters.unanswered}
-            onClick={() => onFilters({ ...filters, unanswered: !filters.unanswered })}
+        {/* Bajo 1024 px, bandeja, «Sin responder» y red en una sola fila que se desliza de lado
+            (sin barra ni desplazamiento de la página); en pantalla ancha, se reparten. `p-1`
+            deja ver entero el contorno del foco, que el desplazamiento recortaría. */}
+        <div className="-m-1 flex [scrollbar-width:none] gap-2 overflow-x-auto p-1 lg:flex-wrap lg:overflow-visible [&::-webkit-scrollbar]:hidden">
+          <div
+            role="group"
+            aria-label={t("filters.box")}
+            className="flex shrink-0 gap-2 lg:shrink lg:flex-wrap"
           >
-            {t("unanswered.filter")}
-            {waiting === undefined ? null : (
-              <>
-                <span aria-hidden className="bg-danger text-surface rounded-full px-2 text-xs">
-                  {waiting}
-                </span>
-                <span className="sr-only">, {t("unanswered.count", { count: waiting })}</span>
-              </>
-            )}
+            {BOXES.map((box) => (
+              <Button
+                key={box}
+                variant={filters.box === box ? "accent" : "ghost"}
+                className={CHIP}
+                aria-pressed={filters.box === box}
+                onClick={() => onFilters({ ...filters, box })}
+              >
+                {t(`filters.boxes.${box}`)}
+              </Button>
+            ))}
+            <Button
+              variant={filters.unanswered ? "accent" : "ghost"}
+              className={CHIP}
+              aria-pressed={filters.unanswered}
+              onClick={() => onFilters({ ...filters, unanswered: !filters.unanswered })}
+            >
+              {t("unanswered.filter")}
+              {waiting === undefined ? null : (
+                <>
+                  <span aria-hidden className="bg-danger text-surface rounded-full px-2 text-xs">
+                    {waiting}
+                  </span>
+                  <span className="sr-only">, {t("unanswered.count", { count: waiting })}</span>
+                </>
+              )}
+            </Button>
+          </div>
+          <div
+            role="group"
+            aria-label={t("filters.network")}
+            className="flex shrink-0 gap-2 lg:shrink lg:flex-wrap"
+          >
+            {PLATFORMS.map((platform) => (
+              <NetworkChip
+                key={platform}
+                platform={platform}
+                pressed={filters.platform === platform}
+                onPress={() => onFilters({ ...filters, platform })}
+              />
+            ))}
+          </div>
+        </div>
+        <div className="flex items-end gap-2">
+          <div className="min-w-0 flex-1">
+            <Choice
+              label={t("filters.status")}
+              value={filters.status}
+              busy={false}
+              onChange={(status) => onFilters({ ...filters, status: status as Filters["status"] })}
+              options={STATUSES.map((one): [string, string] => [
+                one,
+                one ? t(`status.${one}`) : t("filters.anyStatus"),
+              ])}
+            />
+          </div>
+          <Button
+            variant="ghost"
+            className="border-border min-h-11 shrink-0 border lg:min-h-9"
+            aria-disabled={list.isFetching}
+            onClick={() => list.isFetching || void list.refetch()}
+          >
+            <RefreshCw aria-hidden />
+            {list.isRefetching ? t("refreshing") : t("refresh")}
           </Button>
         </div>
-        <Choice
-          label={t("filters.status")}
-          value={filters.status}
-          busy={false}
-          onChange={(status) => onFilters({ ...filters, status: status as Filters["status"] })}
-          options={STATUSES.map((one): [string, string] => [
-            one,
-            one ? t(`status.${one}`) : t("filters.anyStatus"),
-          ])}
-        />
-        <Button
-          variant="ghost"
-          className="border-border min-h-11 self-start border sm:min-h-9"
-          aria-disabled={list.isFetching}
-          onClick={() => list.isFetching || void list.refetch()}
-        >
-          <RefreshCw aria-hidden />
-          {list.isRefetching ? t("refreshing") : t("refresh")}
-        </Button>
       </div>
       {list.data ? (
         <p role="status" className="sr-only">
@@ -189,6 +231,32 @@ export function ConversationList({
         </Button>
       ) : null}
     </div>
+  );
+}
+
+// Un chip de red: icono con el tono de `channel-identity` y siempre su nombre (el color nunca va solo).
+function NetworkChip({
+  platform,
+  pressed,
+  onPress,
+}: {
+  platform: Filters["platform"];
+  pressed: boolean;
+  onPress: () => void;
+}) {
+  const t = useTranslations("inbox");
+  const name = useChannelName();
+  const { icon: Icon, tone } = channelOf(platform);
+  return (
+    <Button
+      variant={pressed ? "accent" : "ghost"}
+      className={CHIP}
+      aria-pressed={pressed}
+      onClick={onPress}
+    >
+      {platform ? <Icon aria-hidden className={TONES[tone].icon} /> : null}
+      {platform ? name(platform) : t("filters.allNetworks")}
+    </Button>
   );
 }
 

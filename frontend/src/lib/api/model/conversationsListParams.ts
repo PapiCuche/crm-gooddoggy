@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { ConversationsListBox } from "./conversationsListBox";
+import type { ConversationsListPlatform } from "./conversationsListPlatform";
 import type { ConversationsListStatus } from "./conversationsListStatus";
 
 export type ConversationsListParams = {
@@ -28,6 +29,16 @@ export type ConversationsListParams = {
    * @maximum 200
    */
   limit?: number;
+  /**
+   * UX-INBOX-02: solo las de cuentas de esa red (`channel.platform`).
+   *
+   * * `SANDBOX` - Sandbox
+   * * `WHATSAPP` - Whatsapp
+   * * `MESSENGER` - Messenger
+   * * `INSTAGRAM` - Instagram
+   * @minLength 1
+   */
+  platform?: ConversationsListPlatform;
   /**
    * * `OPEN` - Open
    * * `PENDING` - Pending

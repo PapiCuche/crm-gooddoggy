@@ -2366,6 +2366,7 @@
     "loading": "Cargando conversaciones…",
     "empty": "Todavía no hay conversaciones.",
     "emptyFiltered": "Ninguna conversación coincide con los filtros.",
+    "emptyNetwork": "Ninguna conversación de {network} coincide con los filtros.",
     "count": "{count, plural, =0 {Sin conversaciones en la lista} one {# conversación en la lista} other {# conversaciones en la lista}}",
     "more": "Cargar más",
     "loadingMore": "Cargando más…",
@@ -2411,7 +2412,9 @@
         "unassigned": "Sin asignar"
       },
       "status": "Estado",
-      "anyStatus": "Todos los estados"
+      "anyStatus": "Todos los estados",
+      "network": "Red",
+      "allNetworks": "Todas las redes"
     },
     "status": {
       "OPEN": "Abierta",
