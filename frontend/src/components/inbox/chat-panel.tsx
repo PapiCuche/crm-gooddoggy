@@ -2,6 +2,7 @@
 
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import {
+  ArrowDown,
   ArrowLeft,
   AudioLines,
   Check,
@@ -18,7 +19,7 @@ import {
   Video,
 } from "lucide-react";
 import { useFormatter, useTranslations } from "next-intl";
-import { type ReactNode, type Ref, useLayoutEffect, useRef } from "react";
+import { type ReactNode, type Ref, useLayoutEffect, useRef, useState } from "react";
 
 import { useTenant } from "@/components/app-shell/tenant-context";
 import { ChannelSource, channelOf, useChannelName } from "@/components/channels/channel-identity";
@@ -64,6 +65,18 @@ const MARKS: Record<string, ReactNode> = {
 const LABELS: Record<string, ReactNode> = {
   RETRYING: <RefreshCw aria-hidden />,
   UNCONFIRMED: <Clock aria-hidden />,
+};
+const END = 8; // px: a menos de esto del final, se lee lo último
+const still = () =>
+  typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+// La última fila a la vista (y la siguiente) y su altura en la región: al releer no se mueve.
+const lastSeen = (box: HTMLElement) => {
+  const view = box.getBoundingClientRect();
+  const rows = [...box.querySelectorAll<HTMLElement>("li[data-id]")];
+  const last = rows.findLastIndex((li) => li.getBoundingClientRect().top < view.bottom);
+  return rows
+    .slice(Math.max(last, 0), last + 2)
+    .map((li) => ({ id: li.dataset.id!, top: li.getBoundingClientRect().top - view.top }));
 };
 
 // El chat de una conversación (F6-03): los mensajes de `GET …/conversations/{id}/messages/`
@@ -116,10 +129,15 @@ export function ChatPanel({
   const [composing, release] = useComposing(panel); // UX-INBOX-03b: lo compacto existe solo entonces
   const human = useHumanRequest(conversation, composing); // con `conversations.view`, como ver el chat
   const refresh = useRef<HTMLButtonElement>(null);
-  const kept = useRef<number | null>(null); // lo que faltaba por desplazar al pedir los anteriores
+  const kept = useRef<{ rest: number; pages: number } | null>(null); // al pedir los anteriores
   const placed = useRef(false);
   const atBottom = useRef(false); // al ocultarse el chat, ¿se leía lo último?
   const toBottom = useRef(false); // acabo de enviar: el mensaje nuevo se ve
+  const pinned = useRef(true); // ¿se lee lo último? Se sigue; si no, se cuenta lo ajeno tras `seen`
+  const anchor = useRef<ReturnType<typeof lastSeen>>([]);
+  const chase = useRef({ on: false, top: 0 }); // el botón va al final: lo que llegue mientras, también
+  const [atEnd, setAtEnd] = useState(true);
+  const [seen, setSeen] = useState<string | null>(null);
   const list = useInfiniteQuery<PaginatedMessageList, ApiError>({
     queryKey: messagesKey(slug, conversation.id),
     queryFn: ({ pageParam, signal }) =>
@@ -135,20 +153,36 @@ export function ChatPanel({
   });
   // Cada página viene del más nuevo al más antiguo, y la primera es la más reciente.
   const rows = (list.data?.pages ?? []).toReversed().flatMap((page) => page.results.toReversed());
+  const newest = rows.findLast(({ id }) => !id.startsWith("pending-"))?.id ?? null;
+  const pages = list.data?.pages.length ?? 0;
+  const after = rows.findIndex(({ id }) => id === seen);
+  const unseen =
+    atEnd || !seen
+      ? 0
+      : after < 0
+        ? Infinity
+        : rows.slice(after + 1).filter((message) => message.sender_user_id !== user.id).length;
   const problem = failed(list, t("denied"));
   const stale = failed(detail, t("denied")); // el detalle no llegó: se sigue con lo que dio la lista
 
   useLayoutEffect(() => {
     const box = scroller.current;
     if (!box || list.isFetchingNextPage) return;
-    if (kept.current !== null) box.scrollTop = box.scrollHeight - kept.current;
-    else if (toBottom.current || (!placed.current && rows.length > 0)) {
+    if (kept.current && pages > kept.current.pages)
+      box.scrollTop = box.scrollHeight - kept.current.rest;
+    else if (toBottom.current || pinned.current || chase.current.on || !placed.current) {
       box.scrollTop = box.scrollHeight;
+    } else {
+      const view = box.getBoundingClientRect().top;
+      const [row, was] = anchor.current
+        .map(({ id, top }) => [box.querySelector(`li[data-id="${CSS.escape(id)}"]`), top] as const)
+        .find(([found]) => found) ?? [null, 0];
+      if (row) box.scrollTop += row.getBoundingClientRect().top - view - was;
     }
     toBottom.current = false;
     placed.current = placed.current || rows.length > 0;
     kept.current = null;
-  }, [rows.length, list.isFetchingNextPage]);
+  }, [rows.length, newest, pages, list.isFetchingNextPage]);
 
   useLayoutEffect(() => {
     const box = scroller.current;
@@ -306,7 +340,20 @@ export function ChatPanel({
         role="region"
         tabIndex={0}
         aria-label={t("chat.scroll")}
-        className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3 contain-size"
+        className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3 contain-size [overflow-anchor:none]"
+        onWheel={() => void (chase.current.on = false)} // quien lee toma el control: no se persigue
+        onTouchStart={() => void (chase.current.on = false)}
+        onPointerDown={() => void (chase.current.on = false)} // la barra; el botón lo vuelve a poner
+        onScroll={({ currentTarget: box }) => {
+          // `seen`, al dejar el final (seguir lo nuevo no siempre da `scroll`); `chase`, hasta el final.
+          const was = pinned.current;
+          pinned.current = box.scrollHeight - box.scrollTop - box.clientHeight < END;
+          if (pinned.current || box.scrollTop < chase.current.top) chase.current.on = false;
+          chase.current.top = box.scrollTop;
+          anchor.current = lastSeen(box);
+          setAtEnd(pinned.current);
+          if (was) setSeen(newest);
+        }}
       >
         {list.hasNextPage ? (
           <Button
@@ -316,7 +363,7 @@ export function ChatPanel({
             onClick={() => {
               if (list.isFetchingNextPage) return;
               const box = scroller.current;
-              kept.current = box ? box.scrollHeight - box.scrollTop : null;
+              kept.current = box && { rest: box.scrollHeight - box.scrollTop, pages };
               void list.fetchNextPage();
             }}
           >
@@ -329,6 +376,30 @@ export function ChatPanel({
           </p>
         ) : null}
         {body}
+        <div
+          role="status"
+          className="pointer-events-none sticky bottom-0 -mt-3 flex h-0 shrink-0 justify-center"
+        >
+          {unseen > 0 ? (
+            <Button
+              variant="primary"
+              className="pointer-events-auto absolute bottom-0 h-11 rounded-full px-4 shadow-md transition-[opacity,translate,scale] duration-200 starting:translate-y-2 starting:opacity-0 motion-reduce:starting:translate-y-0"
+              onClick={() => {
+                const box = scroller.current;
+                if (!box) return;
+                chase.current.on = true;
+                // De lejos, un salto hasta dos pantallas del final y el resto suave (corto, no segundos).
+                if (!still())
+                  box.scrollTop = Math.max(box.scrollTop, box.scrollHeight - 2 * box.clientHeight);
+                box.scrollTo({ top: box.scrollHeight, behavior: still() ? "auto" : "smooth" });
+                box.focus({ preventScroll: true }); // el botón se va: el foco no se pierde
+              }}
+            >
+              <ArrowDown aria-hidden />
+              {unseen === Infinity ? t("chat.unseenMany") : t("chat.unseen", { count: unseen })}
+            </Button>
+          ) : null}
+        </div>
       </div>
       {offered ? copilot.panel : null}
       {usable && !offered ? (
@@ -439,6 +510,7 @@ function Bubble({
   const shown = retrying ? "RETRYING" : unsure ? "UNCONFIRMED" : state;
   return (
     <li
+      data-id={message.id}
       className={cn(
         "flex max-w-[85%] flex-col gap-1 rounded-[10px] border p-3 leading-snug",
         outbound && "bg-accent text-accent-foreground border-foreground/10 self-end",

@@ -6,6 +6,9 @@ import os
 from django.core.asgi import get_asgi_application
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings.production")
+# F1-DB-01 (#1134): antes de cargar los ajustes. Un proceso ASGI cierra la conexión de cada
+# petición al terminarla (`config.env.database`): si no, se acumulan inactivas.
+os.environ["CRM_ASGI_PROCESS"] = "true"
 
 django_application = get_asgi_application()
 
