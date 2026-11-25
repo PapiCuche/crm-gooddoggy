@@ -10,7 +10,8 @@ import { mockApi, renderApp } from "@/test-utils";
 import { notifyNewMessage } from "./attention";
 import { Inbox } from "./inbox";
 
-vi.mock("next/navigation", () => ({
+vi.mock("next/navigation", async () => ({
+  useSearchParams: (await import("@/test-search-params")).useSearchParams,
   useRouter: () => ({ replace: vi.fn() }),
   usePathname: () => "/o/acme/inbox",
   notFound: () => {
@@ -168,6 +169,17 @@ describe("Inbox para atender rápido (F6-09)", () => {
     await screen.findByText("Todavía no hay conversaciones.");
     expect(screen.queryByRole("region", { name: /Cuentas de canal/ })).not.toBeInTheDocument();
     expect(api).not.toHaveBeenCalledWith(expect.stringContaining("/channels/"), expect.anything());
+  });
+
+  it("con el chat abierto en 390 px el aviso no lo empuja: se oculta y sigue en la lista", async () => {
+    const down = page([account("a", { status: "ERROR" })]);
+    mockApi({ [BASE]: page([rosa]), [`${BASE}1/`]: ok(rosa), [CHANNELS]: down });
+    show(["conversations.view", "channels.manage"]);
+    const banner = await screen.findByRole("region", { name: "Cuentas de canal con problemas" });
+    expect(banner.parentElement).not.toHaveClass("max-lg:hidden");
+    fireEvent.click(await screen.findByRole("button", { name: /Rosa Díaz/ }));
+    await screen.findByRole("heading", { level: 2 });
+    expect(banner.parentElement).toHaveClass("max-lg:hidden");
   });
 
   it("el aviso del navegador se pide con un clic y solo dice «Nuevo mensaje»", async () => {

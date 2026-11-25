@@ -12,7 +12,8 @@ import { mockApi, renderApp } from "@/test-utils";
 
 import { CHANNELS, channelOf, TONES } from "./channel-identity";
 
-vi.mock("next/navigation", () => ({
+vi.mock("next/navigation", async () => ({
+  useSearchParams: (await import("@/test-search-params")).useSearchParams,
   useRouter: () => ({ replace: vi.fn() }),
   usePathname: () => "/o/acme/inbox",
 }));

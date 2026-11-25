@@ -1,4 +1,5 @@
 import { cleanup, configure, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { TenantProvider } from "@/components/app-shell/tenant-context";
@@ -89,6 +90,7 @@ vi.setConfig({ testTimeout: 15_000 });
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 describe("Inbox, lista (F6-03)", () => {
@@ -698,9 +700,9 @@ describe("Inbox, chat (F6-03)", () => {
     expect(refresh.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(refresh).toHaveClass("order-3", "lg:order-2", "lg:ml-auto");
     // 40 px de lado en móvil (el tamaño táctil que paga el alto mínimo del panel)
-    expect(back).toHaveClass("size-10");
-    expect(refresh).toHaveClass("max-lg:size-10");
-    expect(card).toHaveClass("max-sm:size-10");
+    expect(back).toHaveClass("size-11");
+    expect(refresh).toHaveClass("max-lg:size-11");
+    expect(card).toHaveClass("max-sm:size-11");
     expect(card).toHaveClass("order-4", "lg:order-6"); // icono en 320 px, al final en escritorio
     // los botones de icono solo lo son en pantallas estrechas; en escritorio dicen su texto
     expect(within(refresh).getByText("Actualizar mensajes")).toHaveClass("max-lg:sr-only");
@@ -852,5 +854,96 @@ describe("Inbox, chat (F6-03)", () => {
     expect(bdi).toHaveAttribute("dir", "auto");
     expect(bdi).toHaveClass("whitespace-pre-wrap", "wrap-anywhere");
     expect(container.querySelector("img, script, b")).toBeNull();
+  });
+});
+
+describe("móvil: la conversación en la URL (UX-INBOX-03)", () => {
+  const ID = "0b9b4a52-6f0e-4c1a-9d1e-5a7c2f3e8b10";
+  const row = conversation(ID);
+  const juan = conversation(`1${ID.slice(1)}`, { contact: { id: "c2", display_name: "Juan" } });
+  const routes = { [LIST]: page([row, juan]) };
+  const at = () => new URLSearchParams(location.search).get("c");
+  const GONE = { status: 404, body: { code: "NOT_FOUND" } };
+
+  it("abrir añade una entrada al historial y «atrás» vuelve a la lista con el foco en la fila", async () => {
+    serve(routes);
+    show();
+    const back = vi.spyOn(history, "back");
+    const before = history.length;
+    await open(/Rosa Díaz/);
+    expect(at()).toBe(ID);
+    history.back(); // el gesto del teléfono o el botón del navegador
+    await waitFor(() => expect(at()).toBeNull());
+    await waitFor(() => expect(screen.queryByRole("heading", { level: 2 })).toBeNull());
+    expect(document.activeElement).toBe(document.getElementById(`conversation-${ID}`));
+    await open(/Rosa Díaz/);
+    fireEvent.click(screen.getByRole("button", { name: "Volver a las conversaciones" }));
+    await waitFor(() => expect(at()).toBeNull());
+    expect(back).toHaveBeenCalledTimes(2);
+    expect(history.length).toBe(before + 1);
+  });
+
+  it("un enlace `?c=` abre sin añadir entradas; cambiar de conversación y volver no sale del Inbox", async () => {
+    history.replaceState(null, "", `/?c=${ID}`);
+    const api = serve({
+      ...routes,
+      [LIST]: page([juan]),
+      [DETAIL(ID)]: { status: 200, body: row },
+    }); // la lista no la trae
+    show();
+    const push = vi.spyOn(history, "pushState");
+    expect(await screen.findByRole("heading", { level: 2 })).toHaveTextContent("Rosa Díaz");
+    expect(api).toHaveBeenCalledWith(DETAIL(ID).slice(4), expect.anything());
+    await open(/Juan/); // reemplaza la entrada
+    const back = vi.spyOn(history, "back");
+    fireEvent.click(screen.getByRole("button", { name: "Volver a las conversaciones" }));
+    await waitFor(() => expect(at()).toBeNull());
+    expect(back).not.toHaveBeenCalled(); // se reemplaza: no saca del Inbox
+    expect(push).not.toHaveBeenCalled(); // «atrás» del navegador sale del Inbox, como siempre
+  });
+
+  it("en escritorio, cambiar con la ficha abierta enfoca el chat nuevo sin volver al anterior", async () => {
+    vi.stubGlobal("matchMedia", (query: string) => ({ matches: query.includes("min-width") }));
+    const api = serve(routes);
+    show();
+    await open(/Rosa Díaz/);
+    fireEvent.click(screen.getByRole("button", { name: "Cliente y oportunidades" }));
+    fireEvent.click(screen.getByRole("button", { name: /Juan/ }));
+    await waitFor(() => expect(document.activeElement).toHaveTextContent("Juan"));
+    expect(api.mock.calls.filter(([url]) => String(url) === DETAIL(ID).slice(4))).toHaveLength(1);
+  });
+
+  it.each([
+    ["un 404 de la API", ID, true],
+    ["un id que no es un UUID, sin llegar a la API", "../../members", false],
+    ["un UUID en mayúsculas (Django no lo acepta), sin llegar a la API", ID.toUpperCase(), false],
+  ])("%s vuelve a la lista con el texto de siempre", async (_name, id, asked) => {
+    history.replaceState(null, "", `/?c=${encodeURIComponent(id)}`);
+    const api = serve({ [LIST]: page([]), [DETAIL(id)]: GONE });
+    show();
+    expect(await screen.findByRole("alert")).toHaveTextContent("No encontramos lo que buscas.");
+    await waitFor(() => expect(at()).toBeNull());
+    expect(api.mock.calls.some(([url]) => String(url) === DETAIL(id).slice(4))).toBe(asked);
+    expect(api).not.toHaveBeenCalledWith(expect.stringContaining("members"), expect.anything());
+  });
+
+  it("al cambiar de organización, el `?c=` de la otra da el 404 de siempre, sin el chat anterior", async () => {
+    const BETA = "GET /api/v1/o/beta/conversations/";
+    serve({ ...routes, [BETA]: page([]), [`${BETA}${ID}/`]: GONE });
+    function Orgs() {
+      const [org, setOrg] = useState(tenant.organization);
+      return (
+        <TenantProvider value={{ ...tenant, organization: org }}>
+          <button onClick={() => setOrg({ id: "o2", slug: "beta", name: "Beta" })}>Beta</button>
+          <Inbox />
+        </TenantProvider>
+      );
+    }
+    renderApp(<Orgs />);
+    await open(/Rosa Díaz/);
+    fireEvent.click(screen.getByRole("button", { name: "Beta" }));
+    expect(screen.queryByRole("heading", { level: 2 })).toBeNull(); // nada de Acme mientras llega
+    expect(await screen.findByRole("alert")).toHaveTextContent("No encontramos lo que buscas.");
+    await waitFor(() => expect(at()).toBeNull());
   });
 });

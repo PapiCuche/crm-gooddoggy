@@ -44,6 +44,7 @@ import { Composer, type Inserter, messagesKey, writableModes } from "./composer"
 import { AI_USE, useCopilot } from "./copilot";
 import { useHumanRequest } from "./human-request";
 import { MediaFile } from "./media-file";
+import { useKeyboardHeight } from "./mobile";
 import { Plain } from "./plain";
 
 const WHEN = { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" } as const;
@@ -109,6 +110,8 @@ export function ChatPanel({
   const human = useHumanRequest(conversation); // con `conversations.view`, como ver el chat
   const exclusion = useAiExclusion(conversation); // excluirla de la IA (F8-13b)
   const scroller = useRef<HTMLDivElement>(null);
+  const panel = useRef<HTMLDivElement>(null);
+  useKeyboardHeight(panel, scroller);
   const kept = useRef<number | null>(null); // lo que faltaba por desplazar al pedir los anteriores
   const placed = useRef(false);
   const atBottom = useRef(false); // al ocultarse el chat, ¿se leía lo último?
@@ -183,10 +186,13 @@ export function ChatPanel({
 
   return (
     // Alto: en 390 px la pantalla pierde el título de la página (queda solo para lectores) y el panel
-    // ocupa el viewport menos la barra y el relleno del shell (8 rem), con un mínimo (29 rem) que deja
+    // ocupa lo visible (`--keyboard-vh` en iOS) menos barra y relleno (8rem), con mínimo que deja
     // sitio a las tres zonas; el encabezado y el cuadro no se comprimen y los mensajes (`min-h-0`)
     // absorben el sobrante y se desplazan. En escritorio, el alto de siempre.
-    <div className="border-border bg-surface flex h-[calc(100dvh-8rem)] min-h-[29rem] flex-col rounded-lg border lg:h-[calc(100dvh-18rem)] lg:min-h-[26rem]">
+    <div
+      ref={panel}
+      className="border-border bg-surface flex h-[calc(var(--keyboard-vh,100dvh)-8rem)] min-h-min flex-col rounded-lg border lg:h-[calc(100dvh-18rem)] lg:min-h-[26rem]"
+    >
       <header className="border-border relative flex shrink-0 flex-col gap-1 border-b p-2 lg:gap-2 lg:p-3">
         {/* Una sola fila que se parte en líneas. El DOM va en el orden de tabulación que se ve en
             escritorio (volver, nombre, actualizar, ficha) y `order` coloca cada pieza: en 320 px
@@ -195,13 +201,13 @@ export function ChatPanel({
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <Button
             variant="ghost"
-            className="border-border order-1 size-10 border px-0 lg:hidden"
+            className="border-border order-1 size-11 border px-0 lg:hidden"
             onClick={onBack}
           >
             <ArrowLeft aria-hidden />
             <span className="sr-only">{t("back")}</span>
           </Button>
-          <div className="order-2 min-w-0 flex-1 lg:order-3 lg:basis-full">
+          <div className="order-2 min-w-0 flex-1 max-sm:min-w-14 lg:order-3 lg:basis-full">
             <h2
               ref={headingRef}
               tabIndex={-1}
@@ -212,7 +218,7 @@ export function ChatPanel({
           </div>
           <Button
             variant="ghost"
-            className="border-border order-3 border max-lg:size-10 max-lg:px-0 lg:order-2 lg:ml-auto"
+            className="border-border order-3 border max-lg:size-11 max-lg:px-0 lg:order-2 lg:ml-auto"
             aria-disabled={list.isFetching}
             onClick={() => {
               if (list.isFetching) return;
@@ -229,7 +235,7 @@ export function ChatPanel({
             <Button
               id="customer-toggle"
               variant="ghost"
-              className="text-foreground border-border order-4 text-xs font-medium max-sm:size-10 max-sm:border max-sm:px-0 sm:h-auto sm:px-0 sm:text-sm sm:underline sm:underline-offset-4 lg:order-6 lg:self-start"
+              className="text-foreground border-border order-4 text-xs font-medium max-sm:size-11 max-sm:border max-sm:px-0 sm:h-auto sm:px-0 sm:text-sm sm:underline sm:underline-offset-4 sm:max-lg:min-h-11 lg:order-6 lg:self-start"
               aria-expanded="false" // al abrirse el panel, este botón se oculta con el chat
               aria-controls="customer-panel"
               onClick={() => {
@@ -279,7 +285,7 @@ export function ChatPanel({
         role="region"
         tabIndex={0}
         aria-label={t("chat.scroll")}
-        className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3"
+        className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3 contain-size"
       >
         {list.hasNextPage ? (
           <Button
