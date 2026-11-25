@@ -69,6 +69,15 @@ const LABELS: Record<string, ReactNode> = {
 const END = 8; // px: a menos de esto del final, se lee lo último
 const still = () =>
   typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+// La última fila que se ve y su altura en pantalla: al releer, las páginas anteriores se piden de
+// nuevo desde la primera (TanStack) y lo más antiguo puede salir; esta fila no se mueve.
+const lastSeen = (box: HTMLElement) => {
+  const bottom = box.getBoundingClientRect().bottom;
+  const row = [...box.querySelectorAll<HTMLElement>("li[data-id]")].findLast(
+    (li) => li.getBoundingClientRect().top < bottom,
+  );
+  return row ? { id: row.dataset.id!, top: row.getBoundingClientRect().top } : null;
+};
 
 // El chat de una conversación (F6-03): los mensajes de `GET …/conversations/{id}/messages/`
 // (F6-02c), de más antiguo a más reciente. La API los da del más nuevo al más antiguo, 50 por
@@ -127,6 +136,7 @@ export function ChatPanel({
   // UX-INBOX-06: ¿se lee lo último? Si sí, lo nuevo al final se sigue; si no, se cuenta lo que llegó
   // después del último mensaje visto al final (`seen`), sin contar lo propio.
   const pinned = useRef(true);
+  const anchor = useRef<ReturnType<typeof lastSeen>>(null);
   const [atEnd, setAtEnd] = useState(true);
   const [seen, setSeen] = useState<string | null>(null);
   const list = useInfiniteQuery<PaginatedMessageList, ApiError>({
@@ -159,6 +169,9 @@ export function ChatPanel({
     if (kept.current !== null) box.scrollTop = box.scrollHeight - kept.current;
     else if (toBottom.current || pinned.current || (!placed.current && rows.length > 0)) {
       box.scrollTop = box.scrollHeight;
+    } else if (anchor.current) {
+      const row = box.querySelector(`li[data-id="${CSS.escape(anchor.current.id)}"]`);
+      if (row) box.scrollTop += row.getBoundingClientRect().top - anchor.current.top;
     }
     toBottom.current = false;
     placed.current = placed.current || rows.length > 0;
@@ -321,11 +334,15 @@ export function ChatPanel({
         role="region"
         tabIndex={0}
         aria-label={t("chat.scroll")}
-        className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3 contain-size"
+        className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3 contain-size [overflow-anchor:none]"
         onScroll={({ currentTarget: box }) => {
+          // Lo último visto es lo último al dejar el final (al final no se cuenta nada): lo seguido
+          // no siempre mueve la vista (entra uno y sale otro del mismo alto) ni da un `scroll`.
+          const was = pinned.current;
           pinned.current = box.scrollHeight - box.scrollTop - box.clientHeight < END;
+          anchor.current = lastSeen(box);
           setAtEnd(pinned.current);
-          if (pinned.current) setSeen(newest);
+          if (was) setSeen(newest);
         }}
       >
         {list.hasNextPage ? (
@@ -480,6 +497,7 @@ function Bubble({
   const shown = retrying ? "RETRYING" : unsure ? "UNCONFIRMED" : state;
   return (
     <li
+      data-id={message.id}
       className={cn(
         "flex max-w-[85%] flex-col gap-1 rounded-[10px] border p-3 leading-snug",
         outbound && "bg-accent text-accent-foreground border-foreground/10 self-end",
