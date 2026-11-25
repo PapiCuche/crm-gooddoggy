@@ -2494,6 +2494,7 @@
       "empty": "Todavía no hay mensajes en esta conversación.",
       "older": "Cargar mensajes anteriores",
       "refresh": "Actualizar mensajes",
+      "more": "Más acciones de la conversación",
       "scroll": "Mensajes de la conversación"
     },
     "composer": {

@@ -45,6 +45,8 @@ export function Inbox() {
   const notFound = !!wanted && !fromList && (!validId(wanted) || deep.isError);
   const why = notFound && (deep.isError ? failed(deep, t("denied")) : errors("api.NOT_FOUND"));
   if (why && why !== gone) setGone(why); // 401 (sin texto): la sesión lo resuelve
+  if (selected && gone && !why) setGone(null); // p. ej., «adelante» hasta un `?c=` válido: el aviso ya no vale
+  const chatShown = !!selected || (!!wanted && !notFound);
   useEffect(() => {
     if (!why) return;
     pushed.current = false;
@@ -83,22 +85,22 @@ export function Inbox() {
     <section className="flex min-w-0 flex-col gap-6">
       {/* Con una conversación abierta en 390 px solo queda el título, oculto a la vista pero no a
           los lectores de pantalla: la página no se queda sin h1. */}
-      <div className={cn("flex flex-col gap-2", selected && "max-lg:contents")}>
-        <p className={cn("text-[13px] tracking-wide uppercase", selected && "max-lg:hidden")}>
+      <div className={cn("flex flex-col gap-2", chatShown && "max-lg:contents")}>
+        <p className={cn("text-[13px] tracking-wide uppercase", chatShown && "max-lg:hidden")}>
           {t("eyebrow")}
         </p>
         <h1
           className={cn(
             "text-[28px] leading-tight font-bold tracking-[0.02em]",
-            selected && "max-lg:sr-only",
+            chatShown && "max-lg:sr-only",
           )}
         >
           {t("title")}
         </h1>
-        <p className={cn("text-muted", selected && "max-lg:hidden")}>
+        <p className={cn("text-muted", chatShown && "max-lg:hidden")}>
           {t("intro", { organization: organization.name })}
         </p>
-        <div className={cn(selected && "max-lg:hidden")}>
+        <div className={cn(chatShown && "max-lg:hidden")}>
           <NotifyToggle />
         </div>
       </div>
@@ -107,13 +109,13 @@ export function Inbox() {
           {gone}
         </p>
       )}
-      <div className={cn("empty:hidden", selected && "max-lg:hidden")}>
+      <div className={cn("empty:hidden", chatShown && "max-lg:hidden")}>
         <ChannelAlert />
       </div>
       <div className="grid gap-4 lg:grid-cols-[minmax(0,24rem)_minmax(0,1fr)] lg:items-start">
         <section
           aria-label={t("list.landmark")}
-          className={cn("min-w-0", selected && "max-lg:hidden")}
+          className={cn("min-w-0", chatShown && "max-lg:hidden")}
         >
           <ConversationList
             filters={filters}

@@ -9,6 +9,7 @@ import {
   ProviderErrorCodeEnum,
   type SelfContext,
 } from "@/lib/api/model";
+import { getConversationsRetrieveQueryKey } from "@/lib/api/client";
 import messages from "../../../messages/es-PE.json";
 import { mockApi, renderApp } from "@/test-utils";
 
@@ -910,7 +911,41 @@ describe("móvil: la conversación en la URL (UX-INBOX-03)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Cliente y oportunidades" }));
     fireEvent.click(screen.getByRole("button", { name: /Juan/ }));
     await waitFor(() => expect(document.activeElement).toHaveTextContent("Juan"));
+    expect(document.activeElement?.tagName).toBe("H2"); // el encabezado, no la fila
     expect(api.mock.calls.filter(([url]) => String(url) === DETAIL(ID).slice(4))).toHaveLength(1);
+  });
+
+  it("mientras llega un `?c=` el chat ocupa el lugar de la lista; al salir no queda en caché", async () => {
+    history.replaceState(null, "", `/?c=${ID}`);
+    const api = serve({ [LIST]: page([juan]), [DETAIL(ID)]: { status: 200, body: row } });
+    const inner = api.getMockImplementation()!;
+    let arrive = () => {};
+    const late = new Promise<void>((resolve) => (arrive = resolve));
+    api.mockImplementation(async (input, init) => {
+      if (String(input) === DETAIL(ID).slice(4)) await late;
+      return inner(input, init);
+    });
+    const { client } = show();
+    const loading = await screen.findByText("Cargando mensajes…");
+    expect(loading).not.toHaveClass("max-lg:hidden");
+    expect(screen.getByRole("region", { name: "Conversaciones" })).toHaveClass("max-lg:hidden");
+    arrive();
+    expect(await screen.findByRole("heading", { level: 2 })).toHaveTextContent("Rosa Díaz");
+    fireEvent.click(screen.getByRole("button", { name: "Volver a las conversaciones" }));
+    await waitFor(() => expect(at()).toBeNull());
+    const key = getConversationsRetrieveQueryKey("acme", ID);
+    await waitFor(() => expect(client.getQueryCache().find({ queryKey: key })).toBeUndefined());
+  });
+
+  it("llegar con «adelante» a un `?c=` válido quita el aviso de uno que no existía", async () => {
+    history.replaceState(null, "", "/?c=no-existe");
+    serve(routes);
+    show();
+    expect(await screen.findByRole("alert")).toHaveTextContent("No encontramos lo que buscas.");
+    await waitFor(() => expect(at()).toBeNull());
+    history.pushState(null, "", `/?c=${ID}`); // «adelante» hasta una entrada válida
+    expect(await screen.findByRole("heading", { level: 2 })).toHaveTextContent("Rosa Díaz");
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it.each([

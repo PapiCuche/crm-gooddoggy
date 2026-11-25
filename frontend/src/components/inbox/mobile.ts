@@ -1,4 +1,5 @@
-import { type RefObject, useEffect, useSyncExternalStore } from "react";
+import { type RefObject, useEffect, useState, useSyncExternalStore } from "react";
+import { flushSync } from "react-dom";
 
 // Se mira al pulsar, no al montar: un iPad con teclado físico puede declarar `pointer: fine`.
 export const coarse = () =>
@@ -24,9 +25,11 @@ export function useKeyboardHeight(panel: RefObject<HTMLElement | null>, scroller
   useEffect(() => {
     const [root, box, viewport] = [panel.current, scroller.current, window.visualViewport];
     if (!root || !box || !viewport) return;
-    let pinned = true; // se leía lo último: sigue a la vista al encoger
-    const mark = () => (pinned = box.scrollHeight - box.scrollTop - box.clientHeight < 8);
-    const follow = () => pinned && (box.scrollTop = box.scrollHeight);
+    let [pinned, seen] = [true, box.clientHeight]; // se leía lo último: sigue a la vista al encoger
+    const mark = () =>
+      box.clientHeight === seen &&
+      (pinned = box.scrollHeight - box.scrollTop - box.clientHeight < 8);
+    const follow = () => ((seen = box.clientHeight), pinned && (box.scrollTop = box.scrollHeight));
     const keep = window.ResizeObserver ? new ResizeObserver(follow) : null; // jsdom no lo trae
     const fit = () =>
       root.style.setProperty("--keyboard-vh", `${Math.round(viewport.height * viewport.scale)}px`);
@@ -47,4 +50,26 @@ export function useKeyboardHeight(panel: RefObject<HTMLElement | null>, scroller
       stop();
     };
   }, [panel, scroller]);
+}
+
+// UX-INBOX-03b, solo táctil: del foco en un cuadro del redactor (lo último del panel) a su salida,
+// tras un turno: un toque en «Enviar» quita el foco antes del clic (con ratón, más de un turno).
+export function useComposing(panel: RefObject<HTMLElement | null>) {
+  const [on, setOn] = useState(false);
+  useEffect(() => {
+    const root = panel.current;
+    if (!root) return;
+    let wait = 0;
+    const enter = ({ target }: FocusEvent) => {
+      if (!(target instanceof Node && root.lastElementChild?.contains(target))) return; // el redactor
+      clearTimeout(wait); // el foco sigue en el redactor
+      if (target instanceof HTMLTextAreaElement && coarse()) setOn(true);
+    };
+    const leave = () => (clearTimeout(wait), (wait = window.setTimeout(() => setOn(false))));
+    const off = new AbortController();
+    root.addEventListener("focusin", enter, { signal: off.signal });
+    root.addEventListener("focusout", leave, { signal: off.signal });
+    return () => (clearTimeout(wait), off.abort());
+  }, [panel]);
+  return [on, () => flushSync(() => setOn(false))] as const;
 }
