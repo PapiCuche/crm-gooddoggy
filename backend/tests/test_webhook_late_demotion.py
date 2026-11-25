@@ -241,15 +241,18 @@ def test_a_health_reading_of_a_replaced_credential_writes_nothing(
     before = key(world.a, pk)
     rotate(world, pk)
     rotated = stale_account(world, pk)
+    trail = "SELECT (SELECT count(*) FROM audit_logs), (SELECT count(*) FROM outbox_events)"
+    written = migrator.execute(trail).fetchone()
     with tenant_scope(ctx(world.a)) as tenant:
         assert not accounts.apply_health(
             tenant, channel_account_id=pk, credential_id=before, quality="RED",
             tier="TIER_1K",
         )  # fmt: skip
     after = stale_account(world, pk)
-    assert (after.version, after.last_healthcheck_at, after.status) == (
-        rotated.version, rotated.last_healthcheck_at, "CONNECTED"
+    assert (after.version, after.last_healthcheck_at, after.status, after.quality_rating) == (
+        rotated.version, rotated.last_healthcheck_at, "CONNECTED", "GREEN"
     )  # fmt: skip
+    assert migrator.execute(trail).fetchone() == written  # F7b-21: ni auditoría ni outbox
 
 
 # --- El orden de los bloqueos no cambia -----------------------------------------------------------

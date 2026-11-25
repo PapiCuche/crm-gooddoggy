@@ -345,7 +345,7 @@ class Credential(TenantModel):
     rotated_at = models.DateTimeField(null=True, blank=True)  # cuándo sustituyó a la anterior
     revoked_at = models.DateTimeField(null=True, blank=True)
     created_by_user_id = models.UUIDField(null=True, blank=True)  # FK a membresías (0034, F2-128)
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(auto_now_add=True)  # la base la reescribe (0064)
 
     class Meta:
         db_table = "credentials"
@@ -677,7 +677,7 @@ class Message(TenantModel):
     delivery_status = models.CharField(  # noqa: DJ001
         max_length=10, choices=Delivery.choices, null=True, blank=True
     )
-    sending_at = models.DateTimeField(null=True, blank=True)  # cuándo se reclamó (el barredor)
+    sending_at = models.DateTimeField(null=True, blank=True)  # el reclamo, hora de la base (0064)
     provider_error_code = models.CharField(max_length=24, null=True, blank=True)  # noqa: DJ001
     # El error del proveedor en números (F7b-13): `131031` o `10/2018278`, nunca su texto.
     provider_error_detail = models.CharField(max_length=24, null=True, blank=True)  # noqa: DJ001
