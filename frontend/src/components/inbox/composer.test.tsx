@@ -464,3 +464,50 @@ describe("cuadro de redacción: Instagram y Messenger", () => {
     expect(await box()).toHaveValue("Hola");
   });
 });
+
+describe("teclado del teléfono (UX-INBOX-03)", () => {
+  let touch = false;
+  const start = async (coarse: boolean) => {
+    touch = coarse; // se pregunta en cada tecla: cambiarlo luego cambia lo que hace Enter
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: query.includes("coarse") && touch,
+    }));
+    const s = server();
+    show();
+    await openChat();
+    return s;
+  };
+  const enter = async () => fireEvent.keyDown(await box(), { key: "Enter" }); // `false`: impedido
+  const keys = async () => document.getElementById(`${(await box()).id}-keys`);
+
+  it("se mira al pulsar: pasar a táctil sin montar de nuevo hace que Enter agregue la línea", async () => {
+    const s = await start(false);
+    expect(await box()).toHaveAttribute("enterkeyhint", "send");
+    expect(await keys()).toHaveTextContent("Enter envía; Mayús+Enter agrega una línea.");
+    await type("Hola");
+    touch = true; // sin montar de nuevo (p. ej. se soltó el teclado del iPad)
+    expect(await enter()).toBe(true); // el navegador pone la línea
+    await settle();
+    expect(s.posts()).toEqual([]);
+  });
+
+  it("en táctil lo dicen la ayuda y la tecla; dos toques en «Enviar» mandan una sola petición", async () => {
+    const s = await start(true);
+    expect(await box()).toHaveAttribute("enterkeyhint", "enter");
+    expect(await keys()).toHaveTextContent("Enter agrega una línea; envía con el botón.");
+    s.wait();
+    await type("Hola");
+    fireEvent.click(sendButton());
+    fireEvent.click(sendButton()); // en el mismo instante: `isPending` aún no se pintó
+    await settle();
+    expect(s.posts()).toHaveLength(1);
+    // Cerrar el chat con el envío en curso no bloquea el siguiente.
+    fireEvent.click(screen.getByRole("button", { name: "Volver a las conversaciones" }));
+    await waitFor(() => expect(screen.queryByRole("heading", { level: 2 })).toBeNull());
+    await openChat();
+    await type("Otra vez");
+    fireEvent.click(sendButton());
+    await waitFor(() => expect(s.posts()).toHaveLength(2));
+    s.go();
+  });
+});

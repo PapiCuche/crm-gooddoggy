@@ -36,6 +36,7 @@ import type { ApiError } from "@/lib/http";
 import { cn } from "@/lib/utils";
 
 import { fileSize } from "./media-file";
+import { coarse, useCoarse } from "./mobile";
 import { useQuickReplies } from "./quick-replies";
 
 // El tope de la API (`BODY_MAX`, 4096 caracteres; se cuentan puntos de código, como ella).
@@ -159,7 +160,7 @@ export function Composer({
                   key={mode}
                   type="button"
                   variant={shown === mode ? "accent" : "ghost"}
-                  className="border-border h-9 min-w-0 border max-sm:flex-1"
+                  className="border-border h-9 min-w-0 border max-lg:min-h-11 max-sm:flex-1"
                   aria-pressed={shown === mode}
                   aria-label={t(`mode.${mode}`)}
                   onClick={() => setChosen(mode)}
@@ -223,6 +224,8 @@ function ComposeBox({
   const [refusal, setRefusal] = useState<string | null>(null); // el archivo elegido no se adjuntó
   const picker = useRef<HTMLInputElement>(null);
   const settleUntil = useRef(0); // hasta cuándo un Enter no envía lo recién insertado
+  const inFlight = useRef(false); // dos toques antes de que se pinte `isPending`: una petición
+  const tap = useCoarse() ? "Touch" : ""; // la ayuda de teclas y la tecla del teléfono
   const [placed, setPlaced] = useState(0); // cada inserción del copiloto: enfocar al final
   const format = useFormatter();
   const labels = useTranslations("inbox.media");
@@ -288,6 +291,7 @@ function ComposeBox({
               caption: request.body.trim() ? request.body : undefined,
             })
           : conversationMessagesSend(slug, conversation.id, request),
+    onSettled: () => (inFlight.current = false),
     onMutate: async (request) => {
       await client.cancelQueries({ queryKey: key });
       onQueued();
@@ -372,7 +376,7 @@ function ComposeBox({
   });
 
   const submit = () => {
-    if (send.isPending || closed || over || empty) return;
+    if (inFlight.current || send.isPending || closed || over || empty) return;
     // Reintentar reutiliza el id mientras el texto empiece por el que falló (también con lo que se
     // insertó o escribió después) y el archivo sea el mismo: si el primero llegó al servidor sin
     // respuesta, el mismo id no deja que salga dos veces. Otro texto empieza un intento nuevo.
@@ -383,6 +387,7 @@ function ComposeBox({
     ) {
       attempt.current = { id: uuid(), first: text, file };
     }
+    inFlight.current = true;
     send.mutate({ client_message_id: attempt.current.id, body: text, file: file ?? undefined });
   };
   // Solo JPEG, PNG o PDF dentro de su tope; si no, se explica y el archivo no queda adjunto.
@@ -403,7 +408,7 @@ function ComposeBox({
     // Enter envía; Mayús+Enter agrega una línea. Durante una composición (IME) Enter es del IME;
     // Safari lo entrega ya sin `isComposing`, pero con `keyCode` 229.
     const composing = event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229;
-    if (event.key !== "Enter" || event.shiftKey || composing) return;
+    if (event.key !== "Enter" || event.shiftKey || composing || coarse()) return;
     event.preventDefault();
     if (performance.now() < settleUntil.current) return; // recién insertado: se revisa antes de enviar
     submit();
@@ -420,8 +425,8 @@ function ComposeBox({
       variant="primary"
       size="lg"
       className={cn(
-        "max-lg:h-10 max-sm:col-start-2 max-sm:self-center",
-        note ? second : cn("max-sm:size-10 max-sm:px-0", first),
+        "max-lg:h-11 max-sm:col-start-2 max-sm:self-center",
+        note ? second : cn("max-sm:size-11 max-sm:px-0", first),
       )}
       disabled={closed || empty || over}
       aria-disabled={send.isPending}
@@ -471,11 +476,12 @@ function ComposeBox({
         disabled={closed}
         readOnly={send.isPending}
         placeholder={note || closed ? undefined : t("placeholder")}
+        enterKeyHint={tap ? "enter" : "send"}
         {...quick.field}
         aria-describedby={`${field}-count ${field}-keys${note ? ` ${field}-hint` : ""}${file ? ` ${field}-file` : ""}${closed ? ` ${field}-closed` : ""}`}
         aria-invalid={over || problem ? true : undefined}
         className={cn(
-          "bg-surface border-foreground/50 focus-visible:border-foreground aria-invalid:border-danger field-sizing-content max-h-24 min-h-10 w-full min-w-0 resize-none rounded-[10px] border px-3 py-2 text-[16px] wrap-anywhere disabled:opacity-60 lg:field-sizing-fixed lg:max-h-40 lg:min-h-16 lg:p-3",
+          "bg-surface border-foreground/50 focus-visible:border-foreground aria-invalid:border-danger field-sizing-content max-h-24 min-h-11 w-full min-w-0 resize-none rounded-[10px] border px-3 py-2 text-[16px] wrap-anywhere disabled:opacity-60 lg:field-sizing-fixed lg:max-h-40 lg:min-h-16 lg:p-3",
           note && "border-dashed",
           note ? "max-sm:col-span-2" : "max-sm:col-start-1",
           first,
@@ -509,7 +515,7 @@ function ComposeBox({
           <Button
             type="button"
             variant="ghost"
-            className="size-9 shrink-0 px-0"
+            className="size-9 shrink-0 px-0 max-lg:size-11"
             aria-label={t("remove")}
             disabled={send.isPending}
             onClick={() => {
@@ -542,14 +548,14 @@ function ComposeBox({
             second,
           )}
         >
-          {/* El aviso de la nota se ve siempre; en 390 px no hay tecla Enter que explicar y la ayuda de teclas queda para lectores. */}
+          {/* El aviso de la nota se ve siempre; en 390 px la ayuda de teclas queda para lectores. */}
           {note ? (
             <span id={`${field}-hint`} className="text-foreground font-medium">
               {t("hint.note")}
             </span>
           ) : null}
           <span id={`${field}-keys`} className="max-lg:sr-only">
-            {t(note ? "hint.noteKeys" : quick.open ? "hint.pick" : "hint.reply")}
+            {t(note ? `hint.noteKeys${tap}` : quick.open ? "hint.pick" : `hint.reply${tap}`)}
           </span>
           <span
             id={`${field}-count`}
@@ -587,7 +593,7 @@ function ComposeBox({
               <Button
                 type="button"
                 variant="ghost"
-                className="border-border size-10 rounded-[14px] border px-0 aria-disabled:cursor-not-allowed aria-disabled:opacity-50 lg:size-11"
+                className="border-border size-11 rounded-[14px] border px-0 aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
                 aria-label={t("attach")}
                 title={t("attach")}
                 disabled={closed}

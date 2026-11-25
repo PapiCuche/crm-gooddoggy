@@ -2504,8 +2504,10 @@
       },
       "hint": {
         "reply": "Enter envía; Mayús+Enter agrega una línea.",
+        "replyTouch": "Enter agrega una línea; envía con el botón.",
         "note": "Solo tu equipo ve esto, el cliente no.",
         "noteKeys": "Enter guarda; Mayús+Enter agrega una línea.",
+        "noteKeysTouch": "Enter agrega una línea; guarda con el botón.",
         "pick": "Enter elige la respuesta rápida; Esc cierra la lista."
       },
       "count": "{count} de {max} caracteres",

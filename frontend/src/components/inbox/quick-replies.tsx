@@ -14,6 +14,8 @@ import { apiErrorKey } from "@/lib/api-errors";
 import type { ApiError } from "@/lib/http";
 import { cn } from "@/lib/utils";
 
+import { coarse } from "./mobile";
+
 // `/` al inicio del cuadro y, detrás, lo que se busca sin espacios: `/deli` busca «deli». El tope
 // es el de la API (`SEARCH_MAX`); con un espacio o un salto de línea ya es un mensaje, no un atajo.
 const TRIGGER = /^\/(\S{0,100})$/;
@@ -148,7 +150,7 @@ export function useQuickReplies({
     const enter = event.key === "Enter" && !event.shiftKey;
     if (!open) {
       // El Enter que eligió, sostenido o repetido al instante, no envía el texto sin revisarlo.
-      if (!enabled || !enter || !(event.repeat || settling.current)) return false;
+      if (!enabled || !enter || coarse() || !(event.repeat || settling.current)) return false;
       event.preventDefault();
       return true;
     }

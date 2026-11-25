@@ -123,7 +123,7 @@ export function useAiExclusion(conversation: Conversation) {
     <Button
       ref={opener}
       variant="ghost"
-      className="border-border order-3 border max-lg:size-10 max-lg:px-0 lg:order-2"
+      className="border-border order-3 border max-lg:size-11 max-lg:px-0 lg:order-2"
       title={label}
       aria-expanded={open}
       onClick={() => {
