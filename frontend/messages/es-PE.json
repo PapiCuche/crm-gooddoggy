@@ -2495,7 +2495,8 @@
       "older": "Cargar mensajes anteriores",
       "refresh": "Actualizar mensajes",
       "more": "Más acciones de la conversación",
-      "scroll": "Mensajes de la conversación"
+      "scroll": "Mensajes de la conversación",
+      "unseen": "{count, plural, one {# mensaje nuevo} other {# mensajes nuevos}}"
     },
     "composer": {
       "label": {
