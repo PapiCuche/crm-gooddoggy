@@ -269,7 +269,8 @@ def rotate_token(
     account = _live(platform).using(alias).get(pk=channel_account_id)
     seen = _check(token, account)
     social = account.platform in SOCIAL
-    known = expiry.read(account.platform, token) if social else None  # F7b-12
+    ids = {"channel_account_id": str(account.pk)}  # F7b-12c: el registro, con la cuenta
+    known = expiry.read(account.platform, token, **ids) if social else None  # F7b-12
     with transaction.atomic(using=alias):
         found = _live(platform).using(alias).select_for_update(no_key=True).annotate(db_now=Now())
         account = found.get(pk=channel_account_id)
