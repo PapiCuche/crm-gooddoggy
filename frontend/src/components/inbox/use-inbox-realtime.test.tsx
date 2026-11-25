@@ -1,8 +1,14 @@
-import { cleanup, configure, screen, waitFor, act } from "@testing-library/react";
+import { act, cleanup, configure, fireEvent, screen, waitFor } from "@testing-library/react";
+import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TenantProvider } from "@/components/app-shell/tenant-context";
-import type { Conversation, Message, SelfContext } from "@/lib/api/model";
+import {
+  getConversationMessagesListQueryKey,
+  getConversationsListQueryKey,
+  getConversationsRetrieveQueryKey,
+} from "@/lib/api/client";
+import type { Conversation, Grant, Message, SelfContext } from "@/lib/api/model";
 import { mockApi, renderApp } from "@/test-utils";
 
 import { Inbox } from "./inbox";
@@ -236,5 +242,235 @@ describe("tiempo real del Inbox (F6-07c)", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("ráfagas y estado de la conexión (UX-INBOX-06)", () => {
+  const states = () => screen.queryAllByRole("status").map((one) => one.textContent);
+  const NONE = /Reconectando|Sin conexión|no disponible/;
+  const wait = (ms: number) => act(() => new Promise((resolve) => setTimeout(resolve, ms)));
+  const fake = () =>
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
+  const reconnect = async () => {
+    act(() => socket().onclose?.({ code: 1006 }));
+    await act(() => vi.advanceTimersByTimeAsync(1000));
+    act(() => socket().onopen?.({}));
+  };
+  beforeEach(() => vi.stubEnv("NEXT_PUBLIC_INBOX_WS", "on"));
+  afterEach(() => vi.useRealTimers());
+
+  it("tres eventos seguidos: una sola lectura de cada clave, al cerrar la ventana", async () => {
+    const notified = vi.fn();
+    vi.stubGlobal("Notification", Object.assign(notified, { permission: "granted" }));
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    localStorage.setItem("inbox.notify", "on");
+    const { reads, state } = server();
+    show();
+    await openChat();
+    act(() => socket().onopen?.({}));
+    const before = [reads(""), reads("1/"), reads("1/messages/")];
+    state.texts.push(message("m2", "Dos"), message("m3", "Tres"));
+    await say({ type: "message.received", conversation_id: "1", message_id: "m2" });
+    await say({ type: "message.updated", conversation_id: "1", message_id: "m2" });
+    await say({ type: "message.received", conversation_id: "1", message_id: "m3" });
+    expect(reads("1/messages/")).toBe(before[2]); // aún dentro de la ventana
+    expect(await screen.findByText("Tres")).toBeInTheDocument();
+    await wait(400);
+    expect([reads(""), reads("1/"), reads("1/messages/")]).toEqual(before.map((n) => n! + 1));
+    // Uno cada 200 ms: 0 y 200 salen a los 300 ms; 400, a los 700. Cada entrante avisa ya.
+    fake();
+    notified.mockClear();
+    const start = reads("1/messages/");
+    for (const id of ["m4", "m5", "m6"]) {
+      await say({ type: "message.received", conversation_id: "1", message_id: id });
+      await act(() => vi.advanceTimersByTimeAsync(200));
+    }
+    expect(reads("1/messages/")).toBe(start + 1); // a los 600 ms
+    expect(notified).toHaveBeenCalledTimes(3);
+    await act(() => vi.advanceTimersByTimeAsync(200));
+    expect(reads("1/messages/")).toBe(start + 2);
+    localStorage.clear();
+    vi.restoreAllMocks();
+  });
+
+  it("los estados llegan a la pantalla: reconectando, sin red y no disponible; abierta, nada", async () => {
+    fake();
+    const online = vi.spyOn(navigator, "onLine", "get");
+    server();
+    show();
+    await openChat();
+    expect(states().join()).not.toMatch(NONE); // conectando: nada
+    act(() => socket().onopen?.({}));
+    act(() => socket().onclose?.({ code: 1006 }));
+    expect(states()).toContain("Reconectando…"); // en una región `status`, con su icono
+    expect(screen.getByText("Reconectando…").querySelector("svg")).not.toBeNull();
+    online.mockReturnValue(false);
+    act(() => void window.dispatchEvent(new Event("offline")));
+    expect(states()).toContain("Sin conexión"); // sin red, eso es lo que se dice
+    online.mockReturnValue(true);
+    act(() => void window.dispatchEvent(new Event("online")));
+    expect(states()).toContain("Reconectando…"); // la red volvió, el socket aún no
+    await act(() => vi.advanceTimersByTimeAsync(1000));
+    act(() => socket().onopen?.({}));
+    expect(states().join()).not.toMatch(NONE);
+    act(() => socket().onclose?.({ code: 4403 }));
+    expect(states()).toContain("Tiempo real no disponible");
+    expect(screen.getByRole("button", { name: "Actualizar mensajes" })).toBeInTheDocument();
+    online.mockRestore();
+  });
+
+  it("apagado no muestra ningún estado, ni su región", async () => {
+    vi.stubEnv("NEXT_PUBLIC_INBOX_WS", "off");
+    server();
+    show();
+    await openChat();
+    const heading = screen.getByRole("heading", { level: 1 });
+    expect(heading.parentElement!.querySelector("[role=status]")).toBeNull();
+  });
+
+  it("una ráfaga pendiente al salir no invalida nada", async () => {
+    server();
+    const { client } = show();
+    await openChat();
+    await say({ type: "message.received", conversation_id: "1", message_id: "m2" });
+    const invalidate = vi.spyOn(client, "invalidateQueries");
+    cleanup();
+    await wait(400);
+    expect(invalidate).not.toHaveBeenCalled();
+  });
+
+  it("otra organización: lo pendiente de la anterior no se relee y su conexión no da estados", async () => {
+    const { reads } = server();
+    let pick: (slug: string) => void = () => {};
+    function Switcher() {
+      const [slug, setSlug] = useState("acme");
+      pick = setSlug;
+      const value = { ...tenant, organization: { id: slug, slug, name: slug } };
+      return (
+        <TenantProvider key={slug} value={value}>
+          <Inbox />
+        </TenantProvider>
+      );
+    }
+    const { client } = renderApp(<Switcher />);
+    await openChat();
+    const acme = socket();
+    act(() => acme.onopen?.({}));
+    const before = [reads(""), reads("1/messages/")];
+    await say({ type: "message.received", conversation_id: "1", message_id: "m2" });
+    const invalidate = vi.spyOn(client, "invalidateQueries");
+    act(() => pick("beta"));
+    expect(acme.closed).toBe(true);
+    expect(socket().url).toBe(`ws://${window.location.host}/ws/o/beta/inbox/`);
+    act(() => acme.onclose?.({ code: 1006 })); // el viejo ya no avisa de nada
+    await wait(400);
+    expect([reads(""), reads("1/messages/")]).toEqual(before);
+    expect(invalidate).not.toHaveBeenCalled(); // lo pendiente de `acme` se descartó
+    expect(states().join()).not.toMatch(NONE);
+  });
+
+  it("una caída no pierde la ráfaga pendiente; al volver se relee una vez más", async () => {
+    fake();
+    const { reads } = server();
+    show();
+    await openChat();
+    act(() => socket().onopen?.({}));
+    const [list, detail, messages] = [reads(""), reads("1/"), reads("1/messages/")];
+    await say({ type: "message.received", conversation_id: "1", message_id: "m2" });
+    await reconnect();
+    await act(() => vi.advanceTimersByTimeAsync(1000));
+    // la ventana (300 ms) cierra antes del primer reintento (≥ 500 ms): la ráfaga y la reconexión
+    await waitFor(() => expect(reads("1/messages/")).toBe(messages + 2));
+    expect([reads(""), reads("1/")]).toEqual([list + 2, detail + 2]);
+    await act(() => vi.advanceTimersByTimeAsync(60_000));
+    expect(reads("1/messages/")).toBe(messages + 2); // y nada más: no se sondea
+  });
+
+  it("un envío propio en curso no parpadea ni se duplica cuando llega su evento", async () => {
+    const { api, state } = server();
+    let release = () => {};
+    const answered = new Promise<void>((resolve) => (release = resolve));
+    const inner = api.getMockImplementation()!;
+    api.mockImplementation(async (input, init) => {
+      if (init?.method !== "POST") return inner(input, init);
+      const sent = {
+        ...message("m9", "Hola Rosa"),
+        ...{ direction: "OUTBOUND", sender_type: "USER", sender_user_id: "u1" },
+        ...{ client_message_id: JSON.parse(String(init.body)).client_message_id },
+      } as Message;
+      state.texts.push(sent); // el servidor ya lo guardó; la respuesta tarda
+      await answered;
+      return new Response(JSON.stringify(sent), { status: 202 });
+    });
+    document.cookie = "csrftoken=token-de-prueba"; // un envío lleva la cabecera CSRF
+    const send: Grant = { code: "messages.send", scopes: ["ORGANIZATION"] };
+    const { client } = renderApp(
+      <TenantProvider value={{ ...tenant, permissions: [...tenant.permissions, send] }}>
+        <Inbox />
+      </TenantProvider>,
+    );
+    await openChat();
+    act(() => socket().onopen?.({}));
+    const count = () =>
+      [...document.querySelectorAll("ol li")].filter((li) => li.textContent?.includes("Hola R"))
+        .length;
+    const seen: number[] = [];
+    const watcher = new MutationObserver(() => seen.push(count()));
+    watcher.observe(document.body, { subtree: true, childList: true, characterData: true });
+    const box = screen.getByRole("textbox", { name: "Responder al cliente" });
+    fireEvent.change(box, { target: { value: "Hola Rosa" } });
+    fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
+    await waitFor(() => expect(count()).toBe(1)); // la burbuja del envío en curso
+    const reads = () => api.mock.calls.filter(([url]) => url === `${BASE}/1/messages/`).length;
+    const before = reads();
+    const invalidate = vi.spyOn(client, "invalidateQueries");
+    await say({ type: "message.received", conversation_id: "1", message_id: "m9" });
+    await say({ type: "message.received", conversation_id: "7", message_id: "m7" });
+    await wait(400);
+    expect(reads()).toBe(before); // mientras sale, sus mensajes no se releen
+    // la lista y el detalle del chat que envía, sí; los mensajes de otra conversación, también
+    expect(invalidate.mock.calls.map(([filters]) => filters?.queryKey)).toEqual([
+      getConversationsListQueryKey("acme"),
+      getConversationsRetrieveQueryKey("acme", "1"),
+      getConversationsRetrieveQueryKey("acme", "7"),
+      getConversationMessagesListQueryKey("acme", "7"),
+    ]);
+    await act(async () => release());
+    await waitFor(() => expect(reads()).toBe(before + 1)); // al terminar, el cuadro relee una vez
+    await wait(400);
+    watcher.disconnect();
+    expect(count()).toBe(1);
+    expect(seen.slice(seen.indexOf(1))).not.toContain(0); // nunca desaparece
+    expect(Math.max(...seen)).toBe(1); // nunca dos
+  });
+
+  it("con páginas anteriores cargadas, un evento o una reconexión relee cada página cargada", async () => {
+    fake();
+    const page = (id: string, next: string | null) => () => ({
+      ...{ status: 200, body: { results: [message(id, `Texto ${id}`)], next } },
+    });
+    const api = mockApi({
+      [`GET ${BASE}/`]: { status: 200, body: { results: [conversation("Hola")], next: null } },
+      [`GET ${BASE}/1/`]: { status: 200, body: conversation("Hola") },
+      [`GET ${BASE}/1/messages/`]: page("m3", "p2"),
+      [`GET ${BASE}/1/messages/?cursor=p2`]: page("m2", "p3"),
+      [`GET ${BASE}/1/messages/?cursor=p3`]: page("m1", null),
+    });
+    const reads = () =>
+      api.mock.calls.filter(([url]) => String(url).startsWith(`${BASE}/1/messages/`)).length;
+    show();
+    (await screen.findByRole("button", { name: /Rosa Díaz/ })).click();
+    for (const id of ["m2", "m1"]) {
+      (await screen.findByRole("button", { name: "Cargar mensajes anteriores" })).click();
+      await screen.findByText(`Texto ${id}`);
+    }
+    act(() => socket().onopen?.({}));
+    let before = reads();
+    await say({ type: "message.received", conversation_id: "1", message_id: "m4" });
+    await act(() => vi.advanceTimersByTimeAsync(400));
+    await waitFor(() => expect(reads()).toBe(before + 3)); // las tres páginas cargadas
+    before = reads();
+    await reconnect();
+    await waitFor(() => expect(reads()).toBe(before + 3));
   });
 });
