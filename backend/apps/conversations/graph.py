@@ -213,7 +213,8 @@ def token_expiry(token: str) -> Expiry | str:
     """La caducidad de `token` según Meta (F7b-12): `GET /debug_token?input_token=<token>`, que
     pide el token de la app (`<META_APP_ID>|<app secret vigente>`, en la cabecera). Si no se sabe,
     el motivo, un código cerrado: `no_app` (sin app configurada), `app_token_rejected` (Meta
-    rechaza el token de la app), `unavailable`, `invalid_token`, `other_app` o `malformed`. Sin
+    rechaza el token de la app: un `190`), `rejected` (otro 4xx, p. ej. por el token de la página;
+    F7b-12c), `unavailable`, `invalid_token`, `other_app` o `malformed`. Sin
     reintentos de `core.http` (su aviso lleva la URL, con el token) ni el texto de ningún error.
     Nunca lanza."""
     app, secrets = settings.META_APP_ID, settings.META_APP_SECRETS
@@ -223,8 +224,10 @@ def token_expiry(token: str) -> Expiry | str:
         return "malformed"
     try:
         found = _ask("GET", f"debug_token?input_token={token}", f"{app}|{secrets[0]}", retry=False)
-    except GraphRejected:
+    except TokenRejected:  # el `190` es del token que autentica: el de la app
         return "app_token_rejected"
+    except GraphRejected:
+        return "rejected"
     except Exception:  # noqa: BLE001 — el texto de un error puede llevar los dos tokens
         return "unavailable"
     try:
