@@ -116,10 +116,10 @@ def _backfill(organization_id: UUID, done: Counter[str], deadline: float) -> Non
             done["OUT_OF_TIME"] = 1
             return
         with tenant_scope(ctx):
-            claim = Credential.objects.using(require_scope(ctx)).filter(
-                askable(), pk=credential.pk, revoked_at__isnull=True
-            )
-            if not claim.update(expiry_attempt_at=Now()):
+            claim = Credential.objects.using(require_scope(ctx)).filter(askable())
+            if not claim.filter(pk=credential.pk, revoked_at__isnull=True).update(
+                expiry_attempt_at=Now()
+            ):
                 continue  # otra pasada la reclamó, o ya se leyó
         try:
             token = credentials.open_token(credential)
