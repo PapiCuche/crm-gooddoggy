@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render } from "@testing-library/react";
+import { act, render } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
 import type { ReactElement } from "react";
 import { vi } from "vitest";
@@ -37,4 +37,22 @@ export function mockApi(routes: Record<string, Reply | (() => Reply)>) {
   });
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
+}
+
+// Envíos sin respuesta: caen cuando `expire()` vence su `AbortSignal.timeout` (`waits`, los plazos).
+export function hangPosts(api: ReturnType<typeof mockApi>) {
+  const [waits, timers] = [[] as number[], [] as AbortController[]];
+  vi.spyOn(AbortSignal, "timeout").mockImplementation((ms) => {
+    waits.push(ms);
+    return timers[timers.push(new AbortController()) - 1]!.signal;
+  });
+  const inner = api.getMockImplementation()!;
+  api.mockImplementation(async (input, init) => {
+    if (init?.method !== "POST") return inner(input, init);
+    const { signal } = init;
+    return new Promise((_, fail) => signal?.addEventListener("abort", () => fail(signal.reason)));
+  });
+  const expire = () =>
+    act(() => timers.forEach((t) => t.abort(new DOMException("", "TimeoutError"))));
+  return { waits, expire, answer: () => api.mockImplementation(inner) };
 }
