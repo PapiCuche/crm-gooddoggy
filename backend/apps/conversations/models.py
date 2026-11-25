@@ -342,6 +342,7 @@ class Credential(TenantModel):
     expires_at = models.DateTimeField(null=True, blank=True)
     expiry_checked_at = models.DateTimeField(null=True, blank=True)
     expiry_warned_days = models.PositiveSmallIntegerField(null=True, blank=True)
+    expiry_attempt_at = models.DateTimeField(null=True, blank=True)  # F7b-12c: la última pregunta
     rotated_at = models.DateTimeField(null=True, blank=True)  # cuándo sustituyó a la anterior
     revoked_at = models.DateTimeField(null=True, blank=True)
     created_by_user_id = models.UUIDField(null=True, blank=True)  # FK a membresías (0034, F2-128)

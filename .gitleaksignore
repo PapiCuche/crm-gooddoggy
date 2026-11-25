@@ -1,0 +1,4 @@
+# F7b-12c (#1103): falso positivo de generic-api-key en el commit c4718f73: un filtro del ORM de
+# Django en expiry.py, ya reescrito en 142a24a7. Solo esa huella exacta (commit, archivo, regla y
+# línea); no excluye nada más. Tras el squash merge el commit no está en main y la línea no aplica.
+c4718f73f0adb146b66008d277e5472a3149ed27:backend/apps/conversations/expiry.py:generic-api-key:120
