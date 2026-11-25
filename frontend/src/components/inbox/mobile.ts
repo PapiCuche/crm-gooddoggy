@@ -26,7 +26,6 @@ export function useKeyboardHeight(panel: RefObject<HTMLElement | null>, scroller
     const [root, box, viewport] = [panel.current, scroller.current, window.visualViewport];
     if (!root || !box || !viewport) return;
     let [pinned, seen] = [true, box.clientHeight]; // se leía lo último: sigue a la vista al encoger
-    // UX-INBOX-03b: con un cambio de alto aún sin seguir (cabecera y teclado a la vez) no se marca.
     const mark = () =>
       box.clientHeight === seen &&
       (pinned = box.scrollHeight - box.scrollTop - box.clientHeight < 8);
@@ -53,10 +52,8 @@ export function useKeyboardHeight(panel: RefObject<HTMLElement | null>, scroller
   }, [panel, scroller]);
 }
 
-// UX-INBOX-03b: se escribe desde que un cuadro de texto del redactor (`[data-composer]`) toma el
-// foco hasta que el foco sale del redactor (sus botones incluidos). Al salir se espera un turno: un
-// toque en «Enviar» quita el foco antes del clic y la cabecera no puede crecer en medio y mover el
-// botón bajo el dedo. `release` sale ya.
+// UX-INBOX-03b, solo táctil: del foco en un cuadro del redactor (lo último del panel) a su salida,
+// tras un turno: un toque en «Enviar» quita el foco antes del clic (con ratón, más de un turno).
 export function useComposing(panel: RefObject<HTMLElement | null>) {
   const [on, setOn] = useState(false);
   useEffect(() => {
@@ -64,9 +61,9 @@ export function useComposing(panel: RefObject<HTMLElement | null>) {
     if (!root) return;
     let wait = 0;
     const enter = ({ target }: FocusEvent) => {
-      if (!(target instanceof Element && target.closest("[data-composer]"))) return;
+      if (!(target instanceof Node && root.lastElementChild?.contains(target))) return; // el redactor
       clearTimeout(wait); // el foco sigue en el redactor
-      if (target instanceof HTMLTextAreaElement) setOn(true);
+      if (target instanceof HTMLTextAreaElement && coarse()) setOn(true);
     };
     const leave = () => (clearTimeout(wait), (wait = window.setTimeout(() => setOn(false))));
     const off = new AbortController();

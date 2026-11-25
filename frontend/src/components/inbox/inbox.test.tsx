@@ -910,10 +910,8 @@ describe("móvil: la conversación en la URL (UX-INBOX-03)", () => {
     await open(/Rosa Díaz/);
     fireEvent.click(screen.getByRole("button", { name: "Cliente y oportunidades" }));
     fireEvent.click(screen.getByRole("button", { name: /Juan/ }));
-    // El foco en el encabezado del chat (la fila también dice «Juan»).
-    await waitFor(() =>
-      expect(document.activeElement).toBe(screen.getByRole("heading", { level: 2, name: "Juan" })),
-    );
+    await waitFor(() => expect(document.activeElement).toHaveTextContent("Juan"));
+    expect(document.activeElement?.tagName).toBe("H2"); // el encabezado, no la fila
     expect(api.mock.calls.filter(([url]) => String(url) === DETAIL(ID).slice(4))).toHaveLength(1);
   });
 

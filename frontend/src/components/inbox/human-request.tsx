@@ -104,7 +104,6 @@ export function useHumanRequest(conversation: Conversation, composing = false) {
   const asking = !conversation.human_request;
   const label = t(change.isPending ? "saving" : asking ? "request" : "close");
 
-  // Una en la fila del encabezado y, mientras se escribe en un teléfono pequeño, otra en el aviso.
   const action = (className: string) =>
     asking && conversation.status === "CLOSED" ? null : (
       <Button
@@ -123,12 +122,10 @@ export function useHumanRequest(conversation: Conversation, composing = false) {
       </Button>
     );
   const button = action("order-3 max-sm:group-data-composing:hidden lg:order-2");
+  const inLine = composing ? action("hidden shrink-0 max-sm:inline-flex") : null;
   const state = (
     <div className="order-5 flex min-w-0 basis-full flex-col gap-1 empty:hidden">
-      <HumanRequestLine
-        conversation={conversation}
-        action={composing ? action("hidden shrink-0 max-sm:inline-flex") : null}
-      />
+      <HumanRequestLine conversation={conversation} action={inLine} />
       {said && said.at === at ? (
         <p
           role={said.error ? "alert" : "status"}

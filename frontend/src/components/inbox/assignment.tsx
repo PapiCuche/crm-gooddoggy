@@ -112,14 +112,14 @@ export function AssignmentActions({ detail }: { detail: ConversationDetail }) {
   const acts = can && !closed;
   return (
     <div
-      className="relative flex flex-col gap-1 max-sm:group-data-composing:hidden lg:gap-2"
+      className="relative flex flex-col gap-1 lg:gap-2"
       onKeyDown={(event) => {
         if (event.key !== "Escape" || !open) return;
         setOpen(false);
         toggle.current?.focus();
       }}
     >
-      <div className="flex items-center justify-between gap-2">
+      <div className="flex items-center justify-between gap-2 max-sm:group-data-composing:hidden">
         <p ref={line} tabIndex={-1} className="text-sm font-medium focus-visible:outline-none">
           <Assignee who={detail} />
         </p>
@@ -150,7 +150,7 @@ export function AssignmentActions({ detail }: { detail: ConversationDetail }) {
         <div
           id={panel}
           className={cn(
-            "flex flex-wrap items-end gap-2",
+            "flex flex-wrap items-end gap-2 max-sm:group-data-composing:hidden",
             // En 390 px las acciones se abren sobre los mensajes, sin empujar el diseño.
             open
               ? "max-lg:bg-surface max-lg:absolute max-lg:inset-x-0 max-lg:top-full max-lg:z-10 max-lg:max-h-56 max-lg:overflow-y-auto max-lg:rounded-lg max-lg:border max-lg:p-3 max-lg:shadow-md"

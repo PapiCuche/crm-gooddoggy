@@ -148,10 +148,7 @@ export function Composer({
   const shown: Mode = modes[chosen] ? chosen : modes.reply ? "reply" : "note";
   const both = modes.reply && modes.note;
   return (
-    <div
-      data-composer
-      className="border-border flex min-w-0 shrink-0 flex-col gap-2 border-t p-2 lg:p-3"
-    >
+    <div className="border-border flex min-w-0 shrink-0 flex-col gap-2 border-t p-2 lg:p-3">
       {both || tools ? (
         <div className="flex min-w-0 gap-2">
           {both ? (

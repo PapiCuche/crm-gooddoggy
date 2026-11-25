@@ -109,12 +109,12 @@ export function ChatPanel({
     conversationId: conversation.id,
     onInsert: (text) => inserter.current?.(text),
   });
-  const panel = useRef<HTMLDivElement>(null);
-  const [composing, release] = useComposing(panel); // UX-INBOX-03b: lo compacto solo existe entonces
-  const human = useHumanRequest(conversation, composing); // con `conversations.view`, como ver el chat
   const exclusion = useAiExclusion(conversation); // excluirla de la IA (F8-13b)
   const scroller = useRef<HTMLDivElement>(null);
+  const panel = useRef<HTMLDivElement>(null);
   useKeyboardHeight(panel, scroller);
+  const [composing, release] = useComposing(panel); // UX-INBOX-03b: lo compacto existe solo entonces
+  const human = useHumanRequest(conversation, composing); // con `conversations.view`, como ver el chat
   const refresh = useRef<HTMLButtonElement>(null);
   const kept = useRef<number | null>(null); // lo que faltaba por desplazar al pedir los anteriores
   const placed = useRef(false);
@@ -192,8 +192,7 @@ export function ChatPanel({
     // Alto: en 390 px la pantalla pierde el título de la página (queda solo para lectores) y el panel
     // ocupa lo visible (`--keyboard-vh` en iOS) menos barra y relleno (8rem), con mínimo que deja
     // sitio a las tres zonas; el encabezado y el cuadro no se comprimen y los mensajes (`min-h-0`)
-    // absorben el sobrante y se desplazan. En escritorio, el alto de siempre. UX-INBOX-03b: en `max-sm`
-    // escribiendo, toda la pantalla (sobre barra y relleno, en el flujo) y la cabecera en una fila.
+    // absorben el sobrante y se desplazan. En escritorio, el alto de siempre.
     <div
       ref={panel}
       data-composing={composing || undefined}
@@ -227,16 +226,12 @@ export function ChatPanel({
               </p>
             ) : null}
           </div>
-          {/* «Más» devuelve la cabecera con el foco en «Actualizar»; no quita antes el foco al cuadro. */}
           <Button
             variant="ghost"
             className="border-border order-4 hidden size-11 border px-0 max-sm:group-data-composing:inline-flex"
             aria-expanded="false"
             onMouseDown={(event) => event.preventDefault()}
-            onClick={() => {
-              release();
-              refresh.current?.focus();
-            }}
+            onClick={() => (release(), refresh.current?.focus())}
           >
             <Ellipsis aria-hidden />
             <span className="sr-only">{t("chat.more")}</span>

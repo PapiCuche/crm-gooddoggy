@@ -94,6 +94,7 @@ export function MediaFile({
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
       <Button
         variant="accent"
+        className="max-lg:h-11"
         aria-disabled={open.isPending}
         aria-label={detail ? t("download", { detail }) : undefined}
         onClick={() => open.isPending || open.mutate()}

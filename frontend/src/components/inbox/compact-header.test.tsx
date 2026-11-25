@@ -7,8 +7,7 @@ import { mockApi, renderApp } from "@/test-utils";
 
 import { Inbox } from "./inbox";
 
-// UX-INBOX-03b. jsdom no aplica Tailwind: aquí, el estado (`data-composing`), el foco y qué pieza
-// lleva cada clase; lo que se ve en 320–430 px se midió en un navegador real (ver el PR).
+// UX-INBOX-03b. jsdom no aplica Tailwind: estado, foco y clases; lo visible se midió en un navegador.
 const BASE = "/api/v1/o/acme/conversations";
 const tenant: SelfContext = {
   user: { id: "u1", email: "ana@acme.pe", first_name: "Ana", last_name: "López" },
@@ -36,18 +35,21 @@ const suggestion = {
   handoff: { requested: false, reason: null },
 };
 const page = (results: unknown[]) => ({ status: 200, body: { results, next: null } });
+const photo = {
+  ...{ id: "m1", direction: "INBOUND", sender_type: "CONTACT", message_type: "IMAGE" },
+  ...{ body: "Imagen recibida", delivery_status: null, created_at: "2026-11-04T15:30:00Z" },
+  attachment: { id: "a1", kind: "IMAGE", status: "DONE", mime_type: "image/jpeg", available: true },
+};
 
 function serve() {
   return mockApi({
     [`GET ${BASE}/`]: page([rosa]),
     [`GET ${BASE}/1/`]: { status: 200, body: rosa },
-    [`GET ${BASE}/1/messages/`]: page([]),
+    [`GET ${BASE}/1/messages/`]: page([photo]), // con «Guardar» (su archivo)
+    [`POST ${BASE}/1/assign/`]: { status: 409, body: { code: "ASSIGNMENT_CONFLICT" } },
     [`GET /api/v1/o/acme/members/?limit=200`]: page([]),
     [`POST ${BASE}/1/copilot/suggest/`]: { status: 200, body: suggestion },
-    [`DELETE ${BASE}/1/human-request/`]: {
-      status: 200,
-      body: { id: "1", human_request: null },
-    },
+    [`DELETE ${BASE}/1/human-request/`]: { status: 200, body: { id: "1", human_request: null } },
   });
 }
 const show = () =>
@@ -58,17 +60,19 @@ const show = () =>
   );
 const openChat = async () => {
   fireEvent.click(await screen.findByRole("button", { name: /Rosa Díaz/ }));
-  const heading = await screen.findByRole("heading", { level: 2 });
-  return heading.closest("header")!.parentElement!; // el panel del chat
+  return (await screen.findByRole("heading", { level: 2 })).closest("header")!.parentElement!;
 };
 const tick = () => act(() => new Promise((resolve) => setTimeout(resolve, 10)));
 const box = () => screen.getByRole("textbox", { name: "Responder al cliente" });
 const button = (name: string) => screen.getByRole("button", { name });
 const COMPACT = "max-sm:group-data-composing:hidden";
+const inCompact = (element: Element) => element.closest(`.${CSS.escape(COMPACT)}`);
 
 configure({ asyncUtilTimeout: 4000 });
 vi.setConfig({ testTimeout: 15_000 });
-beforeEach(() => void (document.cookie = "csrftoken=token-de-prueba"));
+const pointer = (touch: boolean) =>
+  vi.stubGlobal("matchMedia", (query: string) => ({ matches: touch && query.includes("coarse") }));
+beforeEach(() => (pointer(true), void (document.cookie = "csrftoken=token-de-prueba")));
 afterEach(() => vi.unstubAllGlobals()); // `cleanup`, en vitest.setup.ts
 
 describe("cabecera compacta mientras se escribe (UX-INBOX-03b)", () => {
@@ -98,6 +102,35 @@ describe("cabecera compacta mientras se escribe (UX-INBOX-03b)", () => {
     expect(panel).not.toHaveAttribute("data-composing");
   });
 
+  it("con ratón no se compacta: pulsar «Enviar» o volver no mueve nada antes del clic", async () => {
+    pointer(false);
+    serve();
+    show();
+    const panel = await openChat();
+    fireEvent.change(await screen.findByRole("textbox"), { target: { value: "Hola" } });
+    act(() => box().focus());
+    act(() => (fireEvent.mouseDown(button("Enviar")), button("Enviar").focus()));
+    await tick();
+    expect(panel).not.toHaveAttribute("data-composing");
+    act(() => box().focus());
+    fireEvent.mouseDown(button("Volver a las conversaciones"));
+    await tick();
+    expect(panel).not.toHaveAttribute("data-composing");
+  });
+
+  it("escribiendo se oculta la fila de asignación, no su aviso", async () => {
+    serve();
+    show();
+    await openChat();
+    fireEvent.click(await screen.findByRole("button", { name: "Tomar" }));
+    const alert = await screen.findByText(/Alguien la tomó antes/);
+    act(() => box().focus());
+    expect(alert).toHaveAttribute("role", "alert");
+    expect(inCompact(alert)).toBeNull();
+    expect(inCompact(button("Acciones"))).not.toBeNull();
+    expect(inCompact(button("Tomar"))).not.toBeNull();
+  });
+
   it("una fila: volver, nombre y red y «Más»; lo demás se oculta y «Más» lo devuelve", async () => {
     serve();
     show();
@@ -106,18 +139,13 @@ describe("cabecera compacta mientras se escribe (UX-INBOX-03b)", () => {
     const more = button("Más acciones de la conversación");
     expect(more).toHaveClass("hidden", "size-11", "max-sm:group-data-composing:inline-flex");
     expect(more).toHaveAttribute("aria-expanded", "false");
-    for (const name of [
-      "Actualizar mensajes",
-      "Excluir de la IA",
-      "Cliente y oportunidades",
-      "Acciones",
-    ]) {
-      expect(button(name).closest(`.${CSS.escape(COMPACT)}`), name).not.toBeNull();
-    }
+    const hides = "Actualizar mensajes|Excluir de la IA|Cliente y oportunidades|Acciones".split(
+      "|",
+    );
+    for (const name of hides) expect(inCompact(button(name)), name).not.toBeNull();
     expect(within(header).getByText("CONV-00001").parentElement).toHaveClass(COMPACT);
-    const assignee = within(header).getByText("Sin asignar");
-    expect(assignee.closest(`.${CSS.escape(COMPACT)}`)).not.toBeNull();
-    expect(button("Volver a las conversaciones").closest(`.${CSS.escape(COMPACT)}`)).toBeNull();
+    expect(inCompact(within(header).getByText("Sin asignar"))).not.toBeNull();
+    expect(inCompact(button("Volver a las conversaciones"))).toBeNull();
     expect(within(header).getAllByText("WhatsApp")).toHaveLength(1); // la red, en su fila
     act(() => box().focus());
     expect(panel).toHaveAttribute("data-composing");
@@ -167,8 +195,7 @@ describe("cabecera compacta mientras se escribe (UX-INBOX-03b)", () => {
     for (const name of ["Insertar", "Descartar"]) expect(button(name)).toHaveClass("max-lg:h-11");
     fireEvent.click(button("Excluir de la IA"));
     await waitFor(() => expect(document.activeElement).toBe(button("Cancelar")));
-    // Nada del chat se queda en 36 o 40 px entre 640 y 1023 px (`sm:`), ni en 40 px de ancho; un
-    // `h-9` (36 px) lleva 44 px por debajo de 1024 px (`min-h-11`, `max-lg:h-11`, `sm:max-lg:…`).
+    // Ningún botón del chat en 36–40 px bajo 1024 px: un `h-9` lleva su 44 px (`[…]max-lg:…-11`).
     for (const each of panel.querySelectorAll("button")) {
       const name = each.textContent ?? "";
       expect(each.className, name).not.toMatch(/(^| )(sm:min-h-9|sm:h-9|h-10|max-sm:w-10)( |$)/);
