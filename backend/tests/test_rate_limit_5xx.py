@@ -21,6 +21,7 @@ from tests.meta_sim import GRAPH_VERSION
 from tests.meta_sim.graph import TEST_TOKEN
 from tests.meta_sim.webhooks import PHONE_NUMBER_ID, WABA_ID
 from tests.test_authorization import give
+from tests.test_channel_health import account as number
 from tests.test_conversation_commands import audit, outbound, world, writer
 from tests.test_conversations_dispatch import Retrying, state
 from tests.test_late_refusal import account_audits, answers, error, wait_for
@@ -257,16 +258,20 @@ def test_a_rotation_and_a_late_refusal_at_once_serialise_on_the_account_lock(
      (("CONNECTED", None), "GREEN", ("CONNECTED", None)),
      (("DEGRADED", "QUALITY_LOW"), "GREEN", ("CONNECTED", None)),
      (("DEGRADED", "QUALITY_LOW"), "RED", ("DEGRADED", "QUALITY_LOW")),
-     (("ERROR", "MESSAGES_ACCESS_OFF"), "GREEN", ("ERROR", "MESSAGES_ACCESS_OFF"))],
+     (("ERROR", "MESSAGES_ACCESS_OFF"), "GREEN", ("ERROR", "MESSAGES_ACCESS_OFF")),
+     # F7b-20: una `PENDING` con el webhook ya visto sube como en la comprobación de salud; la que
+     # aún no lo vio sigue `PENDING`
+     (("PENDING", None), "GREEN", ("CONNECTED", None)),
+     (("PENDING", None), "RED", ("DEGRADED", "QUALITY_LOW")),
+     (("PENDING", "WEBHOOK_NOT_SEEN"), "GREEN", ("PENDING", "WEBHOOK_NOT_SEEN")),
+     (("ERROR", "TOKEN_INVALID"), "RED", ("DEGRADED", "QUALITY_LOW"))],
 )  # fmt: skip
 def test_a_rotation_applies_the_quality_meta_just_gave_like_the_health_check(
     world: SimpleNamespace, graph: Any, migrator: Any, manager: None,
     before: tuple[str, str | None], quality: str, after: tuple[str, str | None],
 ) -> None:  # fmt: skip
-    pk = talk(world).channel_account_id
-    migrator.execute(
-        "UPDATE channel_accounts SET status = %s, status_detail = %s WHERE id = %s", [*before, pk]
-    )
+    # nace en `before`: la base no deja volver a `PENDING` con un UPDATE
+    pk = number(world.a, status=before[0], status_detail=before[1])
     graph.quality = quality
     rotate(world, pk)
     assert account(world, pk) == after
