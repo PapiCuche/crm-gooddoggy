@@ -680,6 +680,7 @@ def advance_delivery(
         # Condicional: el disparador de la base lanza `check_violation` ante un estado atrasado, y
         # eso abortaría la transacción de quien llama. Con el bloqueo no debería pasar nunca; el
         # `WHERE` lo hace imposible aunque alguien quite el bloqueo.
+        # `sending_at` (el reclamo) lo reescribe la base con su reloj (F7b-21, `0064`)
         fields = {stamp: at or timezone.now(), "provider_error_code": reason}
         fields["provider_error_detail"] = detail
         if late and not settles:

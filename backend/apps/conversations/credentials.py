@@ -45,11 +45,13 @@ def store(
         rotated_at=now if rotated else None, created_by_user_id=ctx.user_id,
         expires_at=expiry[0] if expiry else None, expiry_checked_at=now if expiry else None,
     )  # fmt: skip
+    made.refresh_from_db(using=alias, fields=["created_at"])  # la pone la base (F7b-21, 0064)
     return made
 
 
 def revoke(ctx: TenantContext, credential_id: UUID | None) -> None:
-    """Invalida la credencial: el cifrado se borra, no queda un token antiguo en la base."""
+    """Invalida la credencial: el cifrado se borra, no queda un token antiguo en la base. La hora
+    de `revoked_at` la pone la base (`clock_timestamp()`, disparador de la `0064`, F7b-21)."""
     if credential_id is not None:
         Credential.objects.using(require_scope(ctx)).filter(pk=credential_id).update(
             ciphertext=None, revoked_at=timezone.now()
