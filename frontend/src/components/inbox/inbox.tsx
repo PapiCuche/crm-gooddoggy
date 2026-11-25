@@ -1,6 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { CloudOff, RefreshCw, WifiOff } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { startTransition, useEffect, useRef, useState } from "react";
@@ -16,7 +17,7 @@ import { ChatPanel } from "./chat-panel";
 import { ConversationList, type Filters } from "./conversation-list";
 import { CustomerPanel } from "./customer-panel";
 import { setUrlConversation, validId } from "./mobile";
-import { useInboxRealtime } from "./use-inbox-realtime";
+import { type LiveStatus, useInboxRealtime } from "./use-inbox-realtime";
 
 // En pantalla ancha lista y chat conviven; en 390 px se ve uno u otro (lista y, al abrirla, el chat).
 const wide = () => typeof matchMedia === "function" && matchMedia("(min-width: 1024px)").matches;
@@ -30,7 +31,7 @@ export function Inbox() {
   const { organization } = useTenant();
   const { slug } = organization;
   const { failed } = useReads();
-  useInboxRealtime(); // los cambios llegan sin recargar (si el servicio de tiempo real está encendido)
+  const live = useInboxRealtime(); // los cambios llegan sin recargar (si el tiempo real está encendido)
   const [filters, setFilters] = useState<Filters>({ box: "all", status: "", unanswered: false });
   const wanted = useSearchParams()?.get("c") || null;
   const [picked, setPicked] = useState<{ slug: string; row: Conversation } | null>(null); // con su organización
@@ -89,14 +90,22 @@ export function Inbox() {
         <p className={cn("text-[13px] tracking-wide uppercase", chatShown && "max-lg:hidden")}>
           {t("eyebrow")}
         </p>
-        <h1
+        <div
           className={cn(
-            "text-[28px] leading-tight font-bold tracking-[0.02em]",
-            chatShown && "max-lg:sr-only",
+            "flex flex-wrap items-center gap-x-3 gap-y-1",
+            chatShown && "max-lg:contents",
           )}
         >
-          {t("title")}
-        </h1>
+          <h1
+            className={cn(
+              "text-[28px] leading-tight font-bold tracking-[0.02em]",
+              chatShown && "max-lg:sr-only",
+            )}
+          >
+            {t("title")}
+          </h1>
+          <Live status={live} />
+        </div>
         <p className={cn("text-muted", chatShown && "max-lg:hidden")}>
           {t("intro", { organization: organization.name })}
         </p>
@@ -171,5 +180,29 @@ export function Inbox() {
         </section>
       </div>
     </section>
+  );
+}
+
+// UX-INBOX-06: el estado del tiempo real junto al título, con icono y texto. Abierta o conectando,
+// nada: no se afirma que todo esté al día. Encendido, la región (cortés) existe siempre, sin ocupar
+// sitio; apagado, ni la región.
+const SHOWN = {
+  lost: <RefreshCw aria-hidden className="motion-safe:animate-spin" />,
+  offline: <WifiOff aria-hidden />,
+  closed: <CloudOff aria-hidden />,
+} as const;
+function Live({ status }: { status: LiveStatus }) {
+  const t = useTranslations("inbox.live");
+  if (status === "off") return null;
+  const shown = Object.hasOwn(SHOWN, status) ? (status as keyof typeof SHOWN) : null;
+  return (
+    <div role="status" className="contents">
+      {shown ? (
+        <p className="border-border bg-surface text-foreground inline-flex w-fit items-center gap-1.5 rounded-full border px-3 py-1 text-sm font-medium [&_svg]:size-4">
+          {SHOWN[shown]}
+          {t(shown)}
+        </p>
+      ) : null}
+    </div>
   );
 }
