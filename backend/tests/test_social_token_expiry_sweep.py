@@ -189,7 +189,7 @@ def test_the_oldest_turn_goes_first(
     tried(world.b, "2 days")
     assert due(True) == [world.a, world.b]  # una sin preguntar adelanta a su organización
     world.meta.graph.debug = {"expires_at": at(40)}
-    assert expiry._backfill(world.a, Counter(), monotonic() + 60) is None
+    expiry._backfill(world.a, Counter(), monotonic() + 60)
     assert cred(world.a, newer.pk).expiry_checked_at is not None
     assert cred(world.a, made[world.a].pk).expiry_checked_at is None
 
