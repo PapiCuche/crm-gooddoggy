@@ -7,9 +7,8 @@ import { mockApi, renderApp } from "@/test-utils";
 
 import { Inbox } from "./inbox";
 
-// UX-INBOX-06b: seguir lo nuevo al final y el botón «N mensajes nuevos». jsdom no maqueta: la
-// región de mensajes se simula (300 px visibles; 100 px por mensaje, 300 si dice «largo»). Lo
-// real se midió en Chrome contra la pila.
+// UX-INBOX-06b. jsdom no maqueta: la región se simula (300 px visibles; 100 px por mensaje, 300 si
+// dice «largo»). Lo real se midió en Chrome contra la pila.
 configure({ asyncUtilTimeout: 4000 });
 vi.setConfig({ testTimeout: 15_000 });
 
@@ -26,10 +25,7 @@ const rosa = {
   ...{ id: "1", number: "CONV-00001", status: "OPEN", attention_mode: "HUMAN" },
   ...{ assignee_kind: "UNASSIGNED", assigned_user_id: null, assigned_team_id: null },
   ...{ contact: { id: "c1", display_name: "Rosa Díaz" }, version: 1 },
-  channel: {
-    ...{ id: "ch1", platform: "SANDBOX", name: "Sandbox", text_max: 4096 },
-    ...{ text_unit: "CHARACTERS", accepts_media: true },
-  },
+  channel: { id: "ch1", platform: "SANDBOX", name: "Sandbox" },
   ...{ last_message_at: "2026-11-04T15:30:00Z", last_inbound_at: "2026-11-04T15:30:00Z" },
   ...{ last_message_preview: "Hola", last_message_direction: "INBOUND" },
 } as Conversation;
@@ -49,9 +45,13 @@ const tall = (li: Element) => (li.textContent?.includes("largo") ? 300 : 100);
 const rowsOf = (el: Element) => [...el.querySelectorAll("li")];
 const full = (el: Element) => rowsOf(el).reduce((sum, li) => sum + tall(li), 0);
 const from: number[] = []; // dónde estaba la vista al empezar cada desplazamiento suave
-const scrollTo = vi.fn(function (this: HTMLElement, { top }: ScrollToOptions) {
+let glide = () => {}; // el suave va a la mitad y termina con `glide()`, hacia el destino del clic
+let boxTop = 40;
+const scrollTo = vi.fn(function (this: HTMLElement, { top, behavior }: ScrollToOptions) {
   from.push(this.scrollTop);
-  this.scrollTop = top!;
+  glide = () => void (this.scrollTop = top!);
+  if (behavior === "smooth") this.scrollTop += (top! - SEEN - this.scrollTop) / 2;
+  else glide();
 });
 beforeEach(() => {
   const proto = HTMLElement.prototype;
@@ -64,10 +64,10 @@ beforeEach(() => {
   vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
     const box = this.closest("[aria-label='Mensajes de la conversación']");
     if (!box) return new DOMRect();
-    if (this === box) return new DOMRect(0, 0, 300, SEEN);
+    if (this === box) return new DOMRect(0, boxTop, 300, SEEN);
     const rows = rowsOf(box);
     const above = rows.slice(0, rows.indexOf(this as HTMLLIElement));
-    const y = above.reduce((sum, li) => sum + tall(li), 0) - box.scrollTop;
+    const y = boxTop + above.reduce((sum, li) => sum + tall(li), 0) - box.scrollTop;
     return new DOMRect(0, y, 300, tall(this));
   });
   Object.defineProperty(proto, "scrollTop", {
@@ -84,6 +84,7 @@ beforeEach(() => {
   });
   proto.scrollTo = scrollTo as unknown as typeof proto.scrollTo;
   scrollTo.mockClear();
+  boxTop = 40; // la región empieza más abajo en la página
   document.cookie = "csrftoken=token-de-prueba";
 });
 afterEach(() => {
@@ -94,7 +95,7 @@ afterEach(() => {
 // Páginas de `size` como la API (del más nuevo al más antiguo; el cursor, el más antiguo de la
 // página): al releer, TanStack pide la siguiente desde la primera nueva, como en la pila real.
 function server(texts: Message[], size = 50) {
-  const state = { texts, sending: null as null | (() => void) };
+  const state = { texts, sending: null as null | (() => void), hold: null as null | Promise<void> };
   const api = mockApi({
     [`GET ${BASE}/`]: { status: 200, body: { results: [rosa], next: null } },
     [`GET ${BASE}/1/`]: { status: 200, body: rosa },
@@ -111,6 +112,7 @@ function server(texts: Message[], size = 50) {
       return new Response(JSON.stringify(sent), { status: 202 });
     }
     const cursor = url.searchParams.get("cursor");
+    if (cursor && state.hold) await state.hold;
     const end = cursor ? state.texts.findIndex(({ id }) => id === cursor) : state.texts.length;
     const results = state.texts.slice(Math.max(0, end - size), end);
     const next = end > size ? results[0]!.id : null;
@@ -123,10 +125,11 @@ const history = (n: number) =>
 const chat = () => screen.getByRole("region", { name: "Mensajes de la conversación" });
 const top = () => chat().scrollTop;
 const bottom = () => full(chat()) - SEEN;
-const unseen = () => screen.queryByRole("button", { name: /^\d+ mensajes? nuevos?$/ });
+const unseen = () => screen.queryByRole("button", { name: /^\d+\+? mensajes? nuevos?$/ });
+const at = (text: string) => screen.getByText(text).closest("li")!.getBoundingClientRect().top;
 const tick = () => act(() => new Promise((resolve) => setTimeout(resolve, 0)));
 async function open(last = "Historial 5") {
-  renderApp(
+  const { client } = renderApp(
     <TenantProvider value={tenant}>
       <Inbox />
     </TenantProvider>,
@@ -134,6 +137,7 @@ async function open(last = "Historial 5") {
   fireEvent.click(await screen.findByRole("button", { name: /Rosa Díaz/ }));
   await screen.findByText(last);
   await waitFor(() => expect(top()).toBe(bottom())); // abre al final
+  return client;
 }
 async function arrive(state: { texts: Message[] }, ...more: Message[]) {
   state.texts = [...state.texts, ...more];
@@ -157,18 +161,13 @@ describe("seguir lo nuevo y «N mensajes nuevos» (UX-INBOX-06b)", () => {
     await arrive(state, message("n1", "Nuevo largo"));
     watcher.disconnect();
     expect(top()).toBe(bottom());
-    expect(top()).toBe(400); // 4 × 100 + 300, se ven los últimos 300 px
     expect(shown).not.toContain(true);
-  });
-
-  it("lo seguido al final cuenta como visto aunque la vista no cambie de posición", async () => {
-    const state = server(history(5), 5); // entra uno y sale otro del mismo alto: ningún `scroll`
-    await open();
-    await arrive(state, message("n1", "Nuevo 1"));
+    // Entra uno y sale otro del mismo alto: la vista no cambia ni hay `scroll`, y aun así se vio.
+    await arrive(state, message("n2", "Nuevo 2"));
     expect(top()).toBe(bottom());
     await scroll(0);
-    await arrive(state, message("n2", "Nuevo 2"));
-    expect(unseen()).toHaveTextContent("1 mensaje nuevo"); // «Nuevo 1» ya se vio
+    await arrive(state, message("n3", "Nuevo 3"));
+    expect(unseen()).toHaveTextContent("1 mensaje nuevo"); // «Nuevo 2» ya se vio
   });
 
   it("leyendo el historial la vista no se mueve; el botón cuenta lo ajeno y lleva al final", async () => {
@@ -188,6 +187,7 @@ describe("seguir lo nuevo y «N mensajes nuevos» (UX-INBOX-06b)", () => {
     expect(scrollTo).toHaveBeenCalledWith({ top: full(chat()), behavior: "smooth" });
     expect(from.at(-1)).toBe(full(chat()) - 2 * SEEN); // de lejos: salto a dos pantallas, luego suave
     expect(chat()).toHaveFocus(); // el botón se va; el foco no se pierde
+    act(() => glide());
     await waitFor(() => expect(unseen()).toBeNull());
     expect(top()).toBe(bottom());
     await arrive(state, message("n4", "Nuevo 4")); // otra vez al final: se sigue
@@ -201,11 +201,10 @@ describe("seguir lo nuevo y «N mensajes nuevos» (UX-INBOX-06b)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Cargar mensajes anteriores" }));
     await screen.findByText("Historial 1");
     await scroll(250); // «Historial 5» es la última fila a la vista
-    const read = () => screen.getByText("Historial 5").closest("li")!.getBoundingClientRect().top;
-    const before = read();
+    const before = at("Historial 5");
     await arrive(state, message("n1", "Nuevo 1"), message("n2", "Nuevo 2"));
     expect(screen.queryByText("Historial 1")).toBeNull(); // la segunda página se pidió desde la nueva
-    expect(read()).toBe(before);
+    expect(at("Historial 5")).toBe(before);
     expect(unseen()).toHaveTextContent("2 mensajes nuevos");
   });
 
@@ -226,13 +225,71 @@ describe("seguir lo nuevo y «N mensajes nuevos» (UX-INBOX-06b)", () => {
     expect(unseen()).toHaveTextContent("1 mensaje nuevo");
   });
 
+  it("si la región se mueve en la página sin desplazarse, lo que llega no la mueve", async () => {
+    const state = server(history(9));
+    await open("Historial 9");
+    await scroll(100);
+    boxTop = -170; // cabecera compacta, teclado o un aviso que crece: sin `scroll`
+    await arrive(state, message("n1", "Nuevo 1"));
+    expect(top()).toBe(100);
+  });
+
+  it("lo que llega mientras el botón baja también se alcanza; si quien lee sube, no", async () => {
+    const state = server(history(9));
+    await open("Historial 9");
+    await scroll(0);
+    await arrive(state, message("n1", "Nuevo 1"));
+    fireEvent.click(unseen()!); // a medio camino (el navegador cancela el suave al asignar)
+    await arrive(state, message("n2", "Nuevo 2"));
+    expect(top()).toBe(bottom());
+    expect(unseen()).toBeNull();
+    await scroll(0);
+    await arrive(state, message("n3", "Nuevo 3"));
+    fireEvent.click(unseen()!);
+    await tick();
+    await scroll(100); // frena el suave subiendo
+    await arrive(state, message("n4", "Nuevo 4"));
+    expect(top()).toBe(100);
+  });
+
+  it("si la fila leída sale al releer, se ancla en la siguiente que sigue", async () => {
+    const state = server(history(10), 5);
+    await open("Historial 10");
+    fireEvent.click(screen.getByRole("button", { name: "Cargar mensajes anteriores" }));
+    await screen.findByText("Historial 1");
+    await scroll(100); // a la vista, de «Historial 2» a «Historial 4»
+    await arrive(state, ...[1, 2, 3, 4].map((n) => message(`n${n}`, `Nuevo ${n}`)));
+    expect(top()).toBe(0); // «Historial 5», que seguía, queda arriba
+  });
+
+  it("una relectura que cancela «Cargar mensajes anteriores» no mueve la vista", async () => {
+    const state = server(history(10), 5);
+    const client = await open("Historial 10");
+    await scroll(150);
+    const before = at("Historial 10");
+    state.hold = new Promise(() => {}); // la página anterior no llega
+    fireEvent.click(screen.getByRole("button", { name: "Cargar mensajes anteriores" }));
+    state.texts = [...state.texts, message("n1", "Nuevo 1")];
+    await act(() => client.invalidateQueries());
+    await screen.findByText("Nuevo 1");
+    await tick();
+    expect(at("Historial 10")).toBe(before); // sale «Historial 6» de arriba; lo que se lee no se mueve
+  });
+
+  it("si lo último visto ya no está (llegó más de una página), «50+»", async () => {
+    const state = server(history(5), 5);
+    await open();
+    await scroll(0);
+    await arrive(state, ...history(6).map(({ id }, i) => message(`m${id}`, `Otro ${i}`)));
+    expect(unseen()).toHaveTextContent("50+ mensajes nuevos");
+  });
+
   it("con movimiento reducido, sin desplazamiento suave", async () => {
     vi.stubGlobal("matchMedia", (query: string) => ({ matches: query.includes("reduced") }));
     const state = server(history(9));
     await open("Historial 9");
     await scroll(0);
     await arrive(state, message("n1", "Nuevo 1"));
-    expect(unseen()).toHaveTextContent("1 mensaje nuevo");
     fireEvent.click(unseen()!);
     expect(scrollTo).toHaveBeenCalledWith({ top: full(chat()), behavior: "auto" });
     expect(from.at(-1)).toBe(0); // un solo salto, sin el previo
