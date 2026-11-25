@@ -69,8 +69,7 @@ const LABELS: Record<string, ReactNode> = {
 const END = 8; // px: a menos de esto del final, se lee lo último
 const still = () =>
   typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
-// La última fila a la vista (y la siguiente, por si sale) y su altura en la región, que no se mueve
-// al releer (TanStack pide de nuevo las anteriores desde la primera: lo más antiguo puede salir).
+// La última fila a la vista (y la siguiente) y su altura en la región: al releer no se mueve.
 const lastSeen = (box: HTMLElement) => {
   const view = box.getBoundingClientRect();
   const rows = [...box.querySelectorAll<HTMLElement>("li[data-id]")];
@@ -134,8 +133,7 @@ export function ChatPanel({
   const placed = useRef(false);
   const atBottom = useRef(false); // al ocultarse el chat, ¿se leía lo último?
   const toBottom = useRef(false); // acabo de enviar: el mensaje nuevo se ve
-  // ¿Se lee lo último? Entonces se sigue lo nuevo; si no, se cuenta lo ajeno tras `seen`.
-  const pinned = useRef(true);
+  const pinned = useRef(true); // ¿se lee lo último? Se sigue; si no, se cuenta lo ajeno tras `seen`
   const anchor = useRef<ReturnType<typeof lastSeen>>([]);
   const chase = useRef({ on: false, top: 0 }); // el botón va al final: lo que llegue mientras, también
   const [atEnd, setAtEnd] = useState(true);
@@ -158,7 +156,6 @@ export function ChatPanel({
   const newest = rows.findLast(({ id }) => !id.startsWith("pending-"))?.id ?? null;
   const pages = list.data?.pages.length ?? 0;
   const after = rows.findIndex(({ id }) => id === seen);
-  // Si lo último visto ya no está (llegaron más de una página), «50+».
   const unseen =
     atEnd || !seen
       ? 0
@@ -171,7 +168,6 @@ export function ChatPanel({
   useLayoutEffect(() => {
     const box = scroller.current;
     if (!box || list.isFetchingNextPage) return;
-    // Una relectura que cancela «Cargar mensajes anteriores» no añade páginas: entonces, el ancla.
     if (kept.current && pages > kept.current.pages)
       box.scrollTop = box.scrollHeight - kept.current.rest;
     else if (toBottom.current || pinned.current || chase.current.on || !placed.current) {
@@ -345,9 +341,11 @@ export function ChatPanel({
         tabIndex={0}
         aria-label={t("chat.scroll")}
         className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3 contain-size [overflow-anchor:none]"
+        onWheel={() => void (chase.current.on = false)} // quien lee toma el control: no se persigue
+        onTouchStart={() => void (chase.current.on = false)}
+        onPointerDown={() => void (chase.current.on = false)} // la barra; el botón lo vuelve a poner
         onScroll={({ currentTarget: box }) => {
-          // `seen` se toma al dejar el final: seguir lo nuevo no siempre da un `scroll` (entra uno y
-          // sale otro del mismo alto). Al llegar al final, o si quien lee sube, ya no se persigue.
+          // `seen`, al dejar el final (seguir lo nuevo no siempre da `scroll`); `chase`, hasta el final.
           const was = pinned.current;
           pinned.current = box.scrollHeight - box.scrollTop - box.clientHeight < END;
           if (pinned.current || box.scrollTop < chase.current.top) chase.current.on = false;
@@ -378,7 +376,6 @@ export function ChatPanel({
           </p>
         ) : null}
         {body}
-        {/* Cortés y pegado al pie de lo visible, sin alto (`-mt-3` deshace el hueco). */}
         <div
           role="status"
           className="pointer-events-none sticky bottom-0 -mt-3 flex h-0 shrink-0 justify-center"

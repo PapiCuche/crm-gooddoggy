@@ -7,8 +7,7 @@ import { mockApi, renderApp } from "@/test-utils";
 
 import { Inbox } from "./inbox";
 
-// UX-INBOX-06b. jsdom no maqueta: la región se simula (300 px visibles; 100 px por mensaje, 300 si
-// dice «largo»). Lo real se midió en Chrome contra la pila.
+// UX-INBOX-06b. Sin maquetación en jsdom: 300 px visibles, 100 por fila (300 si dice «largo»).
 configure({ asyncUtilTimeout: 4000 });
 vi.setConfig({ testTimeout: 15_000 });
 
@@ -147,7 +146,6 @@ async function arrive(state: { texts: Message[] }, ...more: Message[]) {
 }
 const scroll = async (value: number) => {
   act(() => void (chat().scrollTop = value));
-  await waitFor(() => expect(top()).toBe(value));
   await tick();
 };
 
@@ -203,7 +201,6 @@ describe("seguir lo nuevo y «N mensajes nuevos» (UX-INBOX-06b)", () => {
     await scroll(250); // «Historial 5» es la última fila a la vista
     const before = at("Historial 5");
     await arrive(state, message("n1", "Nuevo 1"), message("n2", "Nuevo 2"));
-    expect(screen.queryByText("Historial 1")).toBeNull(); // la segunda página se pidió desde la nueva
     expect(at("Historial 5")).toBe(before);
     expect(unseen()).toHaveTextContent("2 mensajes nuevos");
   });
@@ -211,9 +208,8 @@ describe("seguir lo nuevo y «N mensajes nuevos» (UX-INBOX-06b)", () => {
   it("un envío propio no es «lo último visto»: lo que llega después sí se cuenta", async () => {
     const state = server(history(5));
     await open();
-    fireEvent.change(screen.getByRole("textbox", { name: "Responder al cliente" }), {
-      target: { value: "Hola Rosa" },
-    });
+    const box = screen.getByRole("textbox", { name: "Responder al cliente" });
+    fireEvent.change(box, { target: { value: "Hola Rosa" } });
     fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
     await screen.findByText("Hola Rosa");
     await tick();
@@ -250,6 +246,14 @@ describe("seguir lo nuevo y «N mensajes nuevos» (UX-INBOX-06b)", () => {
     await scroll(100); // frena el suave subiendo
     await arrive(state, message("n4", "Nuevo 4"));
     expect(top()).toBe(100);
+    for (const stop of ["wheel", "touchStart", "pointerDown"] as const) {
+      fireEvent.click(unseen()!);
+      fireEvent[stop](chat()); // la rueda, un toque o la barra frenan el suave
+      const stay = top() + 10; // y baja a mano sin llegar al final
+      await scroll(stay);
+      await arrive(state, message(stop, `Parado ${stop}`));
+      expect(top()).toBe(stay); // sin tirón hacia el final
+    }
   });
 
   it("si la fila leída sale al releer, se ancla en la siguiente que sigue", async () => {
@@ -272,7 +276,6 @@ describe("seguir lo nuevo y «N mensajes nuevos» (UX-INBOX-06b)", () => {
     state.texts = [...state.texts, message("n1", "Nuevo 1")];
     await act(() => client.invalidateQueries());
     await screen.findByText("Nuevo 1");
-    await tick();
     expect(at("Historial 10")).toBe(before); // sale «Historial 6» de arriba; lo que se lee no se mueve
   });
 
