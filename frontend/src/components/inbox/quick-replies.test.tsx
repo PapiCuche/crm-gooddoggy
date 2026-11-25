@@ -210,6 +210,10 @@ describe("respuestas rápidas en el cuadro de respuesta (F6-08b)", () => {
     await type("/delivery-l");
     fireEvent.click(await screen.findByRole("option", { name: /Envío en Lima/ }));
     await waitFor(() => expect(box()).resolves.toHaveValue(rendered.text));
+    await openChat(/Juan Pérez/); // lo insertado queda en el borrador de Rosa (UX-INBOX-04)
+    expect(await box()).toHaveValue("");
+    await openChat();
+    expect(await box()).toHaveValue(rendered.text);
     expect(s.sends()).toEqual([]);
     await type("Hola Rosa, el envío en Lima llega hoy.");
     fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
@@ -280,22 +284,6 @@ describe("respuestas rápidas en el cuadro de respuesta (F6-08b)", () => {
     await waitFor(() =>
       expect(s.sends()).toEqual([expect.objectContaining({ body: "hola, te escribo yo" })]),
     );
-  });
-
-  it("lo insertado queda en el borrador de su conversación al cambiar y volver, sin enviar (UX-INBOX-04)", async () => {
-    const s = server();
-    show();
-    await openChat();
-    await type("/delivery-l");
-    await waitFor(() => expect(options()).toHaveLength(1));
-    await key("Enter");
-    await waitFor(() => expect(box()).resolves.toHaveValue(rendered.text));
-    await openChat(/Juan Pérez/);
-    expect(await box()).toHaveValue("");
-    await openChat();
-    expect(await box()).toHaveValue(rendered.text);
-    await settle(50);
-    expect(s.sends()).toEqual([]);
   });
 
   it("cambiar de conversación con un `render` pendiente no lleva el texto a la otra", async () => {

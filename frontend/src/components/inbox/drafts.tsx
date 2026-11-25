@@ -11,16 +11,13 @@ import {
 
 import type { Mode } from "./composer";
 
-// El intento: su id y el texto con que se probó primero; `media`, si llevaba un archivo (no se guarda).
-// `sending`: hay un envío en curso; volver a la conversación no deja salir otro hasta que termine.
+// El intento (id, primer texto y si llevaba archivo, que no se guarda) y si hay un envío en curso.
 type Attempt = { id: string; first: string; media: boolean };
 export type Draft = { text: string; attempt: Attempt | null; sending: boolean };
 const EMPTY: Draft = { text: "", attempt: null, sending: false };
 
-// Los borradores de una organización (UX-INBOX-04): solo en la memoria de la pestaña, nunca en el
-// almacenamiento del navegador. Clave: organización, conversación y modo; la de otra organización no
-// se escribe (ni, por eso, se lee). Al cerrarse (otra organización, cerrar sesión, una negativa de la
-// API) se vacía, y lo que llegue después (un envío que termina) no lo rellena.
+// Borradores de una organización (UX-INBOX-04), solo en la memoria de la pestaña. Clave: organización,
+// conversación y modo. Cerrado, se vacía y no acepta lo que llegue después (un envío que termina).
 export class Drafts {
   #rows = new Map<string, Draft>();
   #listeners = new Set<() => void>();
@@ -67,15 +64,10 @@ export function DraftsProvider({ organization, children }: Props) {
   return <Context.Provider value={drafts}>{children}</Context.Provider>;
 }
 
-export function useDrafts() {
-  const drafts = useContext(Context);
-  if (!drafts) throw new Error("useDrafts se usa dentro de una ruta de organización");
-  return drafts;
-}
-
-// Lo que se lee del almacén, al día con cada cambio (también los que llegan tras desmontar un cuadro).
+// Lo que se lee del almacén, al día con cada cambio; `(all) => all` da el almacén.
 export function useDraftsValue<T>(pick: (drafts: Drafts) => T) {
-  const drafts = useDrafts();
+  const drafts = useContext(Context);
+  if (!drafts) throw new Error("useDraftsValue se usa dentro de una ruta de organización");
   const read = () => pick(drafts);
   return useSyncExternalStore(drafts.subscribe, read, read);
 }

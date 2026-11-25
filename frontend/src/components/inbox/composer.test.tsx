@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TenantProvider } from "@/components/app-shell/tenant-context";
 import type { Conversation, Grant, Message, SelfContext } from "@/lib/api/model";
-import { mockApi, renderApp } from "@/test-utils";
+import { hangPosts, mockApi, renderApp } from "@/test-utils";
 
 import { Inbox } from "./inbox";
 
@@ -103,7 +103,6 @@ const show = (permissions: Grant[] = grants("conversations.view", "messages.send
       <Inbox />
     </TenantProvider>,
   );
-// El chat de esa conversación se abrió (su lista de mensajes puede estar vacía).
 const openChat = async (name = /Rosa Díaz/) => {
   fireEvent.click(await screen.findByRole("button", { name }));
   await waitFor(() => expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent(name));
@@ -128,6 +127,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 describe("cuadro de redacción (F6-04c)", () => {
@@ -508,8 +508,7 @@ describe("teclado del teléfono (UX-INBOX-03)", () => {
     fireEvent.click(button); // en el mismo instante, el mismo botón
     await settle();
     expect(s.posts()).toHaveLength(1);
-    // «Volver» y reabrir con el envío en curso: no sale otro. Si termina con el chat cerrado, vacía
-    // el borrador y libera el siguiente (UX-INBOX-04).
+    // «Volver» y reabrir en curso: no sale otro; si termina con el chat cerrado, se vacía (UX-INBOX-04).
     const back = async () => {
       fireEvent.click(screen.getByRole("button", { name: "Volver a las conversaciones" }));
       await waitFor(() => expect(screen.queryByRole("heading", { level: 2 })).toBeNull());
@@ -532,8 +531,6 @@ describe("teclado del teléfono (UX-INBOX-03)", () => {
 });
 
 describe("borradores por organización, conversación y modo (UX-INBOX-04)", () => {
-  const OK: Reply = { status: 202, body: saved("s1", "ok") };
-  const FAIL: Reply = { status: 500, body: { code: "INTERNAL_ERROR" } };
   const toNote = () => fireEvent.click(screen.getByRole("button", { name: "Nota interna" }));
   const away = async () => (await openChat(/Juan Pérez/), await openChat()); // ir a Juan y volver
 
@@ -556,28 +553,29 @@ describe("borradores por organización, conversación y modo (UX-INBOX-04)", () 
     expect(await box("Nota interna")).toHaveValue("Pidió delivery");
     expect([storage.mock.calls, localStorage.length, sessionStorage.length]).toEqual([[], 0, 0]);
     expect(indexedDB.open).not.toHaveBeenCalled();
-    storage.mockRestore();
   });
 
-  it("un fallo se queda al salir y volver, y «Enviar» reutiliza su id", async () => {
-    let reply = FAIL;
-    const s = server({ send: () => reply });
+  it("sin respuesta, a los 30 s se libera; el texto se queda y, al volver, lleva su id", async () => {
+    const s = server();
+    const net = hangPosts(s.api);
     show();
     await openChat();
     await type("Hola Rosa");
     fireEvent.click(sendButton());
-    await screen.findByRole("alert");
+    await waitFor(() => expect(net.waits).toEqual([30_000]));
+    net.expire();
+    expect(await screen.findByRole("alert")).toHaveTextContent("No hay conexión con el servidor");
+    expect(await box()).not.toHaveAttribute("readonly");
     await away();
     expect(await box()).toHaveValue("Hola Rosa");
-    reply = OK;
+    net.answer();
     fireEvent.click(sendButton());
     await waitFor(() => expect(box()).resolves.toHaveValue(""));
     const [first, retry] = s.ids();
     expect(retry).toBe(first);
   });
 
-  // Misma dirección y mismos ids: la peor coincidencia de claves. Otra persona de la misma
-  // organización es quien entra tras cerrar sesión en la misma pestaña.
+  // Mismos ids y dirección; otra persona de la misma organización entra tras cerrar sesión.
   it.each([
     ["otra organización", { organization: { ...tenant.organization, id: "o2" } }],
     ["otra persona de la misma organización", { user: { ...tenant.user, id: "u2" } }],

@@ -35,7 +35,7 @@ import { type ApiErrorKey, apiErrorKey } from "@/lib/api-errors";
 import type { ApiError } from "@/lib/http";
 import { cn } from "@/lib/utils";
 
-import { useDrafts, useDraftsValue } from "./drafts";
+import { useDraftsValue } from "./drafts";
 import { fileSize } from "./media-file";
 import { coarse, useCoarse } from "./mobile";
 import { useQuickReplies } from "./quick-replies";
@@ -217,15 +217,12 @@ function ComposeBox({
   const client = useQueryClient();
   const field = useId();
   const box = useRef<HTMLTextAreaElement>(null);
-  // El borrador es el texto: se edita siempre por su clave, sobre lo que tiene ahora.
-  const drafts = useDrafts();
-  const draftKey = drafts.key(conversation.id, mode);
-  const text = useDraftsValue((all) => all.get(draftKey).text);
-  // Un envío en curso, también el que salió antes de cerrar el chat y volver: no sale otro mientras.
-  const busy = useDraftsValue((all) => all.get(draftKey).sending);
+  const drafts = useDraftsValue((all) => all); // el texto es el borrador: se edita por su clave
+  const draft = drafts.key(conversation.id, mode);
+  const text = useDraftsValue((all) => all.get(draft).text);
+  const busy = useDraftsValue((all) => all.get(draft).sending);
   const setText = (next: string | ((current: string) => string)) =>
-    drafts.update(draftKey, ({ text }) => ({ text: typeof next === "string" ? next : next(text) }));
-  // El intento solo se olvida si sigue siendo el de ese envío (otro cuadro pudo empezar otro).
+    drafts.update(draft, ({ text }) => ({ text: typeof next === "string" ? next : next(text) }));
   const forget = (sent: Outgoing) =>
     drafts.update(sent.draft, ({ attempt }) =>
       attempt?.id === sent.client_message_id ? { attempt: null } : {},
@@ -294,16 +291,23 @@ function ComposeBox({
   const send = useMutation<Message, ApiError, Outgoing>({
     mutationFn: ({ file: attached, client_message_id, body }) => {
       const request = { client_message_id, body }; // la clave del borrador no va a la API
+      // Sin respuesta en el plazo es un error de red: libera el cuadro; el reintento lleva el id.
+      const options = { signal: AbortSignal.timeout(attached ? 120_000 : 30_000) };
       return note
-        ? conversationNotesCreate(slug, conversation.id, request)
+        ? conversationNotesCreate(slug, conversation.id, request, options)
         : attached
-          ? conversationMediaSend(slug, conversation.id, {
-              client_message_id: request.client_message_id,
-              file: attached,
-              // Sin pie de foto el campo no va: la ruta responde 400 a un `caption` vacío.
-              caption: request.body.trim() ? request.body : undefined,
-            })
-          : conversationMessagesSend(slug, conversation.id, request);
+          ? conversationMediaSend(
+              slug,
+              conversation.id,
+              {
+                client_message_id: request.client_message_id,
+                file: attached,
+                // Sin pie de foto el campo no va: la ruta responde 400 a un `caption` vacío.
+                caption: request.body.trim() ? request.body : undefined,
+              },
+              options,
+            )
+          : conversationMessagesSend(slug, conversation.id, request, options);
     },
     onSettled: (_done, _error, request) => drafts.update(request.draft, () => ({ sending: false })),
     onMutate: async (request) => {
@@ -391,25 +395,18 @@ function ComposeBox({
   });
 
   const submit = () => {
-    // Se mira en el almacén: dos toques en el mismo instante, o volver con uno en curso, no salen.
-    if (drafts.get(draftKey).sending || closed || over || empty) return;
+    if (drafts.get(draft).sending || closed || over || empty) return;
     // Reintentar reutiliza el id mientras el texto empiece por el que falló (también con lo que se
     // insertó o escribió después) y el archivo sea el mismo: si el primero llegó al servidor sin
-    // respuesta, el mismo id no deja que salga dos veces. Otro texto empieza un intento nuevo. El
-    // intento vive en el borrador: volver a la conversación y reintentar usa el mismo id.
-    let tried = drafts.get(draftKey).attempt;
+    // respuesta, el mismo id no deja que salga dos veces. Otro texto empieza un intento nuevo.
+    let tried = drafts.get(draft).attempt;
     const sameFile = tried?.media ? file !== null && file === sentFile.current : file === null;
     if (!tried || !text.startsWith(tried.first) || !sameFile) {
       tried = { id: uuid(), first: text, media: file !== null };
     }
     sentFile.current = file;
-    drafts.update(draftKey, () => ({ attempt: tried, sending: true }));
-    send.mutate({
-      client_message_id: tried.id,
-      body: text,
-      file: file ?? undefined,
-      draft: draftKey,
-    });
+    drafts.update(draft, () => ({ attempt: tried, sending: true }));
+    send.mutate({ client_message_id: tried.id, body: text, file: file ?? undefined, draft });
   };
   // Solo JPEG, PNG o PDF dentro de su tope; si no, se explica y el archivo no queda adjunto.
   const pick = (chosen: File | undefined) => {

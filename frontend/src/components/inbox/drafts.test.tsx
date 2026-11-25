@@ -4,10 +4,9 @@ import { describe, expect, it, vi } from "vitest";
 import { TenantProvider } from "@/components/app-shell/tenant-context";
 import type { SelfContext } from "@/lib/api/model";
 
-import { Drafts, useDrafts } from "./drafts";
+import { Drafts, useDraftsValue } from "./drafts";
 
-// El almacén de borradores (UX-INBOX-04). El recorrido en el Inbox está en `composer.test.tsx`.
-describe("el almacén de borradores", () => {
+describe("el almacén de borradores (UX-INBOX-04; el recorrido, en `composer.test.tsx`)", () => {
   it("separa conversación y modo; un envío en curso se queda; otra organización no escribe", () => {
     const acme = new Drafts("o1");
     const [reply, note] = [acme.key("1", "reply"), acme.key("1", "note")];
@@ -26,7 +25,7 @@ describe("el almacén de borradores", () => {
 
   it("al desmontarse (cerrar sesión, otra organización) se vacía, avisa y no acepta nada más", () => {
     let drafts!: Drafts;
-    const Probe = () => ((drafts = useDrafts()), null);
+    const Probe = () => ((drafts = useDraftsValue((all) => all)), null);
     const tenant = { user: { id: "u1" }, organization: { id: "o1" } } as SelfContext;
     const view = render(<TenantProvider value={tenant}>{<Probe />}</TenantProvider>);
     const [key, heard] = [drafts.key("1", "reply"), vi.fn()];

@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TenantProvider } from "@/components/app-shell/tenant-context";
 import type { Conversation, Message, SelfContext } from "@/lib/api/model";
-import { mockApi, renderApp } from "@/test-utils";
+import { hangPosts, mockApi, renderApp } from "@/test-utils";
 
 import { Inbox } from "./inbox";
 
@@ -100,6 +100,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 describe("adjuntar desde el cuadro de redacción (F7-09b3)", () => {
@@ -184,21 +185,22 @@ describe("adjuntar desde el cuadro de redacción (F7-09b3)", () => {
     expect(second!.get("client_message_id")).not.toBe(first!.get("client_message_id"));
   });
 
-  it("subiendo, volver no deja enviar el pie aparte; si falla, sin archivo es otro id (UX-INBOX-04)", async () => {
-    let release = () => {};
-    const held = new Promise<void>((resolve) => (release = resolve));
+  it("sin respuesta en 120 s se libera y reintenta con el id; al volver, el pie solo es otro id (UX-INBOX-04)", async () => {
     const s = server(() => ({ status: 500, body: { code: "INTERNAL_ERROR" } }));
     const posts = () => s.api.mock.calls.filter(([, init]) => init?.method === "POST");
-    const inner = s.api.getMockImplementation()!;
-    s.api.mockImplementation(async (input, init) => {
-      if (init?.method === "POST") await held;
-      return inner(input, init);
-    });
+    const net = hangPosts(s.api);
     show();
     await openChat();
     await attach(pdf());
     fireEvent.change(await caption(), { target: { value: "Su cotización" } });
     send();
+    await waitFor(() => expect(net.waits).toEqual([120_000]));
+    net.expire(); // la subida no respondió: el archivo y el id se quedan
+    await screen.findByRole("alert");
+    send("Reintentar");
+    await waitFor(() => expect(s.forms()).toHaveLength(2));
+    const [first, again] = s.forms().map((form) => form.get("client_message_id"));
+    expect(again).toBe(first);
     fireEvent.click(screen.getByRole("button", { name: "Volver a las conversaciones" }));
     await waitFor(() => expect(screen.queryByRole("heading", { level: 2 })).toBeNull());
     await openChat();
@@ -206,13 +208,12 @@ describe("adjuntar desde el cuadro de redacción (F7-09b3)", () => {
     expect(box).toHaveValue("Su cotización"); // el archivo no se guarda: queda el pie
     send("Enviando…");
     fireEvent.keyDown(box, { key: "Enter" });
-    expect(posts()).toHaveLength(1);
-    release(); // la subida falla: el pie se queda; sin el archivo, otro mensaje lleva otro id
+    expect(posts()).toHaveLength(2); // con la subida en curso no sale otro
+    net.expire();
     await waitFor(() => expect(box).not.toHaveAttribute("readonly"));
     send();
-    await waitFor(() => expect(posts()).toHaveLength(2));
-    const text = JSON.parse(String(posts()[1]![1]!.body)).client_message_id;
-    expect(text).not.toBe(s.forms()[0]!.get("client_message_id"));
+    await waitFor(() => expect(posts()).toHaveLength(3));
+    expect(JSON.parse(String(posts()[2]![1]!.body)).client_message_id).not.toBe(first);
   });
 
   it("una imagen con pie de foto lo envía tal cual; solo espacios no cuenta como pie", async () => {

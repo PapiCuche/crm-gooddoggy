@@ -220,6 +220,11 @@ describe("panel del copiloto (F8-09a)", () => {
     act(() => vi.runOnlyPendingTimers());
     await wait(SETTLE + 200);
     expect(s.sent()).toHaveLength(0);
+    // «Volver» y reabrir: lo insertado sigue en el borrador, sin enviar (UX-INBOX-04).
+    fireEvent.click(screen.getByRole("button", { name: "Volver a las conversaciones" }));
+    await waitFor(() => expect(screen.queryByRole("heading", { level: 2 })).toBeNull());
+    await openChat();
+    expect(await box()).toHaveValue(SAVED);
     // Quien atiende lo edita y lo envía con Enter, que vuelve a enviar: ese es el único envío.
     fireEvent.change(await box(), { target: { value: "Hola 🐶 Rosa: 30 soles." } });
     fireEvent.keyDown(await box(), { key: "Enter" });
@@ -284,21 +289,6 @@ describe("panel del copiloto (F8-09a)", () => {
     await waitFor(() => expect(box()).resolves.toHaveValue(`Buenas tardes.\n\n${SAVED}`));
     expect(await box()).toBeVisible();
     expect(await box()).toHaveFocus();
-  });
-
-  it("lo insertado sigue tras «Volver» (390 px) y reabrir; nada se envía (UX-INBOX-04)", async () => {
-    const s = server();
-    show();
-    await openChat();
-    await draft();
-    fireEvent.click(screen.getByRole("button", { name: "Insertar" }));
-    await waitFor(() => expect(box()).resolves.toHaveValue(SAVED));
-    fireEvent.click(screen.getByRole("button", { name: "Volver a las conversaciones" }));
-    await waitFor(() => expect(screen.queryByRole("heading", { level: 2 })).toBeNull());
-    await openChat();
-    expect(await box()).toHaveValue(SAVED);
-    await wait(SETTLE + 100);
-    expect(s.sent()).toHaveLength(0);
   });
 
   it("«Descartar» quita la sugerencia sin tocar el cuadro ni llamar a nada", async () => {
