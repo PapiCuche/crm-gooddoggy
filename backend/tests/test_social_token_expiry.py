@@ -103,7 +103,7 @@ def test_connecting_reads_the_expiry_that_counts(
 @pytest.mark.parametrize(
     "case, reason",
     [("no_app", "no_app"), ("no_secret", "no_app"), ("wrong_secret", "app_token_rejected"),
-     ("old_first", "app_token_rejected"), ("meta_100", "app_token_rejected"),
+     ("old_first", "app_token_rejected"), ("meta_100", "rejected"),
      ("down", "unavailable"), ("invalid", "invalid_token"), ("other_app", "other_app"),
      ("negative", "malformed"), ("bool", "malformed"), ("text", "malformed"),
      ("huge", "malformed")],
@@ -135,7 +135,7 @@ def test_an_unreadable_expiry_is_unknown_logs_why_and_never_blocks_the_connectio
     )
     logged = [r for r in caplog.records if "channel.token_expiry_unknown" in r.getMessage()]
     assert len(logged) == 1 and f"'reason': '{reason}'" in logged[0].getMessage()
-    loud = reason in ("no_app", "app_token_rejected", "malformed")
+    loud = reason in ("no_app", "app_token_rejected", "malformed", "other_app")  # F7b-12c
     assert logged[0].levelno == (logging.WARNING if loud else logging.INFO)
 
 
@@ -342,7 +342,7 @@ def test_a_concurrent_sweep_waits_for_the_claim_and_does_not_warn_twice(
 
 
 def test_the_daily_pass_reads_an_unknown_expiry_once_and_the_hourly_one_never_asks(
-    crm: SimpleNamespace, meta: Any, settings: Any
+    crm: SimpleNamespace, meta: Any, settings: Any, migrator: DB
 ) -> None:
     meta.graph.debug = {"expires_at": at(2)}
     connect(crm, "MESSENGER")  # con un aviso pendiente
@@ -354,6 +354,8 @@ def test_the_daily_pass_reads_an_unknown_expiry_once_and_the_hourly_one_never_as
     meta.graph.debug = None  # Meta no contesta: sigue sin saberse, una llamada por pasada
     assert tasks.token_expiry(backfill=True) == {"UNKNOWN": 1}
     assert len(meta.graph.calls) == before + 1
+    assert tasks.token_expiry(backfill=True) == {}  # F7b-12c: hasta el día siguiente, no
+    migrator.execute("UPDATE credentials SET expiry_attempt_at = now() - interval '1 day'")
     meta.graph.debug = {"expires_at": at(2)}
     assert tasks.token_expiry(backfill=True) == {"READ": 1, "WARNED": 1}
     assert tasks.token_expiry(backfill=True) == {}  # leída: no se vuelve a preguntar
@@ -368,12 +370,12 @@ def test_a_read_that_lost_the_race_keeps_the_first_one(
     made = connect(crm, "MESSENGER")[1]
     settings.META_APP_ID, real = APP_ID, expiry.read
 
-    def read(platform: str, token: str) -> Any:
+    def read(platform: str, token: str, **ids: str) -> Any:
         migrator.execute(
             "UPDATE credentials SET expiry_checked_at = now(), expires_at = NULL WHERE id = %s",
             [made.pk],
         )
-        return real(platform, token)
+        return real(platform, token, **ids)
 
     monkeypatch.setattr(expiry, "read", read)
     meta.graph.debug = {"expires_at": at(2)}
@@ -464,7 +466,15 @@ def test_main_image_writes_still_pass_on_the_new_schema(crm: SimpleNamespace, me
             "INSERT INTO credentials (id, organization_id, owner_type, owner_id, ciphertext, "
             "key_version, last_four, expires_at, rotated_at, revoked_at, created_by_user_id, "
             "created_at) VALUES (gen_random_uuid(), %s, 'CHANNEL_ACCOUNT', %s, %s, %s, 'ABCD', "
-            "NULL, now(), NULL, NULL, now()) RETURNING expiry_checked_at, expiry_warned_days",
+            "NULL, now(), NULL, NULL, now()) RETURNING expiry_checked_at, expiry_warned_days, id",
             [crm.a, account.pk, box, version],
         )
-        assert cursor.fetchone() == (None, None)
+        *empty, new = cursor.fetchone()
+        assert empty == [None, None]
+        cursor.execute(  # F7b-12c: la lectura, el aviso y el descubrimiento de esa imagen
+            "UPDATE credentials SET expiry_checked_at = now(), expires_at = now() + interval "
+            "'2 days' WHERE id = %s AND expiry_checked_at IS NULL", [new])  # fmt: skip
+        cursor.execute("UPDATE credentials SET expiry_warned_days = 3 WHERE id = %s", [new])
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT public.credentials_expiry_due(%s, %s)", [True, 50])
+        assert cursor.fetchall() == []

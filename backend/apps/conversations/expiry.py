@@ -6,16 +6,20 @@
 `sweep` (cada hora) avisa (correo a `channels.manage` y alerta) a 10 y 3 días, una vez por umbral
 y token: un `UPDATE` condicional reclama el umbral con su auditoría; el correo sale tras confirmar
 y no se reintenta. Nada lleva el token, su final ni el app secret.
+F7b-12c: solo entra lo que tiene un aviso pendiente o (a diario) una caducidad que se puede
+preguntar; cada pregunta se reclama antes (`expiry_attempt_at`) y no se repite en `WAIT`, y una
+pasada no pasa de `PASS_SECONDS`.
 """
 
 import datetime as dt
 from collections import Counter
+from time import monotonic
 from typing import Any, NamedTuple
 from uuid import UUID
 
 from django.conf import settings
 from django.db import connection
-from django.db.models import Q
+from django.db.models import F, Q
 from django.db.models.functions import Now
 
 from apps.access.selectors import holders
@@ -33,6 +37,9 @@ from core.tenancy.scope import require_scope, tenant_scope
 logger = get_logger(__name__)
 CHECKED = ("PENDING", "CONNECTED", "DEGRADED")  # las que se comprueban (ADR-029 §12)
 MAX_ORGS, BATCH = 50, 20  # organizaciones por pasada y credenciales por organización
+WAIT = dt.timedelta(hours=23)  # entre dos preguntas a Meta por una credencial (la de la 0065)
+PASS_SECONDS = 120  # lo máximo que una pasada retiene un worker, como `HEALTH_PASS_SECONDS`
+LOUD = ("no_app", "app_token_rejected", "malformed", "other_app")  # de la configuración: aviso
 EVENT, ACTION = "channel.alert.token_expiring", "channel_account.token_expiring"
 LINK_PATH = "/o/{slug}/canales"
 SUBJECT = "El token de un canal del CRM caduca en menos de {days} días"
@@ -51,12 +58,13 @@ class Known(NamedTuple):
     at: dt.datetime | None
 
 
-def read(platform: str, token: str) -> Known | None:
-    """La caducidad que cuenta para una cuenta de `platform` con `token`; `None`, no se sabe."""
+def read(platform: str, token: str, **ids: str) -> Known | None:
+    """La caducidad que cuenta para una cuenta de `platform` con `token`; `None`, no se sabe.
+    `ids` (organización y cuenta, si ya existen) van al registro."""
     seen = graph.token_expiry(token)
-    if isinstance(seen, str):  # solo el motivo; los de configuración, como aviso
-        level = "warning" if seen in ("no_app", "app_token_rejected", "malformed") else "info"
-        getattr(logger, level)("channel.token_expiry_unknown", reason=seen)
+    if isinstance(seen, str):  # solo el motivo y los ids; los de configuración, como aviso
+        level = "warning" if seen in LOUD else "info"
+        getattr(logger, level)("channel.token_expiry_unknown", reason=seen, **ids)
         return None
     counted = [seen.expires_at]
     if platform == Platform.INSTAGRAM:
@@ -64,31 +72,63 @@ def read(platform: str, token: str) -> Known | None:
     return Known(min((at for at in counted if at is not None), default=None))
 
 
-def _targets(alias: str, wanted: Q) -> list[tuple[ChannelAccount, Credential]]:
-    """Las credenciales vivas que cumplen `wanted` de cuentas sociales vivas que se comprueban."""
+def warning_due() -> Q:
+    """Un aviso pendiente, exacto: sin aviso y a 10 días, o avisada a 10 y a 3 días (la `0065`)."""
+    first, last = max(WARN_DAYS), min(WARN_DAYS)
+    return Q(expiry_warned_days__isnull=True, expires_at__lte=Now() + dt.timedelta(days=first)) | Q(
+        expiry_warned_days=first, expires_at__lte=Now() + dt.timedelta(days=last)
+    )
+
+
+def askable() -> Q:
+    """Una caducidad sin leer que se puede preguntar: sin intento en `WAIT` (futuro: ninguno)."""
+    waited = Q(expiry_attempt_at__isnull=True) | Q(expiry_attempt_at__lte=Now() - WAIT)
+    return Q(waited | Q(expiry_attempt_at__gt=Now()), expiry_checked_at__isnull=True)
+
+
+def _targets(ctx: TenantContext, wanted: Q, *order: Any) -> list[tuple[ChannelAccount, Credential]]:
+    """Las credenciales vivas que cumplen `wanted` de cuentas sociales vivas que se comprueban de
+    una organización accesible, en el orden `order` (el turno)."""
+    alias = require_scope(ctx)
+    orgs = Organization.objects.using(alias).filter(status__in=ACCESSIBLE_STATUSES)
+    if not orgs.filter(pk=ctx.organization_id).exists():
+        return []
     found = ChannelAccount.objects.using(alias).filter(
         platform__in=SOCIAL, deleted_at__isnull=True, status__in=CHECKED,
         credential_id__isnull=False,
     )  # fmt: skip
     accounts = {a.credential_id: a for a in found}
     live = Credential.objects.using(alias).filter(wanted, pk__in=accounts, revoked_at__isnull=True)
-    rows = live.order_by("expires_at", "created_at")[:BATCH]  # la más urgente primero
+    rows = live.order_by(*order, "pk")[:BATCH]
     return [(accounts[c.pk], c) for c in rows if accounts[c.pk].pk == c.owner_id]
 
 
-def _backfill(organization_id: UUID, done: Counter[str]) -> None:
-    """Lee en Meta la caducidad que no se sabe; el token se abre solo durante la llamada."""
+def _backfill(organization_id: UUID, done: Counter[str], deadline: float) -> None:
+    """Lee en Meta la caducidad que no se sabe, el intento más viejo primero. Cada pregunta se
+    reclama antes (confirmada): si Meta no contesta o el worker cae, no se repite en `WAIT`; otra
+    pasada a la vez no la reclama. El token se abre solo durante la llamada."""
     ctx = TenantContext(organization_id, "celery")
     with tenant_scope(ctx):
-        rows = _targets(require_scope(ctx), Q(expiry_checked_at__isnull=True))
+        oldest = F("expiry_attempt_at").asc(nulls_first=True)
+        rows = _targets(ctx, askable(), oldest, "created_at")
     for account, credential in rows:
+        if monotonic() > deadline:
+            done["OUT_OF_TIME"] = 1
+            return
+        with tenant_scope(ctx):
+            claim = Credential.objects.using(require_scope(ctx)).filter(
+                askable(), pk=credential.pk, revoked_at__isnull=True
+            )
+            if not claim.update(expiry_attempt_at=Now()):
+                continue  # otra pasada la reclamó, o ya se leyó
         try:
             token = credentials.open_token(credential)
         except sealed.SealError:
             done["UNREADABLE"] += 1
             continue
         try:
-            known = read(account.platform, token)
+            ids = {"organization_id": str(organization_id), "channel_account_id": str(account.pk)}
+            known = read(account.platform, token, **ids)
         finally:
             del token
         if known is None:
@@ -107,9 +147,7 @@ def _warn(organization_id: UUID) -> list[dict[str, Any]]:
     claimed: list[dict[str, Any]] = []
     with tenant_scope(ctx):
         alias = require_scope(ctx)
-        due = Q(expires_at__lte=Now() + dt.timedelta(days=max(WARN_DAYS)))
-        due &= Q(expiry_warned_days__isnull=True) | Q(expiry_warned_days__gt=min(WARN_DAYS))
-        rows = _targets(alias, due)
+        rows = _targets(ctx, warning_due(), "expires_at", "created_at")  # la más urgente primero
         org = Organization.objects.using(alias).filter(
             pk=organization_id, status__in=ACCESSIBLE_STATUSES
         ).values_list("slug", "name").first()  # fmt: skip
@@ -174,18 +212,24 @@ def _send(organization_id: UUID, warning: dict[str, Any]) -> None:
 
 def sweep(*, backfill: bool = False) -> dict[str, int]:
     """Con `backfill`, primero las caducidades que no se saben; después, los avisos. Las
-    organizaciones, de `credentials_expiry_due` (SECURITY DEFINER, solo ids). Un fallo en una
-    organización no detiene las demás y solo se registra su tipo."""
+    organizaciones, de `credentials_expiry_due` (SECURITY DEFINER, solo ids), el turno más viejo
+    primero. Un fallo en una organización no detiene las demás y solo se registra su tipo. Pasados
+    `PASS_SECONDS` no empieza otra organización ni otra pregunta (`OUT_OF_TIME`): sigue la próxima
+    pasada. Nunca corta entre reclamar un aviso y enviarlo."""
     if not settings.META_ENABLED:
         return {}
     with connection.cursor() as cursor:
         cursor.execute("SELECT public.credentials_expiry_due(%s, %s)", [backfill, MAX_ORGS])
         organizations = [UUID(str(row[0])) for row in cursor.fetchall()]
     done: Counter[str] = Counter()
+    deadline = monotonic() + PASS_SECONDS
     for organization_id in organizations:
+        if monotonic() > deadline:
+            done["OUT_OF_TIME"] = 1
+            break
         try:
             if backfill:
-                _backfill(organization_id, done)
+                _backfill(organization_id, done, deadline)
             for warning in _warn(organization_id):
                 _send(organization_id, warning)
                 done["WARNED"] += 1
