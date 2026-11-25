@@ -221,8 +221,10 @@ function ComposeBox({
   const drafts = useDrafts();
   const draftKey = drafts.key(conversation.id, mode);
   const text = useDraftsValue((all) => all.get(draftKey).text);
-  const setText = (change: (current: string) => string) =>
-    drafts.update(draftKey, (current) => ({ text: change(current.text) }));
+  // Un envío en curso, también el que salió antes de cerrar el chat y volver: no sale otro mientras.
+  const busy = useDraftsValue((all) => all.get(draftKey).sending);
+  const setText = (next: string | ((current: string) => string)) =>
+    drafts.update(draftKey, ({ text }) => ({ text: typeof next === "string" ? next : next(text) }));
   // El intento solo se olvida si sigue siendo el de ese envío (otro cuadro pudo empezar otro).
   const forget = (sent: Outgoing) =>
     drafts.update(sent.draft, ({ attempt }) =>
@@ -235,7 +237,6 @@ function ComposeBox({
   const [refusal, setRefusal] = useState<string | null>(null); // el archivo elegido no se adjuntó
   const picker = useRef<HTMLInputElement>(null);
   const settleUntil = useRef(0); // hasta cuándo un Enter no envía lo recién insertado
-  const inFlight = useRef(false); // dos toques antes de que se pinte `isPending`: una petición
   const tap = useCoarse() ? "Touch" : ""; // la ayuda de teclas y la tecla del teléfono
   const [placed, setPlaced] = useState(0); // cada inserción del copiloto: enfocar al final
   const format = useFormatter();
@@ -266,7 +267,7 @@ function ComposeBox({
     conversationId: conversation.id,
     text,
     insert: (value) => {
-      setText(() => value);
+      setText(value);
       setProblem(null);
       box.current?.focus();
       requestAnimationFrame(() => box.current?.setSelectionRange(value.length, value.length));
@@ -304,7 +305,7 @@ function ComposeBox({
             })
           : conversationMessagesSend(slug, conversation.id, request);
     },
-    onSettled: () => (inFlight.current = false),
+    onSettled: (_done, _error, request) => drafts.update(request.draft, () => ({ sending: false })),
     onMutate: async (request) => {
       await client.cancelQueries({ queryKey: key });
       onQueued();
@@ -363,7 +364,7 @@ function ComposeBox({
       // Ese id ya es de otro envío: reintentar con él chocaría siempre. Si el texto creció tras un
       // fallo, lo primero pudo haber salido: se avisa en lugar de mandarlo otra vez.
       const tried = drafts.get(request.draft).attempt;
-      const grown = tried !== null && tried.first !== request.body;
+      const grown = tried?.id === request.client_message_id && tried.first !== request.body;
       if (error.code === "CLIENT_MESSAGE_ID_TAKEN") forget(request);
       const reason = failure(error);
       if (DROP_FILE_ON.includes(reason)) {
@@ -390,7 +391,8 @@ function ComposeBox({
   });
 
   const submit = () => {
-    if (inFlight.current || send.isPending || closed || over || empty) return;
+    // Se mira en el almacén: dos toques en el mismo instante, o volver con uno en curso, no salen.
+    if (drafts.get(draftKey).sending || closed || over || empty) return;
     // Reintentar reutiliza el id mientras el texto empiece por el que falló (también con lo que se
     // insertó o escribió después) y el archivo sea el mismo: si el primero llegó al servidor sin
     // respuesta, el mismo id no deja que salga dos veces. Otro texto empieza un intento nuevo. El
@@ -399,10 +401,9 @@ function ComposeBox({
     const sameFile = tried?.media ? file !== null && file === sentFile.current : file === null;
     if (!tried || !text.startsWith(tried.first) || !sameFile) {
       tried = { id: uuid(), first: text, media: file !== null };
-      drafts.update(draftKey, () => ({ attempt: tried }));
     }
     sentFile.current = file;
-    inFlight.current = true;
+    drafts.update(draftKey, () => ({ attempt: tried, sending: true }));
     send.mutate({
       client_message_id: tried.id,
       body: text,
@@ -449,7 +450,7 @@ function ComposeBox({
         note ? second : cn("max-sm:size-11 max-sm:px-0", first),
       )}
       disabled={closed || empty || over}
-      aria-disabled={send.isPending}
+      aria-disabled={busy}
     >
       {note ? (
         <StickyNote aria-hidden />
@@ -459,7 +460,7 @@ function ComposeBox({
         <Send aria-hidden />
       )}
       <span className={note ? undefined : "max-sm:sr-only"}>
-        {send.isPending ? t(note ? "saving" : "sending") : problem ? t("retry") : idle}
+        {busy ? t(note ? "saving" : "sending") : problem ? t("retry") : idle}
       </span>
     </Button>
   );
@@ -494,7 +495,7 @@ function ComposeBox({
         rows={1}
         value={text}
         disabled={closed}
-        readOnly={send.isPending}
+        readOnly={busy}
         placeholder={note || closed ? undefined : t("placeholder")}
         enterKeyHint={tap ? "enter" : "send"}
         {...quick.field}
@@ -507,7 +508,7 @@ function ComposeBox({
           first,
         )}
         onChange={(event) => {
-          setText(() => event.target.value);
+          setText(event.target.value);
           setProblem(null);
           setRefusal(null);
           setSaved(null);
@@ -537,7 +538,7 @@ function ComposeBox({
             variant="ghost"
             className="size-9 shrink-0 px-0 max-lg:size-11"
             aria-label={t("remove")}
-            disabled={send.isPending}
+            disabled={busy}
             onClick={() => {
               setFile(null);
               setProblem(null);
@@ -550,7 +551,7 @@ function ComposeBox({
         </div>
       ) : null}
       <p role="status" className="sr-only">
-        {send.isPending ? t(note ? "saving" : "sending") : ""}
+        {busy ? t(note ? "saving" : "sending") : ""}
       </p>
       {/* El tope se anuncia solo al cruzar el 90 % y el 100 %: el texto depende del nivel, no de la cuenta. */}
       <p aria-live="polite" className="sr-only">
@@ -617,8 +618,8 @@ function ComposeBox({
                 aria-label={t("attach")}
                 title={t("attach")}
                 disabled={closed}
-                aria-disabled={send.isPending}
-                onClick={() => send.isPending || picker.current?.click()}
+                aria-disabled={busy}
+                onClick={() => busy || picker.current?.click()}
               >
                 <Paperclip aria-hidden />
               </Button>

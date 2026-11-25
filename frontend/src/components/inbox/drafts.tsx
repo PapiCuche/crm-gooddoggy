@@ -12,8 +12,10 @@ import {
 import type { Mode } from "./composer";
 
 // El intento: su id y el texto con que se probó primero; `media`, si llevaba un archivo (no se guarda).
-export type Draft = { text: string; attempt: { id: string; first: string; media: boolean } | null };
-const EMPTY: Draft = { text: "", attempt: null };
+// `sending`: hay un envío en curso; volver a la conversación no deja salir otro hasta que termine.
+type Attempt = { id: string; first: string; media: boolean };
+export type Draft = { text: string; attempt: Attempt | null; sending: boolean };
+const EMPTY: Draft = { text: "", attempt: null, sending: false };
 
 // Los borradores de una organización (UX-INBOX-04): solo en la memoria de la pestaña, nunca en el
 // almacenamiento del navegador. Clave: organización, conversación y modo; la de otra organización no
@@ -29,14 +31,12 @@ export class Drafts {
   #own = (key: string) => key.startsWith(`${this.organization}/`); // los ids son UUID, sin «/»
 
   get = (key: string): Draft => this.#rows.get(key) ?? EMPTY;
-  has = (conversation: string) =>
-    (["reply", "note"] as const).some((mode) => this.get(this.key(conversation, mode)).text.trim());
 
   // Cambia el borrador de esa clave a partir del que hay ahora (nunca de una copia vieja).
   update = (key: string, change: (draft: Draft) => Partial<Draft>) => {
     if (!this.#open || !this.#own(key)) return;
     const next = { ...this.get(key), ...change(this.get(key)) };
-    if (next.text === "" && !next.attempt) this.#rows.delete(key);
+    if (next.text === "" && !next.attempt && !next.sending) this.#rows.delete(key);
     else this.#rows.set(key, next);
     this.#listeners.forEach((listener) => listener());
   };

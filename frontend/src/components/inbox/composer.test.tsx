@@ -508,22 +508,32 @@ describe("teclado del teléfono (UX-INBOX-03)", () => {
     fireEvent.click(button); // en el mismo instante, el mismo botón
     await settle();
     expect(s.posts()).toHaveLength(1);
-    // Cerrar el chat con el envío en curso no bloquea el siguiente.
-    fireEvent.click(screen.getByRole("button", { name: "Volver a las conversaciones" }));
-    await waitFor(() => expect(screen.queryByRole("heading", { level: 2 })).toBeNull());
+    // «Volver» y reabrir con el envío en curso: no sale otro. Si termina con el chat cerrado, vacía
+    // el borrador y libera el siguiente (UX-INBOX-04).
+    const back = async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Volver a las conversaciones" }));
+      await waitFor(() => expect(screen.queryByRole("heading", { level: 2 })).toBeNull());
+    };
+    await back();
     await openChat();
+    expect(await box()).toHaveValue("Hola");
+    fireEvent.click(sendButton("Enviando…"));
+    await back();
+    s.go();
+    await waitFor(() => expect(s.stored).toHaveLength(1));
+    await settle(); // sus callbacks corren con el cuadro desmontado
+    await openChat();
+    expect(await box()).toHaveValue("");
+    expect(s.posts()).toHaveLength(1);
     await type("Otra vez");
     fireEvent.click(sendButton());
     await waitFor(() => expect(s.posts()).toHaveLength(2));
-    s.go();
   });
 });
 
 describe("borradores por organización, conversación y modo (UX-INBOX-04)", () => {
   const OK: Reply = { status: 202, body: saved("s1", "ok") };
   const FAIL: Reply = { status: 500, body: { code: "INTERNAL_ERROR" } };
-  const marked = (name: RegExp) =>
-    within(screen.getByRole("button", { name })).queryByText("Borrador") !== null;
   const toNote = () => fireEvent.click(screen.getByRole("button", { name: "Nota interna" }));
   const away = async () => (await openChat(/Juan Pérez/), await openChat()); // ir a Juan y volver
 
@@ -540,7 +550,6 @@ describe("borradores por organización, conversación y modo (UX-INBOX-04)", () 
     expect(await box()).toHaveValue(""); // nada de Rosa en el cuadro de Juan
     toNote();
     expect(await box("Nota interna")).toHaveValue("");
-    expect([marked(/Rosa Díaz/), marked(/Juan Pérez/)]).toEqual([true, false]);
     await openChat();
     expect(await box()).toHaveValue("Hola Rosa"); // abre en «Responder», como siempre
     toNote();
@@ -550,45 +559,21 @@ describe("borradores por organización, conversación y modo (UX-INBOX-04)", () 
     storage.mockRestore();
   });
 
-  it("en vuelo, volver y enviar lleva el mismo id; al terminar con el chat cerrado se vacía", async () => {
-    const s = server();
+  it("un fallo se queda al salir y volver, y «Enviar» reutiliza su id", async () => {
+    let reply = FAIL;
+    const s = server({ send: () => reply });
     show();
     await openChat();
-    s.wait();
     await type("Hola Rosa");
     fireEvent.click(sendButton());
-    await away();
-    expect(await box()).toHaveValue("Hola Rosa");
-    fireEvent.click(sendButton()); // el servidor no lo duplica: mismo id
-    await openChat(/Juan Pérez/); // el cuadro de Rosa ya no está montado
-    s.go();
-    await waitFor(() => expect(marked(/Rosa Díaz/)).toBe(false));
-    await openChat();
-    expect(await box()).toHaveValue("");
-    const [first, again] = s.ids();
-    expect(again).toBe(first);
-  });
-
-  it("un fallo se queda al salir y volver, con su id; el envío viejo no olvida el nuevo", async () => {
-    const replies = [OK, FAIL];
-    const s = server({ send: () => replies.shift() ?? OK });
-    show();
-    await openChat();
-    s.wait();
-    await type("Hola Rosa");
-    fireEvent.click(sendButton());
-    await away();
-    await type("Otra cosa");
-    fireEvent.click(sendButton());
-    await waitFor(() => expect(s.posts()).toHaveLength(2));
-    s.go(); // el primero sale bien; el segundo falla y se queda, con su id, al salir y volver
     await screen.findByRole("alert");
     await away();
-    expect(await box()).toHaveValue("Otra cosa");
+    expect(await box()).toHaveValue("Hola Rosa");
+    reply = OK;
     fireEvent.click(sendButton());
-    await waitFor(() => expect(s.posts()).toHaveLength(3));
-    const [first, second, retry] = s.ids();
-    expect([retry === second, second === first]).toEqual([true, false]);
+    await waitFor(() => expect(box()).resolves.toHaveValue(""));
+    const [first, retry] = s.ids();
+    expect(retry).toBe(first);
   });
 
   // Misma dirección y mismos ids: la peor coincidencia de claves. Otra persona de la misma
@@ -615,7 +600,6 @@ describe("borradores por organización, conversación y modo (UX-INBOX-04)", () 
       fireEvent.click(screen.getByRole("button", { name: "Cambiar" }));
       await openChat();
       expect(await box(), `vuelta ${round}`).toHaveValue("");
-      expect(marked(/Rosa Díaz/)).toBe(false);
     }
   });
 });
