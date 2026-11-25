@@ -3,8 +3,10 @@
 - `expiry_attempt_at`: la última vez que la pasada diaria preguntó a Meta por una caducidad que
   no se sabe (la reclama antes de la llamada, con la hora de la base). Hasta 23 horas después no
   se vuelve a preguntar: una vez por pasada diaria (un día menos el margen del horario). Un
-  intento con fecha futura (escrito a mano) cuenta como ninguno. `crm_app` solo puede escribir esa
-  columna nueva (`GRANT UPDATE` por columna, como `health_attempt_at`).
+  intento a más de 5 minutos en el futuro (escrito a mano) cuenta como ninguno; los 5 minutos son
+  el desfase tolerado (`HEALTH_CLOCK_SKEW`, como la `0052`), para que dos pasadas cuyas horas de
+  transacción difieren un instante no reclamen las dos la misma pregunta. `crm_app` solo puede
+  escribir esa columna nueva (`GRANT UPDATE` por columna, como `health_attempt_at`).
 - `credentials_expiry_due` (misma firma: la imagen anterior la sigue llamando igual):
   - solo organizaciones accesibles (`ACTIVE`, `TRIAL`: `ACCESSIBLE_STATUSES`);
   - el predicado exacto de un aviso pendiente, `(sin aviso y caduca en 10 días) o (avisada a 10 y
@@ -37,7 +39,7 @@ BODY = (
     "JOIN public.channel_accounts a ON a.organization_id = c.organization_id "
     "AND a.id = c.owner_id AND a.credential_id = c.id "
     "JOIN public.organizations o ON o.id = c.organization_id "
-    "CROSS JOIN LATERAL (SELECT CASE WHEN c.expiry_attempt_at <= now() "
+    "CROSS JOIN LATERAL (SELECT CASE WHEN c.expiry_attempt_at <= now() + interval '5 minutes' "
     "THEN c.expiry_attempt_at END AS tried) t "
     "WHERE c.revoked_at IS NULL AND a.deleted_at IS NULL "
     "AND a.platform IN ('MESSENGER', 'INSTAGRAM') "

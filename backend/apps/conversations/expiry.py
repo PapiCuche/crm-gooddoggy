@@ -17,7 +17,7 @@ from uuid import UUID
 
 from django.conf import settings
 from django.db import connection
-from django.db.models import F, Q
+from django.db.models import Case, F, Q, When
 from django.db.models.functions import Now
 
 from apps.access.selectors import holders
@@ -35,7 +35,7 @@ from core.tenancy.scope import require_scope, tenant_scope
 logger = get_logger(__name__)
 CHECKED = ("PENDING", "CONNECTED", "DEGRADED")  # las que se comprueban (ADR-029 §12)
 MAX_ORGS, BATCH = 50, 20  # organizaciones por pasada y credenciales por organización
-WAIT = dt.timedelta(hours=23)  # entre dos preguntas a Meta por una credencial (la de la 0065)
+WAIT, SKEW = dt.timedelta(hours=23), dt.timedelta(minutes=5)  # entre preguntas; desfase (0065)
 PASS_SECONDS = 120  # lo máximo que una pasada retiene un worker, como `HEALTH_PASS_SECONDS`
 LOUD = ("no_app", "app_token_rejected", "malformed", "other_app")  # de la configuración: aviso
 EVENT, ACTION = "channel.alert.token_expiring", "channel_account.token_expiring"
@@ -80,7 +80,7 @@ def warning_due() -> Q:
 def askable() -> Q:
     """Una caducidad sin leer que se puede preguntar: sin intento en `WAIT` (futuro: ninguno)."""
     waited = Q(expiry_attempt_at__isnull=True) | Q(expiry_attempt_at__lte=Now() - WAIT)
-    return Q(waited | Q(expiry_attempt_at__gt=Now()), expiry_checked_at__isnull=True)
+    return Q(waited | Q(expiry_attempt_at__gt=Now() + SKEW), expiry_checked_at__isnull=True)
 
 
 def _targets(ctx: TenantContext, wanted: Q, *order: Any) -> list[tuple[ChannelAccount, Credential]]:
@@ -104,7 +104,8 @@ def _backfill(organization_id: UUID, done: Counter[str], deadline: float) -> Non
     pregunta (no se repite en `WAIT`). El token se abre solo durante la llamada."""
     ctx = TenantContext(organization_id, "celery")
     with tenant_scope(ctx):
-        oldest = F("expiry_attempt_at").asc(nulls_first=True)
+        ahead = When(expiry_attempt_at__gt=Now() + SKEW, then=None)  # futuro: como ninguno
+        oldest = Case(ahead, default=F("expiry_attempt_at")).asc(nulls_first=True)
         rows = _targets(ctx, askable(), oldest, "created_at")
     for account, credential in rows:
         if monotonic() > deadline:

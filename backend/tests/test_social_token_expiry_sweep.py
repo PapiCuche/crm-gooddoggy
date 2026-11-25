@@ -82,6 +82,7 @@ CASES = {  # caso: (caducidad leída en días o None, SQL del migrador, con desc
     "tried_an_hour_ago": (None, [TRIED + "- interval '1 hour'"], True, False),
     "tried_a_day_ago": (None, [TRIED + "- interval '23 hours 1 minute'"], True, True),
     "tried_in_the_future": (None, [TRIED + "+ interval '1 hour'"], True, True),
+    "tried_just_ahead": (None, [TRIED + "+ interval '1 minute'"], True, False),  # el desfase
     "revoked": (2, ["UPDATE credentials SET revoked_at = now(), ciphertext = NULL"], False, False),
     "deleted": (2, ["UPDATE channel_accounts SET deleted_at = now(), status = 'DISCONNECTED'"],
                 False, False),
@@ -190,7 +191,8 @@ def test_the_oldest_turn_goes_first(
     tried(high, "25 hours")
     assert due(True) == [low, high]
     monkeypatch.setattr(expiry, "BATCH", 1)
-    newer = page(world, 3, known=False)  # sin intento: antes que la 1, más vieja e intentada
+    newer = page(world, 3, known=False)  # intento futuro, como ninguno: antes que la 1
+    migrator.execute(TRIED + "+ interval '1 hour' WHERE id = %s", [newer.pk])
     tried(world.a, "25 hours")
     tried(world.b, "2 days")
     assert due(True) == [world.a, world.b]  # una sin preguntar adelanta a su organización
@@ -253,10 +255,12 @@ def test_the_hourly_pass_stops_between_organizations_never_between_claim_and_sen
 ) -> None:
     world.meta.graph.debug = {"expires_at": at(2)}
     page(world, 1)
+    page(world, 4)
     page(world, 2, org="b")
-    slow(monkeypatch, "_send", 130)
-    assert tasks.token_expiry() == {"WARNED": 1, "OUT_OF_TIME": 1}
-    assert tasks.token_expiry() == {"WARNED": 1}
+    page(world, 3, org="b")
+    slow(monkeypatch, "_send", 130)  # cada envío pasa del tope: la otra de la misma, igual
+    assert tasks.token_expiry() == {"WARNED": 2, "OUT_OF_TIME": 1}
+    assert tasks.token_expiry() == {"WARNED": 2}
 
 
 def test_targets_see_only_their_own_organization(world: SimpleNamespace) -> None:
