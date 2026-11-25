@@ -260,7 +260,6 @@ def test_audit_readers_do_not_see_costs_without_product_cost_view(
     audit: dict[str, str | None] = {"audit.view": None}
     plain = verified(custom(team, "au@example.com", audit))
     both = custom(team, "ab@example.com", {**audit, "product_cost.view": None})
-    owner_audit = verified(team.a)
 
     def read(client: Client, **query: Any) -> list[dict[str, Any]]:
         out, cursor = [], None
@@ -293,6 +292,9 @@ def test_audit_readers_do_not_see_costs_without_product_cost_view(
     assert not any(r["action"] == "stock.adjusted" for r in seen)
     changed = next(r for r in visible if r["action"] == "cost.changed")
     assert changed["changes"] == {"amount": [None, "3500.00"]} and changed["entity_id"] == cost_id
+    # el segundo factor, verificado justo antes de leer: entre una marca puesta arriba y esta
+    # lectura, la máquina cargada o suspendida puede pasar de los 15 minutos (F1-TEST-01)
+    owner_audit = verified(team.a)
     assert changed["id"] in [r["id"] for r in read(owner_audit, entity_type="variant_cost")]
     assert len(cost_rows(migrator)) == 2
 

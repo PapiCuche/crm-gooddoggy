@@ -469,13 +469,28 @@ def test_the_row_gets_only_what_is_left_of_the_wait_and_a_busy_row_is_a_retryabl
     desk: SimpleNamespace, migrator: DB, settings: Any
 ) -> None:
     """F8-13d: tras esperar 1,5 s a la llamada, la fila espera solo lo que queda de los 2 s
-    (nunca dos esperas enteras); si sigue bloqueada, 409 `CONVERSATION_BUSY` y nada cambia."""
+    (nunca dos esperas enteras); si sigue bloqueada, 409 `CONVERSATION_BUSY` y nada cambia. Los
+    1,5 s cuentan desde que la petición pide el candado, y cada espera se mide en su sentencia:
+    con la máquina cargada, el resto de la petición tarda segundos que no son espera (F1-TEST-01).
+    """
     settings.AI_EXCLUSION_WAIT_SECONDS = 2
-    held = threading.Event()
+    held, asked, waits = threading.Event(), threading.Event(), list[tuple[str, float]]()
+
+    def timed(execute: Any, sql: str, params: Any, many: bool, context: Any) -> Any:
+        kind = "call" if sql == attention._CALL_EXCLUSIVE else "row" if "FOR NO KEY" in sql else ""
+        if kind == "call":
+            asked.set()
+        began = time.monotonic()
+        try:
+            return execute(sql, params, many, context)
+        finally:
+            if kind:
+                waits.append((kind, time.monotonic() - began))
 
     def hold() -> None:
         with attention.ai_call(ctx(desk.a, desk.ana), desk.convo, 5):
             held.set()
+            asked.wait(10)  # desde que la petición pide el candado
             threading.Event().wait(1.5)  # `desk` sustituye `time.sleep`
 
     version = migrator_version(desk)
@@ -484,11 +499,14 @@ def test_the_row_gets_only_what_is_left_of_the_wait_and_a_busy_row_is_a_retryabl
         holder = later(hold)
         assert held.wait(10)
         started = time.monotonic()
-        answer = put(desk)
+        with connection.execute_wrapper(timed):
+            answer = put(desk)
         took = time.monotonic() - started
     holder.join(10)
     assert (answer.status_code, answer.json()["code"]) == (409, "CONVERSATION_BUSY")
-    assert 1.4 < took < 2.8  # una espera de 2 s, no 1,5 + 2
+    assert [kind for kind, _ in waits] == ["call", "row"]  # una vez cada una, en este orden
+    (_, call), (_, row) = waits
+    assert 1.4 < took and call + row < 2.8  # una espera de 2 s, no 1,5 + 2
     assert excluded_at(migrator, desk) is None and migrator_version(desk) == version
     assert migrator.execute(AUDITED).fetchone() == (0,)
     assert put(desk).status_code == 200  # reintentar, ya libre

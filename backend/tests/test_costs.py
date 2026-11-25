@@ -23,7 +23,7 @@ from core.tenancy.scope import tenant_scope
 from tests import test_authorization
 from tests.test_inventory_stock import race
 from tests.test_memberships import ctx
-from tests.test_prices import variant
+from tests.test_prices import db_now, variant
 
 world = test_authorization.world
 pytestmark = pytest.mark.usefixtures("tenant_db")
@@ -177,7 +177,7 @@ def test_a_validity_only_closes_forwards(world: Any, migrator: psycopg.Connectio
     """El trigger [INM] no reabre, no adelanta al pasado ni toca lo terminado (ni el migrador)."""
     sku = variant(world.a)
     ended, ruling = put(world, sku, "10"), put(world, sku, "11")
-    now = timezone.now()
+    now = db_now()  # el reloj del trigger
 
     def close(pk: UUID, ends_at: datetime | None) -> None:
         with tenant_scope(ctx(world.a)), connection.cursor() as cursor:
