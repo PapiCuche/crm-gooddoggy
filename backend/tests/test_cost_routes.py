@@ -281,8 +281,13 @@ def test_audit_readers_do_not_see_costs_without_product_cost_view(
         assert read(plain, **dict([query.split("=")])) == []
     assert read(plain, entity_id=cost_id) == []
     assert any(r["action"] == "widget.updated" for r in seen)
+    owner_audit = verified(team.a)
     stale = Client()  # el Owner, en otra sesión sin segundo factor
     sign_in(stale, User.objects.get(email="a@example.com"))
+    # el otro inicio de sesión no anula el segundo factor reciente de la primera
+    assert any(
+        r["action"].startswith("cost.") for r in read(owner_audit, entity_type="variant_cost")
+    )
     for client in (both, stale):  # con el permiso, pero sin segundo factor reciente: tampoco
         assert not [r for r in read(client) if r["action"].startswith("cost.")]
     visible = read(verified(both))
