@@ -412,12 +412,14 @@ def test_a_run_that_cannot_be_saved_is_logged_without_content_and_the_error_prop
 
 def kill() -> None:
     """La base corta la sesión de Django desde otra conexión del mismo rol: Django no lo ve hasta
-    su próxima consulta (ningún error que lo diga)."""
+    su próxima consulta (ningún error que lo diga). `pg_terminate_backend` espera (hasta 20 s) a que
+    el proceso salga: con la máquina cargada tarda segundos (F8-TEST-02). Si no sale a tiempo,
+    devuelve `false` y la aserción falla (quien llama cuenta que el corte terminó)."""
     pid = connection.connection.info.backend_pid
     with psycopg.connect(**connection.get_connection_params()) as other:
-        other.execute("SELECT pg_terminate_backend(%s)", [pid])
+        assert other.execute("SELECT pg_terminate_backend(%s, 20000)", [pid]).fetchone() == (True,)
         gone = "SELECT count(*) FROM pg_stat_activity WHERE pid = %s"
-        assert any(other.execute(gone, [pid]).fetchone() == (0,) for _ in range(10**4))
+        assert other.execute(gone, [pid]).fetchone() == (0,)
     assert not connection.errors_occurred
 
 
@@ -473,12 +475,15 @@ def test_a_settle_that_fails_after_the_send_keeps_its_reservation_on_the_run(
         handle = desk.fake.handle
 
         def cut(*args: Any) -> Any:
-            kill()
+            kill()  # si falla, el error sale por el runtime como INTERNAL_ERROR sin reserva:
+            killed.append(True)  # se cuenta aquí para que la prueba diga que fue el corte
             return handle(*args)
 
         monkeypatch.setattr(desk.fake, "handle", cut)
+    killed = list[bool]()
     with caplog.at_level(logging.DEBUG):
         assert fails(desk, SEARCH, GOOD) == "INTERNAL_ERROR"
+    assert killed == ([] if probe == "timeout" else [True])  # el corte terminó, una sola vez
     [(held,)] = rows(migrator, "SELECT id FROM ai_budget_reservations")
     assert rows(migrator, "SELECT reservation_ids FROM ai_runs") == [([held],)]
     assert runs(migrator) == [("INTERNAL_ERROR", 0, 1, False, {})]

@@ -468,12 +468,13 @@ AUDITED = "SELECT count(*) FROM audit_logs WHERE action = 'conversation.ai_exclu
 def test_the_row_gets_only_what_is_left_of_the_wait_and_a_busy_row_is_a_retryable_409(
     desk: SimpleNamespace, migrator: DB, settings: Any
 ) -> None:
-    """F8-13d: tras esperar 1,5 s a la llamada, la fila espera solo lo que queda de los 2 s
+    """F8-13d: tras esperar 1,5 s a la llamada, la fila espera solo lo que queda de los 3 s
     (nunca dos esperas enteras); si sigue bloqueada, 409 `CONVERSATION_BUSY` y nada cambia. Los
     1,5 s cuentan desde que la petición pide el candado, y la espera se mide de ahí al fin de la
     fila: con la máquina cargada, el resto de la petición tarda segundos que no son espera
-    (F1-TEST-01). Cuenta también lo que pase entre las dos esperas."""
-    settings.AI_EXCLUSION_WAIT_SECONDS = 2
+    (F1-TEST-01). Cuenta también lo que pase entre las dos esperas. Con 3 s (no 2), quien retiene
+    la llamada tiene 1,5 s, no 0,5, para soltarla antes del `lock_timeout` (F8-TEST-02)."""
+    settings.AI_EXCLUSION_WAIT_SECONDS = 3
     held, asked, waits = threading.Event(), threading.Event(), list[tuple[str, float, float]]()
 
     def timed(execute: Any, sql: str, params: Any, many: bool, context: Any) -> Any:
@@ -505,7 +506,7 @@ def test_the_row_gets_only_what_is_left_of_the_wait_and_a_busy_row_is_a_retryabl
     assert [kind for kind, *_ in waits] == ["call", "row"]  # una vez cada una, en este orden
     (_, call, called), (_, _, row_end) = waits
     assert 1.4 < called - call  # la petición esperó a la llamada
-    assert row_end - call < 2.4  # una espera de 2 s, no 1,5 + 2
+    assert row_end - call < 3.4  # una espera de 3 s, no 1,5 + 3
     assert excluded_at(migrator, desk) is None and migrator_version(desk) == version
     assert migrator.execute(AUDITED).fetchone() == (0,)
     assert put(desk).status_code == 200  # reintentar, ya libre

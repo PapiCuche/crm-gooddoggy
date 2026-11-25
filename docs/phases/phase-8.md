@@ -392,6 +392,10 @@ Cómo reparte ADR-034 entre ellos:
   - **[ADR-047](../adr/ADR-047-local-ai-provider-simulator.md) `Proposed`:** simulador local del proveedor de IA (#1061), solo en desarrollo y CI, que la configuración de producción rechaza. Sin ninguna excepción de red hasta que el propietario lo acepte.
   - **Antes de encender la IA**, la ventana residual de la exclusión (un corte de la sesión de base del copiloto entre la confirmación de la reserva y la salida del cuerpo: DNS, TCP y TLS) la cierra F8-13d (#1084): la comprobación se repite ya conectado y antes de escribir; queda solo el hueco local descrito allí.
 
+### F8-TEST-02 · Fallo intermitente de la reserva con la conexión cortada
+
+- **Hecho en F8-TEST-02 (#1142)**, solo pruebas: no era una carrera del runtime. El `kill()` de la prueba corre dentro del proveedor simulado y esperaba a que el proceso cortado saliera de `pg_stat_activity` con 10⁴ consultas; con la máquina cargada el proceso tardaba más, la aserción saltaba dentro del envío y el run se guardaba como `INTERNAL_ERROR` sin reserva (el ajuste nunca corría). Ahora `pg_terminate_backend(pid, 20000)` espera en la base a que el proceso salga, y la prueba comprueba que el corte terminó antes de mirar la reserva. La prueba de la fila de la exclusión usa una espera de 3 s (no 2): quien retiene la llamada tiene 1,5 s, no 0,5, para soltarla. Ni el código de producción ni la política de presupuesto cambian.
+
 ## Propuestas del piloto de IA (A–G): pendientes del propietario
 
 Recomendaciones del programa (F8-14, #1072), **no aceptadas**. Cada una dice qué hay hoy en `main` (`4d4fe208`), qué se recomienda y qué alternativas hay. Lo que pida código va en un work item propio después de la decisión; lo que contradiga un ADR `Accepted` necesita un ADR nuevo, y se dice en cada caso.
