@@ -210,6 +210,10 @@ describe("respuestas rápidas en el cuadro de respuesta (F6-08b)", () => {
     await type("/delivery-l");
     fireEvent.click(await screen.findByRole("option", { name: /Envío en Lima/ }));
     await waitFor(() => expect(box()).resolves.toHaveValue(rendered.text));
+    await openChat(/Juan Pérez/); // lo insertado queda en el borrador de Rosa (UX-INBOX-04)
+    expect(await box()).toHaveValue("");
+    await openChat();
+    expect(await box()).toHaveValue(rendered.text);
     expect(s.sends()).toEqual([]);
     await type("Hola Rosa, el envío en Lima llega hoy.");
     fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
