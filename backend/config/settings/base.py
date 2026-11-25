@@ -136,7 +136,12 @@ QUOTE_FLOOR_THROTTLE = {"quote": (6, 60 * 60), "user": (30, 24 * 60 * 60)}
 INBOUND_NEW_CONTACTS_PER_MINUTE = 30
 ASGI_APPLICATION = "config.asgi.application"
 
-DATABASES = {"default": env.database(env.required("DATABASE_URL"))}
+# F1-DB-01: `config/asgi.py` marca su proceso antes de cargar los ajustes (`env.database`).
+DATABASES = {
+    "default": env.database(
+        env.required("DATABASE_URL"), asgi=env.boolean("CRM_ASGI_PROCESS", False)
+    )
+}
 # ADR-002: rol de runtime (sin BYPASSRLS, no propietario). Recibe los GRANT de las migraciones.
 DB_APP_ROLE = env.optional("DB_APP_ROLE", "crm_app")
 # Propietario explícito de tablas y funciones SECURITY DEFINER (ADR-002 §3.3).

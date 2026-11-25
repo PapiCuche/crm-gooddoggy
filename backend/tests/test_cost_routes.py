@@ -260,7 +260,6 @@ def test_audit_readers_do_not_see_costs_without_product_cost_view(
     audit: dict[str, str | None] = {"audit.view": None}
     plain = verified(custom(team, "au@example.com", audit))
     both = custom(team, "ab@example.com", {**audit, "product_cost.view": None})
-    owner_audit = verified(team.a)
 
     def read(client: Client, **query: Any) -> list[dict[str, Any]]:
         out, cursor = [], None
@@ -282,8 +281,13 @@ def test_audit_readers_do_not_see_costs_without_product_cost_view(
         assert read(plain, **dict([query.split("=")])) == []
     assert read(plain, entity_id=cost_id) == []
     assert any(r["action"] == "widget.updated" for r in seen)
+    owner_audit = verified(team.a)
     stale = Client()  # el Owner, en otra sesión sin segundo factor
     sign_in(stale, User.objects.get(email="a@example.com"))
+    # el otro inicio de sesión no anula el segundo factor reciente de la primera
+    assert any(
+        r["action"].startswith("cost.") for r in read(owner_audit, entity_type="variant_cost")
+    )
     for client in (both, stale):  # con el permiso, pero sin segundo factor reciente: tampoco
         assert not [r for r in read(client) if r["action"].startswith("cost.")]
     visible = read(verified(both))
@@ -293,6 +297,9 @@ def test_audit_readers_do_not_see_costs_without_product_cost_view(
     assert not any(r["action"] == "stock.adjusted" for r in seen)
     changed = next(r for r in visible if r["action"] == "cost.changed")
     assert changed["changes"] == {"amount": [None, "3500.00"]} and changed["entity_id"] == cost_id
+    # el segundo factor, verificado justo antes de leer: entre una marca puesta arriba y esta
+    # lectura, la máquina cargada o suspendida puede pasar de los 15 minutos (F1-TEST-01)
+    owner_audit = verified(team.a)
     assert changed["id"] in [r["id"] for r in read(owner_audit, entity_type="variant_cost")]
     assert len(cost_rows(migrator)) == 2
 

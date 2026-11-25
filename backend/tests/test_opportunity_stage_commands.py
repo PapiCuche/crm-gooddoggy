@@ -4,6 +4,7 @@
 import random
 import threading
 from collections.abc import Callable
+from datetime import timedelta
 from decimal import Decimal
 from functools import partial
 from types import SimpleNamespace
@@ -93,7 +94,10 @@ def test_move_changes_stage_probability_clock_history_and_audit(
     world: SimpleNamespace, migrator: DB
 ) -> None:
     opp = create(world)
-    migrator.execute("UPDATE opportunities SET stage_entered_at = now() - interval '100 seconds'")
+    # con el reloj de Python, el que mide `move`: el de la base puede ir minutos por detrás tras
+    # suspenderse la máquina (F1-TEST-01, como `started_ago` en F3-38b)
+    entered = timezone.now() - timedelta(seconds=100)
+    migrator.execute("UPDATE opportunities SET stage_entered_at = %s", [entered])
     moved = move(world, opp, "cotizado")
     row = reload(world, opp.pk)
     assert (moved.version, row.stage_id, row.probability, row.status) == (

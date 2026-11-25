@@ -66,6 +66,16 @@ def put(world: Any, where: tuple[UUID, UUID], amount: Any, **fields: Any) -> Pro
         )
 
 
+def db_now() -> datetime:
+    """El `now()` de PostgreSQL. «Justo en el pasado» se mide con este reloj, el del trigger [INM]
+    y el de `set_price` (que lo lee después): el de Python, en otro proceso, puede ir segundos
+    por delante del de la base con la máquina cargada o tras suspenderse (F1-TEST-01)."""
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT now()")
+        found: datetime = cursor.fetchone()[0]
+    return found
+
+
 def rows(org: UUID) -> list[tuple[Decimal, datetime, datetime | None, UUID | None]]:
     with tenant_scope(ctx(org)):
         found = ProductPrice.objects.order_by("starts_at")
@@ -185,7 +195,7 @@ def test_no_retroactive_price_and_no_row_without_a_change(
         with pytest.raises(prices.PriceUnchanged):
             put(world, where, amount, **fields)
     with pytest.raises(prices.RetroactivePrice):
-        put(world, where, "4000", starts_at=timezone.now() - timedelta(seconds=1))
+        put(world, where, "4000", starts_at=db_now() - timedelta(seconds=1))
     with pytest.raises(ValueError, match="zona horaria"):
         put(world, where, "4000", starts_at=datetime(2030, 1, 1))  # noqa: DTZ001
     after = (
@@ -252,7 +262,7 @@ def test_a_validity_only_closes_forwards(world: Any) -> None:
     where = pair(world)
     ended = put(world, where, "100")
     ruling = put(world, where, "110")
-    now = timezone.now()
+    now = db_now()  # el reloj del trigger
 
     def close(pk: UUID, ends_at: datetime | None) -> None:
         with tenant_scope(ctx(world.a, world.ana)), connection.cursor() as cursor:
