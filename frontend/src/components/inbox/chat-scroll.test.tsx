@@ -48,7 +48,9 @@ const isChat = (el: Element) => el.getAttribute("aria-label") === "Mensajes de l
 const tall = (li: Element) => (li.textContent?.includes("largo") ? 300 : 100);
 const rowsOf = (el: Element) => [...el.querySelectorAll("li")];
 const full = (el: Element) => rowsOf(el).reduce((sum, li) => sum + tall(li), 0);
+const from: number[] = []; // dónde estaba la vista al empezar cada desplazamiento suave
 const scrollTo = vi.fn(function (this: HTMLElement, { top }: ScrollToOptions) {
+  from.push(this.scrollTop);
   this.scrollTop = top!;
 });
 beforeEach(() => {
@@ -170,8 +172,8 @@ describe("seguir lo nuevo y «N mensajes nuevos» (UX-INBOX-06b)", () => {
   });
 
   it("leyendo el historial la vista no se mueve; el botón cuenta lo ajeno y lleva al final", async () => {
-    const state = server(history(5));
-    await open();
+    const state = server(history(9));
+    await open("Historial 9");
     await scroll(0);
     await arrive(state, message("n1", "Nuevo 1"), message("o1", "Mío", true));
     await arrive(state, message("n2", "Nuevo 2"));
@@ -184,6 +186,7 @@ describe("seguir lo nuevo y «N mensajes nuevos» (UX-INBOX-06b)", () => {
     expect(unseen()).toHaveTextContent("3 mensajes nuevos");
     fireEvent.click(unseen()!);
     expect(scrollTo).toHaveBeenCalledWith({ top: full(chat()), behavior: "smooth" });
+    expect(from.at(-1)).toBe(full(chat()) - 2 * SEEN); // de lejos: salto a dos pantallas, luego suave
     expect(chat()).toHaveFocus(); // el botón se va; el foco no se pierde
     await waitFor(() => expect(unseen()).toBeNull());
     expect(top()).toBe(bottom());
@@ -225,13 +228,14 @@ describe("seguir lo nuevo y «N mensajes nuevos» (UX-INBOX-06b)", () => {
 
   it("con movimiento reducido, sin desplazamiento suave", async () => {
     vi.stubGlobal("matchMedia", (query: string) => ({ matches: query.includes("reduced") }));
-    const state = server(history(5));
-    await open();
+    const state = server(history(9));
+    await open("Historial 9");
     await scroll(0);
     await arrive(state, message("n1", "Nuevo 1"));
     expect(unseen()).toHaveTextContent("1 mensaje nuevo");
     fireEvent.click(unseen()!);
     expect(scrollTo).toHaveBeenCalledWith({ top: full(chat()), behavior: "auto" });
+    expect(from.at(-1)).toBe(0); // un solo salto, sin el previo
   });
 
   it("cargar los anteriores conserva la posición y no muestra el botón", async () => {

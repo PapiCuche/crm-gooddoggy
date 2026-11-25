@@ -378,8 +378,12 @@ export function ChatPanel({
               className="pointer-events-auto absolute bottom-0 h-11 rounded-full px-4 shadow-md transition-[opacity,translate,scale] duration-200 starting:translate-y-2 starting:opacity-0 motion-reduce:starting:translate-y-0"
               onClick={() => {
                 const box = scroller.current;
-                box?.scrollTo({ top: box.scrollHeight, behavior: still() ? "auto" : "smooth" });
-                box?.focus({ preventScroll: true }); // el botón se va: el foco no se pierde
+                if (!box) return;
+                // De lejos, un salto hasta dos pantallas del final y el resto suave (corto, no segundos).
+                if (!still())
+                  box.scrollTop = Math.max(box.scrollTop, box.scrollHeight - 2 * box.clientHeight);
+                box.scrollTo({ top: box.scrollHeight, behavior: still() ? "auto" : "smooth" });
+                box.focus({ preventScroll: true }); // el botón se va: el foco no se pierde
               }}
             >
               <ArrowDown aria-hidden />
