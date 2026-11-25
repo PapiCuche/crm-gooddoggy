@@ -35,10 +35,11 @@ DEADLINE = dt.timedelta(minutes=settings.INBOX_SENDING_DEADLINE_MINUTES)
 
 
 def hold(migrator: Any, message: Any, minutes: int) -> None:
-    """Deja el mensaje `SENDING` desde hace `minutes` (un despachador que no cerró)."""
+    """Deja el mensaje `SENDING` desde hace `minutes` (un despachador que no cerró). Dos pasos: al
+    pasar a `SENDING`, la base pone su hora (F7b-21, `0064`)."""
+    migrator.execute("UPDATE messages SET delivery_status = 'SENDING' WHERE id = %s", [message.pk])
     migrator.execute(
-        "UPDATE messages SET delivery_status = 'SENDING', "
-        "sending_at = now() - make_interval(mins => %s) WHERE id = %s",
+        "UPDATE messages SET sending_at = now() - make_interval(mins => %s) WHERE id = %s",
         [minutes, message.pk],
     )
 

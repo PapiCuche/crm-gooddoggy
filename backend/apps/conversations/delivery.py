@@ -85,8 +85,10 @@ def _sent_with(alias: str, account_id: UUID, message: Message) -> UUID | None:
     """La credencial con la que salió el mensaje (F7b-20): la de su cuenta viva cuando se reclamó
     (`sending_at`). El reclamo fija esa hora con la cuenta en `FOR SHARE` (`claim_outbound`) y
     `rotate_token` y `disconnect` fijan `revoked_at` y `created_at` con ella en `FOR NO KEY UPDATE`:
-    se excluyen, así que con un mismo reloj el orden de las horas es el de los bloqueos. `None` si
-    no se sabe: sin `sending_at`, o no hay exactamente una credencial que lo cubra."""
+    se excluyen, y las tres horas las pone el reloj de la base tras el bloqueo (F7b-21, disparadores
+    de la `0064`, también con la imagen anterior), así que su orden es el de los bloqueos y no el
+    del reloj de cada proceso. `None` si no se sabe: sin `sending_at`, o no hay exactamente una
+    credencial que lo cubra."""
     at = message.sending_at
     if at is None:
         return None
@@ -132,7 +134,13 @@ def apply(ctx: TenantContext, account: ChannelAccount, payload: dict[str, Any]) 
         # tras una rotación es del token anterior y la rotación ya leyó la calidad. Sin saber con
         # cuál salió, ninguno: el próximo envío (con la credencial del reclamo) o la comprobación
         # de salud lo dirán sin arriesgar bloquear una cuenta sana.
-        if reason not in ON_ACCOUNT or (used := _sent_with(alias, account.pk, message)) is None:
+        if reason not in ON_ACCOUNT:
+            return None
+        if (used := _sent_with(alias, account.pk, message)) is None:  # F7b-21: con rastro, solo ids
+            logger.warning(
+                "meta.webhook.account_effect_skipped", channel_account_id=str(account.pk),
+                message_id=str(message.pk), reason=reason, cause="CREDENTIAL_UNKNOWN",
+            )  # fmt: skip
             return None
         mark = accounts.mark_token_invalid if reason == "TOKEN_INVALID" else accounts.mark_degraded
         mark(ctx, channel_account_id=account.pk, credential_id=used)
