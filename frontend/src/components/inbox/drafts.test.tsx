@@ -21,6 +21,10 @@ describe("el almacén de borradores (UX-INBOX-04; el recorrido, en `composer.tes
     const beta = new Drafts("o2"); // los mismos ids de conversación
     beta.update(note, () => ({ text: "de Acme" }));
     expect([beta.get(note).text, beta.key("1", "note") === note]).toEqual(["", false]);
+    const [heard, off] = [vi.fn(), (listener: () => void) => acme.subscribe(listener)()];
+    off(heard); // una fila que se desmonta deja de escuchar
+    acme.update(note, () => ({ text: "otra" }));
+    expect(heard).not.toHaveBeenCalled();
   });
 
   it("al desmontarse (cerrar sesión, otra organización) se vacía, avisa y no acepta nada más", () => {

@@ -638,10 +638,27 @@ describe("borradores por organización, conversación y modo (UX-INBOX-04)", () 
     s.go();
     expect(await screen.findByRole("alert")).toBeInTheDocument();
     expect(marked()).toBe(true); // falló: el texto sigue sin enviar
+    await type(""); // queda el intento (su id), pero sin texto no hay borrador
+    expect(marked()).toBe(false);
+    await type("Hola Rosa");
     fail = false;
-    fireEvent.click(await screen.findByRole("button", { name: "Reintentar" }));
+    fireEvent.click(await screen.findByRole("button", { name: /^(Reintentar|Enviar)$/ }));
     await waitFor(() => expect(box()).resolves.toHaveValue(""));
     expect(marked()).toBe(false);
+  });
+
+  it("una nota que se está guardando no marca; si falla, vuelve a marcar", async () => {
+    const s = server(); // este doble no tiene la ruta de notas: responde 404
+    show(grants("conversations.view", "messages.note"));
+    await openChat();
+    await type("Pidió delivery", "Nota interna");
+    s.wait();
+    fireEvent.click(screen.getByRole("button", { name: "Guardar nota" }));
+    await waitFor(() => expect(box("Nota interna")).resolves.toHaveAttribute("readonly"));
+    expect(marked()).toBe(false);
+    s.go();
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(marked()).toBe(true);
   });
 
   it("convive con «La respuesta no llegó» y «Pide atención humana»", async () => {
