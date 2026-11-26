@@ -1,8 +1,10 @@
 """F7-09b2: `POST …/conversations/{id}/media/`, la imagen o el documento en cola. Middleware,
 sesión, tope por persona, motor de autorización y PostgreSQL con el rol `crm_app`; el cuerpo se
-espía en `HttpRequest.read` (nada lo lee antes del permiso, el alcance y la política). F7-15b: el
-antivirus antes de guardar, con el `clamd` falso de `test_antivirus`."""
+espía en `HttpRequest.read` (nada lo lee antes del permiso y el alcance; tras una negativa de la
+política nada se escanea ni se guarda). F7-15b: el antivirus antes de guardar, con el `clamd` falso
+de `test_antivirus`. UX-INBOX-04c: un reintento idéntico se devuelve antes de la política."""
 
+import datetime as dt
 import logging
 import threading
 from types import SimpleNamespace
@@ -19,13 +21,18 @@ from django.test import Client
 from django.test.client import RequestFactory, encode_multipart
 from django.utils import timezone
 
+from apps.access.models import RolePermission
+from apps.access.selectors import AccessDenied
 from apps.accounts.models import User
-from apps.conversations import outbound_media, scan
+from apps.contacts.models import Contact
+from apps.conversations import commands, media, outbound_media, scan
 from apps.conversations.api import media as route
+from apps.conversations.models import Conversation
 from apps.conversations.throttle import ChannelThrottleMiddleware
 from core import storage
 from core.observability import reporting
 from core.storage.memory import InMemoryStorage
+from core.tenancy.scope import tenant_scope
 from tests.factories import make_user
 from tests.logs import log_text
 from tests.test_antivirus import EICAR_PDF, FakeClamd, clamd
@@ -33,7 +40,8 @@ from tests.test_authorization import give
 from tests.test_conversations_api import BASE, crm, inbox, real_stack
 from tests.test_conversations_send_api import set_state
 from tests.test_member_branch import DENIED
-from tests.test_memberships import join
+from tests.test_memberships import ctx, join
+from tests.test_messaging_policy_api import whatsapp_convo
 from tests.test_outbound_media import Flaky
 from tests.test_self_context import NOT_FOUND, reply, signed
 
@@ -54,6 +62,19 @@ def blobs(monkeypatch: pytest.MonkeyPatch) -> InMemoryStorage:
     kept = InMemoryStorage()
     monkeypatch.setattr(storage, "storage", lambda: kept)
     return kept
+
+
+@pytest.fixture
+def sinks(monkeypatch: pytest.MonkeyPatch) -> list[media.Sink]:
+    made: list[media.Sink] = []
+
+    class Kept(media.Sink):
+        def __init__(self) -> None:
+            super().__init__()
+            made.append(self)
+
+    monkeypatch.setattr(media, "Sink", Kept)
+    return made
 
 
 @pytest.fixture
@@ -97,7 +118,7 @@ def test_an_image_and_a_document_are_queued_once_and_a_replay_keeps_only_the_fir
     (kept,) = blobs.objects
     again = upload(ana, convo, form(caption="Mira 👍🏽", client_message_id=key))
     assert (again.status_code, again.json()) == (200, shown)  # el mismo mensaje
-    assert list(blobs.objects) == [kept]  # el blob del reintento se borró; el primero sigue
+    assert list(blobs.objects) == [kept]  # el reintento no guarda otro blob
     paper = upload(ana, convo, form(PDF, file=named(PDF, "../Cotización.pdf", "text/html")))
     assert (paper.status_code, paper.json()["message_type"], paper.json()["body"]) == (
         202, "DOCUMENT", "Documento",
@@ -108,12 +129,13 @@ def test_an_image_and_a_document_are_queued_once_and_a_replay_keeps_only_the_fir
     assert row.fetchone() == ("message-media-out", "Cotización.pdf")
     assert migrator.execute(COUNT).fetchone() == (2, 2) and len(blobs.objects) == 2
     scanned = migrator.execute("SELECT DISTINCT scan_status FROM files").fetchall()
-    assert scanned == [("CLEAN",)] and clamd.bodies == [JPEG, JPEG, PDF]  # cada subida, entera
+    assert scanned == [("CLEAN",)] and clamd.bodies == [JPEG, PDF]  # el reintento no se escanea
 
 
-def test_nothing_reads_the_body_before_the_permission_the_scope_and_the_policy(
-    inbox: SimpleNamespace, blobs: InMemoryStorage, migrator: DB, reads: list[int], clamd: FakeClamd
-) -> None:
+def test_nothing_reads_the_body_before_the_permission_and_the_scope_nor_stores_it_on_a_409(
+    inbox: SimpleNamespace, blobs: InMemoryStorage, migrator: DB, reads: list[int],
+    clamd: FakeClamd, sinks: list[media.Sink],
+) -> None:  # fmt: skip
     convo, ana = inbox.convs["vera"], signed(inbox.ana)
     assert reply(upload(signed(inbox.bea), convo)) == DENIED  # sin rol
     assert reply(upload(Client(), convo))[0] == 401
@@ -133,10 +155,14 @@ def test_nothing_reads_the_body_before_the_permission_the_scope_and_the_policy(
                           (vera, uuid4()), (ana, uuid4())):  # fmt: skip
         who = signed(client) if isinstance(client, User) else client
         assert reply(upload(who, where)) == NOT_FOUND
+    assert reads == []
     set_state(inbox.a, convo, status="CLOSED", closed_at=timezone.now())
-    assert upload(ana, convo).json()["code"] == "CONVERSATION_CLOSED"  # 409
-    assert reads == [] and blobs.objects == {} and clamd.bodies == []
-    assert migrator.execute(COUNT).fetchone() == (0, 0)
+    over = str((10 << 20) + (64 << 10) + 1)  # el tope y la longitud, aún antes de leer
+    assert upload(ana, convo, CONTENT_LENGTH=over).status_code == 413 and reads == []
+    closed = upload(ana, convo)  # 409 tras leer el formulario
+    assert (closed.status_code, closed.json()["code"]) == (409, "CONVERSATION_CLOSED")
+    assert blobs.objects == {} and clamd.bodies == [] and all(s.file.closed for s in sinks)
+    assert migrator.execute(COUNT).fetchone() == (0, 0) and len(sinks) == 1
 
 
 INFECTED = "SELECT action, result, actor_id, metadata FROM audit_logs WHERE entity_id = %s"
@@ -375,3 +401,98 @@ def test_the_late_audit_needs_the_mark_and_a_422(
     request.user = AnonymousUser()  # sin contador: no toca la base
     ChannelThrottleMiddleware(view)(request)
     assert len(calls) == audited
+
+
+def _closed(org: UUID, convo: Conversation, how: str) -> None:
+    late = timezone.now() - dt.timedelta(hours=25)
+    with tenant_scope(ctx(org)):
+        if how == "window":
+            Conversation.objects.filter(pk=convo.pk).update(last_inbound_at=late)
+        elif how == "blocked":
+            Contact.objects.filter(pk=convo.contact_id).update(is_blocked=True)
+        else:
+            Conversation.objects.filter(pk=convo.pk).update(status="CLOSED", closed_at=late)
+
+
+POLICY = [
+    ("window", "WINDOW_CLOSED"),
+    ("blocked", "CONTACT_BLOCKED"),
+    ("closed", "CONVERSATION_CLOSED"),
+]
+
+
+@pytest.mark.parametrize(("how", "code"), POLICY)
+def test_an_identical_retry_after_the_policy_closes_is_the_saved_message_unscanned_and_unstored(
+    inbox: SimpleNamespace, blobs: InMemoryStorage, migrator: DB, clamd: FakeClamd,
+    sinks: list[media.Sink], how: str, code: str,
+) -> None:  # fmt: skip
+    """UX-INBOX-04c: el mismo id, el mismo pie y el mismo archivo devuelven lo guardado (200, el
+    mismo cuerpo) aunque la política ya no deje enviar; cualquier otra cosa recibe su 409."""
+    ana, convo, key = signed(inbox.ana), whatsapp_convo(inbox, dt.timedelta(hours=1)), str(uuid4())
+    first = upload(ana, convo.pk, form(caption="Su foto", client_message_id=key))
+    assert first.status_code == 202
+    _closed(inbox.a, convo, how)
+    again = upload(ana, convo.pk, form(caption="Su foto", client_message_id=key))
+    assert (again.status_code, again.json()) == (200, first.json())
+    for other in (
+        form(caption="Otra", client_message_id=key),
+        form(client_message_id=key),
+        form(PDF, caption="Su foto", client_message_id=key),
+        form(caption="Su foto"),
+    ):
+        refused = upload(ana, convo.pk, other)  # otro pie, sin pie, otro archivo u otro id
+        assert (refused.status_code, refused.json()["code"]) == (409, code)
+    assert len(blobs.objects) == 1 and clamd.bodies == [JPEG]  # ni otro escaneo ni otro blob
+    assert migrator.execute(COUNT).fetchone() == (1, 1)
+    assert len(sinks) == 6 and all(sink.file.closed for sink in sinks)  # cada temporal, cerrado
+
+
+def test_a_retry_is_only_the_senders_own_in_its_conversation_and_organization(
+    inbox: SimpleNamespace, blobs: InMemoryStorage, migrator: DB
+) -> None:
+    ana, key, other = signed(inbox.ana), str(uuid4()), str(uuid4())
+    first = upload(ana, inbox.convs["both"], form(client_message_id=key))
+    assert first.status_code == 202
+    sam = upload(signed(inbox.sam), inbox.convs["both"], form(client_message_id=key))
+    elsewhere = upload(ana, inbox.convs["nobody"], form(client_message_id=key))
+    for refused in (sam, elsewhere):  # otra persona u otra conversación: nunca su mensaje
+        assert (refused.status_code, refused.json()["code"]) == (409, "CLIENT_MESSAGE_ID_TAKEN")
+    give(inbox.b, inbox.m_luis, {"conversations.view": "ORGANIZATION",
+                                 "messages.send": "ORGANIZATION"})  # fmt: skip
+    luis, b = signed(inbox.luis), BASE.replace("org-a", "org-b")
+    theirs = upload(luis, inbox.convs["b"], form(client_message_id=key), b)  # el id de A, en B
+    assert theirs.status_code == 202 and theirs.json()["id"] != first.json()["id"]
+    assert upload(luis, inbox.convs["b"], form(client_message_id=other), b).status_code == 202
+    mine = upload(ana, inbox.convs["both"], form(client_message_id=other))  # el de B, en A
+    assert mine.status_code == 202
+    again = upload(ana, inbox.convs["both"], form(client_message_id=key))
+    assert (again.status_code, again.json()) == (200, first.json())
+    assert len(blobs.objects) == 4 and migrator.execute(COUNT).fetchone() == (4, 4)
+
+
+def test_the_replay_rechecks_the_permission_and_the_scope_under_the_lock(
+    inbox: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user = make_user(email="envia@example.com")
+    role = give(inbox.a, join(inbox.a, user).pk, {"conversations.view": "ORGANIZATION",
+                                                  "messages.send": "ORGANIZATION"})  # fmt: skip
+    convo, key, client = inbox.convs["sam"], str(uuid4()), signed(user)  # de otra persona
+    assert upload(client, convo, form(caption="Hola", client_message_id=key)).status_code == 202
+    digest = media.Sink()
+    digest.write(JPEG)
+    wanted: dict[str, Any] = {"conversation_id": convo, "client_message_id": key,
+                              "caption": "Hola", "sha256": digest.digest.hexdigest()}  # fmt: skip
+    me = ctx(inbox.a, user)
+    with tenant_scope(me):
+        assert commands.replayed_media(me, **wanted) is not None
+        sends = RolePermission.objects.filter(role=role, permission_id="messages.send")
+        sends.update(scope="OWN")  # ya no la alcanza
+        with pytest.raises(Conversation.DoesNotExist):
+            commands.replayed_media(me, **wanted)
+    monkeypatch.setattr(route, "can", lambda *a: True)  # la ruta lo vio justo antes del cambio
+    late = upload(client, convo, form(caption="Hola", client_message_id=key))
+    assert reply(late) == NOT_FOUND  # el mismo 404
+    with tenant_scope(me):
+        sends.delete()  # ni el permiso
+        with pytest.raises(AccessDenied):
+            commands.replayed_media(me, **wanted)

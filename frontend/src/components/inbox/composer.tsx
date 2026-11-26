@@ -249,6 +249,7 @@ function ComposeBox({
   const draft = drafts.key(conversation.id, mode);
   const text = useDraftsValue((all) => all.get(draft).text);
   const busy = useDraftsValue((all) => all.get(draft).sending);
+  const unsure = useDraftsValue((all) => !!all.get(draft).attempt?.unsure);
   const setText = (next: string | ((current: string) => string)) =>
     drafts.update(draft, ({ text }) => ({ text: typeof next === "string" ? next : next(text) }));
   const forget = (sent: Outgoing) =>
@@ -260,6 +261,9 @@ function ComposeBox({
   const [saved, setSaved] = useState<string | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [refusal, setRefusal] = useState<string | null>(null); // el archivo elegido no se adjuntó
+  // UX-INBOX-04c: el primer «Enviar» tras un archivo dudoso; vale solo para ese texto y ese archivo.
+  const [armed, setArmed] = useState<{ text: string; file: File | null } | null>(null);
+  const confirmed = armed?.text === text && armed.file === file;
   const picker = useRef<HTMLInputElement>(null);
   const settleUntil = useRef(0); // hasta cuándo un Enter no envía lo recién insertado
   const tap = useCoarse() ? "Touch" : ""; // la ayuda de teclas y la tecla del teléfono
@@ -403,6 +407,13 @@ function ComposeBox({
       const tried = drafts.get(request.draft).attempt;
       const grown = tried?.id === request.client_message_id && tried.first !== request.body;
       if (error.code === "CLIENT_MESSAGE_ID_TAKEN") forget(request);
+      if (error.code === "NETWORK_ERROR" && request.file) {
+        drafts.update(request.draft, ({ attempt }) =>
+          attempt?.id === request.client_message_id
+            ? { attempt: { ...attempt, unsure: true } }
+            : {},
+        );
+      }
       const reason = failure(error);
       if (DROP_FILE_ON.includes(reason)) {
         forget(request);
@@ -436,6 +447,8 @@ function ComposeBox({
     let tried = drafts.get(draft).attempt;
     const sameFile = tried?.media ? file !== null && file === sentFile.current : file === null;
     if (!tried || !text.startsWith(tried.first) || !sameFile) {
+      // Su archivo pudo llegar sin respuesta: otro id repetiría el pie. El primer toque solo avisa.
+      if (tried?.unsure && !confirmed) return setArmed({ text, file });
       tried = { id: uuid(), first: text, media: file !== null };
     }
     sentFile.current = file;
@@ -665,6 +678,11 @@ function ComposeBox({
         </p>
       ) : null}
       {quick.notice}
+      {unsure ? (
+        <p role="status" className="text-sm font-medium max-sm:col-span-2">
+          {t("unsure.warning")} {confirmed ? t(file ? "unsure.file" : "unsure.text") : null}
+        </p>
+      ) : null}
       {saved ? (
         <p role="status" className="text-sm max-sm:col-span-2">
           {saved}

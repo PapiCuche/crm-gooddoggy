@@ -568,6 +568,7 @@ describe("borradores por organización, conversación y modo (UX-INBOX-04)", () 
     net.expire();
     expect(await screen.findByRole("alert")).toHaveTextContent("No hay conexión con el servidor");
     expect(await box()).not.toHaveAttribute("readonly");
+    expect(screen.queryByText(/Puede que el archivo/)).toBeNull(); // sin archivo, nada que dudar
     await away();
     expect(await box()).toHaveValue("Hola Rosa");
     net.answer();
@@ -575,6 +576,18 @@ describe("borradores por organización, conversación y modo (UX-INBOX-04)", () 
     await waitFor(() => expect(box()).resolves.toHaveValue(""));
     const [first, retry] = s.ids();
     expect(retry).toBe(first);
+  });
+
+  it("una nota sin respuesta también se libera a los 30 s (UX-INBOX-04c)", async () => {
+    const net = hangPosts(server().api);
+    show(grants("conversations.view", "messages.note"));
+    await openChat();
+    await type("Llamar mañana", "Nota interna");
+    fireEvent.click(sendButton("Guardar nota"));
+    await waitFor(() => expect(net.waits).toEqual([30_000]));
+    net.expire();
+    expect(await screen.findByRole("alert")).toHaveTextContent("No hay conexión con el servidor");
+    expect(await box("Nota interna")).not.toHaveAttribute("readonly");
   });
 
   // Mismos ids y dirección; otra persona de la misma organización entra tras cerrar sesión.

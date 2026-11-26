@@ -571,6 +571,39 @@ def _channel_takes(
         raise TooLongForChannel
 
 
+def replayed_media(
+    ctx: TenantContext, *, conversation_id: UUID, client_message_id: UUID, caption: str | None,
+    sha256: str,
+) -> Message | None:  # fmt: skip
+    """El medio que el actor ya guardó en esta conversación con ese `client_message_id`, el mismo
+    pie y el mismo archivo (`sha256`), o `None` (UX-INBOX-04c). Un reintento idéntico se devuelve
+    antes de la política, como en `record_outbound`, y sin volver a escanear ni guardar el archivo.
+    Solo bloquea si hay algo que devolver (la vista es una transacción: el bloqueo no debe cubrir el
+    antivirus) y lo vuelve a leer bajo el bloqueo, tras el permiso y el alcance de `messages.send`.
+    Cualquier diferencia es `None`: decide el camino de siempre, con sus errores."""
+    alias = require_scope(ctx)
+    conversation_id, client_id = (
+        _uuid(conversation_id, "conversación"),
+        _uuid(client_message_id, "id"),
+    )
+    mine = Message.objects.using(alias).filter(
+        conversation_id=conversation_id, client_message_id=client_id, direction="OUTBOUND",
+        sender_type="USER", sender_user_id=ctx.user_id,
+        message_type__in=outbound_media.LABELS,
+        file_id__in=File.objects.using(alias).filter(sha256=sha256).values("pk"),
+    )  # fmt: skip
+    if not mine.exists():  # sin bloqueo: lo nuevo pasa por `record_outbound`
+        return None
+    with transaction.atomic(using=alias):
+        ectx = _allowed(ctx, "messages.send")
+        convo = _locked(alias, conversation_id)
+        _in_scope(ectx, "messages.send", convo)
+        found: Message | None = mine.first()  # otra vez, bajo el bloqueo
+        if found is None or found.body != (caption or outbound_media.LABELS[found.message_type]):
+            return None
+        return found
+
+
 def queue_confirmation(ctx: TenantContext, *, conversation_id: UUID, body: str) -> Message | None:
     """Pone en cola un texto fijo del sistema al cliente (F7-08b: la confirmación de una baja o un
     alta), sin persona (`SYSTEM`) ni permiso: lo llama el canal en la transacción del mensaje

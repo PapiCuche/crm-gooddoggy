@@ -11,8 +11,10 @@ La URL dura `EXPIRES` segundos, siempre `attachment` con un nombre generado, el 
 `private, no-store` firmados; la respuesta no se guarda en caché y nunca se registra.
 
 `POST …/conversations/{id}/media/` (F7-09b2, `multipart/form-data`): tope por persona, permiso,
-alcance (404), política, un canal sin medios (409, F7b-16) y `Content-Length` (411, 413) **antes**
-de analizar o guardar el cuerpo.
+alcance (404), un canal sin medios (409, F7b-16) y `Content-Length` (411, 413) **antes** de analizar
+el cuerpo. La política va después de leer el formulario y antes de guardar nada: un reintento
+idéntico (`commands.replayed_media`, UX-INBOX-04c) devuelve lo guardado (200) sin otro blob, aunque
+la ventana ya se haya cerrado, como `record_outbound`.
 Recibirlo no: el ASGI de Django lo lee entero antes de la vista, así que el tope del proxy
 (`request_body` en el Caddyfile) es un requisito del despliegue. `outbound_media.Capped` corta al
 pasarse; luego el tipo real (415), el antivirus (F7-15b: 422 `MEDIA_INFECTED`, o
@@ -37,13 +39,13 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.access.permissions import request_context
+from apps.access.permissions import rbac_errors, request_context
 from apps.access.selectors import can, scoped
-from apps.conversations import limits, outbound_media, policy, selectors
+from apps.conversations import commands, limits, media, outbound_media, policy, selectors
 from apps.conversations.api import inputs
 from apps.conversations.api.messages import REASONS, MessageSerializer, queue, shows_body
 from apps.conversations.media import EXTENSIONS
-from apps.conversations.models import Conversation
+from apps.conversations.models import Conversation, Message
 from core import antivirus, storage
 from core.api.errors import ApiError
 from core.api.schema import errors
@@ -113,6 +115,15 @@ class AttachmentUrlView(APIView):
         return response
 
 
+def _again(tenant: context.TenantContext, found: Conversation, data: dict[str, Any],
+           sink: media.Sink) -> Message | None:  # fmt: skip
+    with rbac_errors():  # el comando vuelve a comprobar `messages.send` y su alcance
+        return commands.replayed_media(
+            tenant, conversation_id=found.pk, client_message_id=data["client_message_id"],
+            caption=data.get("caption"), sha256=sink.digest.hexdigest(),
+        )  # fmt: skip
+
+
 def _refuse(code: str) -> ApiError:
     return ApiError(code, *REFUSED[code])
 
@@ -171,17 +182,19 @@ class SendMediaView(APIView):
         if found is None or not can(ectx, "messages.send", found):  # antes de leer el cuerpo
             raise NotFound
         decision = selectors.messaging_decision(found, purpose=policy.CUSTOMER_REPLY, sender="USER")
-        if decision.reason is not None:  # antes de guardar nada; el comando la repite
-            raise ApiError(decision.reason, 409, REASONS[decision.reason])
         if not limits.takes_media(found.channel_account.platform):  # F7b-16; también el comando
-            code = "MEDIA_NOT_SUPPORTED_BY_CHANNEL"
+            code = decision.reason or "MEDIA_NOT_SUPPORTED_BY_CHANNEL"  # ahí no hay medio guardado
             raise ApiError(code, 409, REASONS[code])
         handler = outbound_media.Capped(max(outbound_media.CAPS.values()))
         try:
             wanted = inputs.SendMediaSerializer(data=_read(request, handler))
             wanted.is_valid(raise_exception=True)
             assert handler.sink is not None  # noqa: S101 — `_read` lo exige
-            prepared = outbound_media.prepare(tenant, handler.sink, handler.file_name)
+            again = _again(tenant, found, wanted.validated_data, handler.sink)
+            if again is None and decision.reason is not None:  # antes de guardar; y el comando
+                raise ApiError(decision.reason, 409, REASONS[decision.reason])
+            if again is None:
+                prepared = outbound_media.prepare(tenant, handler.sink, handler.file_name)
         except outbound_media.Refused as refused:
             if isinstance(refused, outbound_media.Infected):  # para auditarlo tras deshacer
                 request._request.media_infected = (found.pk, refused.signature)
@@ -190,9 +203,12 @@ class SendMediaView(APIView):
             logger.warning("media.outbound_scan_unavailable", conversation_id=str(found.pk),
                            error=str(error))  # fmt: skip
             raise _refuse("MEDIA_SCAN_UNAVAILABLE") from None
-        finally:
+        finally:  # también en un reintento o un 409: el temporal se cierra (y se borra)
             if handler.sink is not None:
                 handler.sink.file.close()
+        if again is not None:  # el mismo mensaje y el mismo cuerpo que la primera respuesta
+            shown = MessageSerializer(again, context={"show_body": shows_body(ectx, found)})
+            return Response(shown.data, status=200)
         try:  # la vista es una transacción: cualquier error la deshace, y el blob sobra
             caption = wanted.validated_data.get("caption")
             message, created = queue(

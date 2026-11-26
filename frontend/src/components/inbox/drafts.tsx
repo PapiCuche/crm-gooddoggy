@@ -12,7 +12,8 @@ import {
 import type { Mode } from "./composer";
 
 // El intento (id, primer texto y si llevaba archivo, que no se guarda) y si hay un envío en curso.
-type Attempt = { id: string; first: string; media: boolean };
+// `unsure`: su archivo venció sin respuesta y pudo llegar (UX-INBOX-04c).
+type Attempt = { id: string; first: string; media: boolean; unsure?: boolean };
 export type Draft = { text: string; attempt: Attempt | null; sending: boolean };
 const EMPTY: Draft = { text: "", attempt: null, sending: false };
 
