@@ -2548,6 +2548,11 @@
       "captionHint": "Puedes escribir un texto que lo acompañe (opcional).",
       "idTakenMedia": "Ese id de mensaje ya se usó para otro envío. Vuelve a enviar el archivo.",
       "idTakenGrown": "Puede que la primera parte ya se haya enviado. Revisa el chat y quita del cuadro lo que ya salió antes de volver a enviar.",
+      "unsure": {
+        "warning": "Puede que el archivo ya se haya enviado: revisa la conversación antes de reenviar.",
+        "text": "Si pulsas «Enviar» otra vez, se enviará solo el texto, sin archivo.",
+        "file": "Si pulsas «Enviar» otra vez, se enviará como mensaje nuevo."
+      },
       "overLimit": {
         "reply": "Pasaste el tope de caracteres: no se puede enviar.",
         "note": "Pasaste el tope de caracteres: no se puede guardar.",
