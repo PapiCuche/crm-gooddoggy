@@ -287,7 +287,9 @@ describe("notas internas en el cuadro de redacción (F6-05c)", () => {
     expect(scroller).toHaveAttribute("tabindex", "0"); // sigue enfocable con el teclado
     expect(scroller).toHaveClass("min-h-0", "flex-1", "overflow-y-auto"); // la válvula: absorbe el sobrante y nunca empuja el cuadro fuera
     expect(panel.querySelector("header")).toHaveClass("shrink-0");
-    expect(scroller.nextElementSibling).toHaveClass("shrink-0"); // el cuadro nunca se comprime ni sale
+    const wrapper = scroller.parentElement!; // con el aviso «N mensajes nuevos» superpuesto
+    expect(wrapper).toHaveClass("min-h-0", "flex-1");
+    expect(wrapper.nextElementSibling).toHaveClass("shrink-0"); // el cuadro nunca se comprime ni sale
     const keyboard = () => (panel as HTMLElement).style.getPropertyValue("--keyboard-vh");
     const box = await reply();
     act(() => box.focus());
