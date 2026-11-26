@@ -44,6 +44,24 @@ Previos transversales: [#3](https://github.com/PapiCuche/crm-gooddoggy/issues/3)
 - **Hecho en SEC-DEV-01 (#890):** cerrar los avisos de `pnpm audit` en dependencias de desarrollo del frontend (de 30, 10 altos, a 1 moderado justificado): vite 8.3.3, vitest 4.1.12, eslint 10.15.0 y overrides de undici, zod y fast-uri ([ADR-012 §4.5](../adr/ADR-012-engineering-runtime-baseline.md)).
 - **Hecho en SEC-DEV-02 (#894):** typescript-eslint y `@typescript-eslint/*` 8.71.0 → 8.73.0, solo en el lockfile (`eslint-config-next` 16.4.5 pide `^8.56.0`; publicadas el 2026-11-16 entre las 17:06 y las 17:08 UTC, cumplen `minimumReleaseAge` sin excepción). `@typescript-eslint/typescript-estree` 8.73.0 pide `minimatch ^11.0.1`: minimatch 10.2.6 sale del árbol y se cierra GHSA-g3hv-75wg-m249, el aviso que [ADR-012 §4.5](../adr/ADR-012-engineering-runtime-baseline.md) dejaba abierto. Las reglas de ESLint no cambian (`--print-config` igual salvo la versión del parser y del plugin). Los cuatro overrides de §4.5 se mantienen porque ningún padre pide aún la versión corregida (el motivo de cada uno está en `frontend/pnpm-workspace.yaml`); se aplican a todo el árbol, no solo a desarrollo.
 
+## Entrega continua (ADR-048)
+
+- **Hecho en ADR-ACC ([#1166](https://github.com/PapiCuche/crm-gooddoggy/issues/1166)):** [ADR-048](../adr/ADR-048-continuous-delivery-policy.md) aceptada el 2026-11-26 como entrega continua por fases. El propietario autoriza **solo** implementar y probar la fase 1 en entornos seguros: ningún despliegue automático a producción y sin fase 2. Hasta que la fase 1 esté implementada, verificada y habilitada de forma expresa, **rige el GO exacto por SHA**. Work items de la fase 1 (etiqueta `phase:f1`):
+
+| ID | Issue | Rama | Depende de |
+|---|---|---|---|
+| F1-20a | [#1167](https://github.com/PapiCuche/crm-gooddoggy/issues/1167) Clasificador de la clase de despliegue (informativo) | `feature/f1-cd-deploy-class-classifier` | #1166 |
+| F1-20b | [#1168](https://github.com/PapiCuche/crm-gooddoggy/issues/1168) Atestaciones de las imágenes y su verificación | `feature/f1-cd-image-attestations` | #1166 |
+| F1-20d | [#1169](https://github.com/PapiCuche/crm-gooddoggy/issues/1169) `cd-preflight.sh`, condiciones que bloquean | `feature/f1-cd-preflight` | #1166 |
+| F1-20f | [#1170](https://github.com/PapiCuche/crm-gooddoggy/issues/1170) Vigilante de la otra aplicación y lock común (lado del CRM) | `feature/f1-cd-neighbor-watch-lock` | #1166 |
+| F1-20c | [#1171](https://github.com/PapiCuche/crm-gooddoggy/issues/1171) `release.yml`, inerte hasta habilitarlo | `feature/f1-cd-release-workflow` | #1167, #1168 |
+| F1-20e1 | [#1172](https://github.com/PapiCuche/crm-gooddoggy/issues/1172) Agente del servidor: sondeo y verificación | `feature/f1-cd-server-agent` | #1171, #1169 |
+| F1-20e2 | [#1173](https://github.com/PapiCuche/crm-gooddoggy/issues/1173) Ejecución, observación, avisos y runbook | `feature/f1-cd-agent-execution` | #1172, #1170 |
+| F1-20h | [#1174](https://github.com/PapiCuche/crm-gooddoggy/issues/1174) Fase 1a: runbook del operador | `docs/cd-phase-1a-runbook` | #1171, #1169 |
+| F1-20i | [#1175](https://github.com/PapiCuche/crm-gooddoggy/issues/1175) Verificación de punta a punta en entorno seguro | `chore/cd-phase-1-safe-rehearsal` | #1173, #1174 |
+
+La parte del propietario (identidades, entorno `production`, token, avisos y la habilitación expresa) es el checklist F1-20g ([#1198](https://github.com/PapiCuche/crm-gooddoggy/issues/1198)).
+
 ## Definition of Done de la fase
 
 - ✅ `docker compose up` levanta todo en limpio siguiendo `docs/runbooks/local-stack.md` (F1-10).
