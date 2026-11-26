@@ -67,6 +67,7 @@ const full = (el: Element) => rowsOf(el).reduce((sum, li) => sum + tall(li), 0);
 const from: number[] = []; // dónde estaba la vista al empezar cada desplazamiento suave
 let glide = () => {}; // el suave va a la mitad y termina con `glide()`, hacia el destino del clic
 let boxTop = 40;
+let hidden = false; // `display: none`: todo mide 0 y `scrollTop` no se escribe
 const scrollTo = vi.fn(function (this: HTMLElement, { top, behavior }: ScrollToOptions) {
   from.push(this.scrollTop);
   glide = () => void (this.scrollTop = top!);
@@ -76,14 +77,14 @@ const scrollTo = vi.fn(function (this: HTMLElement, { top, behavior }: ScrollToO
 beforeEach(() => {
   const proto = HTMLElement.prototype;
   vi.spyOn(proto, "scrollHeight", "get").mockImplementation(function (this: HTMLElement) {
-    return isChat(this) ? full(this) : 0;
+    return isChat(this) && !hidden ? full(this) : 0;
   });
   vi.spyOn(proto, "clientHeight", "get").mockImplementation(function (this: HTMLElement) {
-    return isChat(this) ? SEEN : 0;
+    return isChat(this) && !hidden ? SEEN : 0;
   });
   vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
     const box = this.closest("[aria-label='Mensajes de la conversación']");
-    if (!box) return new DOMRect();
+    if (!box || hidden) return new DOMRect();
     if (this === box) return new DOMRect(0, boxTop, 300, SEEN);
     const rows = rowsOf(box);
     const above = rows.slice(0, rows.indexOf(this as HTMLLIElement));
@@ -97,7 +98,7 @@ beforeEach(() => {
     },
     set(this: HTMLElement, value: number) {
       const next = Math.max(0, Math.min(value, full(this) - SEEN));
-      if (next === (tops.get(this) ?? 0)) return;
+      if (hidden || next === (tops.get(this) ?? 0)) return;
       tops.set(this, next);
       queueMicrotask(() => this.dispatchEvent(new Event("scroll")));
     },
@@ -105,6 +106,7 @@ beforeEach(() => {
   proto.scrollTo = scrollTo as unknown as typeof proto.scrollTo;
   scrollTo.mockClear();
   boxTop = 40; // la región empieza más abajo en la página
+  hidden = false;
   grown.clear();
   observers.length = 0;
   vi.stubGlobal("ResizeObserver", Observer);
@@ -148,6 +150,7 @@ const history = (n: number) =>
 const chat = () => screen.getByRole("region", { name: "Mensajes de la conversación" });
 const top = () => chat().scrollTop;
 const bottom = () => full(chat()) - SEEN;
+const live = () => chat().previousElementSibling!.querySelector("[role=status]")!;
 const unseen = () => screen.queryByRole("button", { name: /^\d+\+? mensajes? nuevos?$/ });
 const at = (text: string) => screen.getByText(text).closest("li")!.getBoundingClientRect().top;
 const tick = () => act(() => new Promise((resolve) => setTimeout(resolve, 0)));
@@ -207,7 +210,7 @@ describe("seguir lo nuevo y «N mensajes nuevos» (UX-INBOX-06b)", () => {
     expect(top()).toBe(0);
     const button = unseen()!;
     expect(button).toHaveTextContent("2 mensajes nuevos"); // lo propio no cuenta
-    expect(button.closest("[role=status]")).not.toBeNull(); // se anuncia, cortés
+    await waitFor(() => expect(live()).toHaveTextContent("2 mensajes nuevos")); // se anuncia, cortés
     expect(button.querySelector("svg")).not.toBeNull(); // icono y texto, sin texto del cliente
     await arrive(state, message("n3", "Nuevo 3"));
     expect(unseen()).toHaveTextContent("3 mensajes nuevos");
@@ -315,6 +318,7 @@ describe("seguir lo nuevo y «N mensajes nuevos» (UX-INBOX-06b)", () => {
     await scroll(0);
     await arrive(state, ...history(6).map(({ id }, i) => message(`m${id}`, `Otro ${i}`)));
     expect(unseen()).toHaveTextContent("50+ mensajes nuevos");
+    await waitFor(() => expect(live()).toHaveTextContent("50+ mensajes nuevos"));
   });
 
   it("con movimiento reducido, sin desplazamiento suave", async () => {
@@ -406,20 +410,138 @@ describe("seguir lo nuevo y «N mensajes nuevos» (UX-INBOX-06b)", () => {
     const state = server(history(9));
     await open("Historial 9");
     await scroll(0);
-    const live = chat().previousElementSibling!; // existe y está vacía antes: se anuncia el cambio
-    expect(live).toHaveAttribute("role", "status");
-    expect(live).toBeEmptyDOMElement();
-    expect(live).toHaveClass("pointer-events-none", "absolute"); // superpuesta: deja pasar la rueda
+    const overlay = chat().previousElementSibling!;
+    const status = live(); // existe y está vacía antes: se anuncia el cambio
+    expect(status).toBeEmptyDOMElement();
+    expect(status).toHaveClass("sr-only");
+    expect(overlay).toHaveClass("pointer-events-none", "absolute"); // superpuesta: deja pasar la rueda
     expect(chat().parentElement).toHaveClass("relative");
     expect(chat()).not.toHaveClass("scroll-pb-16");
     await arrive(state, message("n1", "Nuevo 1"));
     const button = unseen()!;
-    expect(button.closest("[role=status]")).toBe(live); // la misma región, no una nueva
+    expect(live()).toBe(status); // la misma región, no una nueva
+    expect(button.closest("[role=status], [aria-live]")).toBeNull(); // su cuenta no se anuncia sola
     expect(chat()).toHaveClass("scroll-pb-16"); // un control enfocado no queda bajo el botón
     expect(button.compareDocumentPosition(chat()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(chat()).not.toContainElement(button);
     expect(button.closest("[aria-hidden=true]")).toBeNull();
     expect(button).not.toHaveAttribute("tabindex", "-1");
-    expect(button.closest("[role=status]")).toHaveTextContent(/^1 mensaje nuevo$/);
+    await waitFor(() => expect(status).toHaveTextContent(/^1 mensaje nuevo$/));
+  });
+});
+
+// UX-INBOX-06e. El anuncio espera `SAY` (500 ms): aquí ese plazo se suelta a mano con `say()`.
+describe("anuncios del contador y ancla ante crecimiento dentro de la vista (UX-INBOX-06e)", () => {
+  const held = new Map<number, () => void>();
+  const say = () => act(() => [...held.values()].forEach((fn) => fn()));
+  const hold = () => {
+    const [set, clear] = [globalThis.setTimeout, globalThis.clearTimeout];
+    let next = 1e6;
+    vi.spyOn(globalThis, "setTimeout").mockImplementation(((fn: () => void, ms?: number) => {
+      if (ms !== 500) return set(fn, ms);
+      held.set(++next, () => (held.delete(next), fn()));
+      return next;
+    }) as typeof setTimeout);
+    vi.spyOn(globalThis, "clearTimeout").mockImplementation((id) =>
+      held.has(id as number) ? void held.delete(id as number) : clear(id),
+    );
+  };
+  beforeEach(() => held.clear());
+
+  it("se oye la llegada, no cada paso al bajar leyendo; una ráfaga, una vez", async () => {
+    const state = server(history(9));
+    await open("Historial 9");
+    hold();
+    await scroll(0);
+    const said: string[] = []; // lo que dice la región, cada vez que cambia
+    const watcher = new MutationObserver(() => said.push(live().textContent!));
+    watcher.observe(live(), { subtree: true, childList: true, characterData: true });
+    await arrive(state, ...[1, 2, 3].map((n) => message(`n${n}`, `Nuevo ${n}`)));
+    expect(live()).toBeEmptyDOMElement(); // aún no: espera por si llega más
+    await say();
+    expect(live()).toHaveTextContent(/^3 mensajes nuevos$/);
+    expect(unseen()).toHaveAccessibleName("3 mensajes nuevos"); // el nombre es lo que se ve
+    expect(unseen()).not.toHaveAttribute("aria-describedby");
+    await scroll(700); // «Nuevo 1», leído
+    expect(unseen()).toHaveTextContent("2 mensajes nuevos"); // lo visible sigue cada paso
+    await scroll(800);
+    expect(unseen()).toHaveTextContent("1 mensaje nuevo");
+    await say();
+    expect(live()).toBeEmptyDOMElement();
+    await arrive(state, message("n4", "Nuevo 4"), message("n5", "Nuevo 5")); // otra vez 3
+    await say();
+    expect(live()).toHaveTextContent(/^3 mensajes nuevos$/);
+    await arrive(state, message("n6", "Nuevo 6")); // 4 y enseguida 5: se oye solo el 5
+    await arrive(state, message("n7", "Nuevo 7"));
+    await say();
+    await arrive(state, message("n8", "Nuevo 8")); // llega y se lee antes del plazo: la llegada
+    await scroll(900); // se oye igual, con la cuenta de entonces
+    await say();
+    expect(unseen()).toHaveTextContent("5 mensajes nuevos");
+    await scroll(bottom());
+    await say();
+    watcher.disconnect();
+    expect(unseen()).toBeNull();
+    expect(said.filter((text, i) => text !== said[i - 1])).toEqual([
+      ...["3 mensajes nuevos", "", "3 mensajes nuevos", "", "5 mensajes nuevos"],
+      ...["", "5 mensajes nuevos", ""], // en 0, vacía y callada
+    ]);
+  });
+
+  it("lo que crece dentro de la vista empuja hacia abajo; encima, se compensa", async () => {
+    const state = server(history(9));
+    await open("Historial 9");
+    await scroll(150); // arriba asoma la mitad de «Historial 2»
+    const [two, three, four] = ["Historial 2", "Historial 3", "Historial 4"].map(at);
+    grown.set("Historial 3", 40); // dentro de la vista
+    act(resized);
+    await tick();
+    expect([at("Historial 2"), at("Historial 3"), at("Historial 4")]).toEqual([
+      two,
+      three,
+      four! + 40,
+    ]);
+    expect(top()).toBe(150);
+    grown.set("Historial 2", 30); // la de arriba, la que asoma, crece por abajo: tampoco sube nada
+    act(resized);
+    await tick();
+    expect(top()).toBe(150);
+    await scroll(230); // «Historial 2» (130 px) termina justo en el borde: ya no se ve
+    const five = at("Historial 5");
+    grown.set("Historial 2", 60);
+    act(resized);
+    await tick();
+    expect(at("Historial 5")).toBe(five);
+    expect(top()).toBe(260);
+    await arrive(state, message("n1", "Nuevo 1")); // lo de siempre: lo que llega no mueve la vista
+    expect(at("Historial 5")).toBe(five);
+  });
+
+  it("tras crecer dentro de la vista, si la de arriba sale al releer, no salta", async () => {
+    const state = server(history(15), 5);
+    await open("Historial 15");
+    for (const n of [6, 1]) {
+      fireEvent.click(screen.getByRole("button", { name: "Cargar mensajes anteriores" }));
+      await screen.findByText(`Historial ${n}`);
+    }
+    await scroll(150); // de «Historial 2» (asoma) a «Historial 5»
+    grown.set("Historial 3", 120); // dentro de la vista, sin `scroll`
+    act(resized);
+    await tick();
+    await arrive(state, message("n1", "Nuevo 1"), message("n2", "Nuevo 2")); // salen 1 y 2
+    expect(top()).toBe(0); // «Historial 4», donde estaba (hasta donde se puede); no 70 px más abajo
+  });
+
+  it("oculto, el ancla no se mide; al volver a verse, la fila leída sigue donde estaba", async () => {
+    server(history(9));
+    await open("Historial 9");
+    await scroll(100);
+    hidden = true; // `display: none` mientras se ve al cliente
+    act(resized);
+    await tick();
+    hidden = false;
+    act(resized);
+    await tick();
+    expect(top()).toBe(100);
   });
 });
