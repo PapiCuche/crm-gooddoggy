@@ -18,6 +18,19 @@ import { hangPosts, mockApi, renderApp } from "@/test-utils";
 import { keepPending, messagesKey, pausedId } from "./composer";
 import { Inbox } from "./inbox";
 
+// Cada vez que se dibuja una fila de la lista (el punto de su red solo está en la fila): UX-INBOX-04b.
+const rowRenders = vi.hoisted(() => ({ count: 0 }));
+vi.mock("@/components/channels/channel-identity", async (actual) => {
+  const real = await actual<typeof import("@/components/channels/channel-identity")>();
+  return {
+    ...real,
+    ChannelDot: (props: Parameters<typeof real.ChannelDot>[0]) => {
+      rowRenders.count += 1;
+      return real.ChannelDot(props);
+    },
+  };
+});
+
 const BASE = "/api/v1/o/acme/conversations";
 const LIST = `GET ${BASE}/`;
 const DETAIL = `GET ${BASE}/1/`;
@@ -577,6 +590,105 @@ describe("borradores por organización, conversación y modo (UX-INBOX-04)", () 
     expect(retry).toBe(first);
   });
 
+  // La marca de la fila (UX-INBOX-04b): texto e icono dentro del botón, por respuesta o por nota.
+  const row = (name: RegExp) => screen.getByRole("button", { name });
+  const marked = (name = /Rosa Díaz/) => within(row(name)).queryByText("Borrador") !== null;
+
+  it("la fila dice «Borrador» con icono por una respuesta o por una nota; espacios solos no", async () => {
+    server();
+    show(grants("conversations.view", "messages.send", "messages.note"));
+    await openChat();
+    expect(marked()).toBe(false);
+    await type("Hola Rosa");
+    expect(row(/Rosa Díaz/)).toHaveAccessibleName(/Rosa Díaz.*Borrador/);
+    const mark = within(row(/Rosa Díaz/)).getByText("Borrador");
+    expect(mark.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
+    expect(marked(/Juan Pérez/)).toBe(false);
+    toNote();
+    await type("Pidió delivery", "Nota interna");
+    await type("", "Nota interna");
+    expect(marked()).toBe(true); // vaciar la nota no borra la marca de la respuesta
+    fireEvent.click(screen.getByRole("button", { name: "Responder al cliente" }));
+    await type("   \n ");
+    expect(marked()).toBe(false);
+    toNote(); // M10 de #1123: solo la nota
+    await type("Pidió delivery", "Nota interna");
+    expect(marked()).toBe(true);
+  });
+
+  it("durante el envío lo que sale no marca; la nota sí; tras un fallo vuelve y tras enviar se va", async () => {
+    let fail = true;
+    const s = server({
+      send: () =>
+        fail ? { status: 500, body: { code: "X" } } : { status: 202, body: saved("s1", "ok") },
+    });
+    show(grants("conversations.view", "messages.send", "messages.note"));
+    await openChat();
+    await type("Hola Rosa");
+    s.wait();
+    fireEvent.click(sendButton());
+    await waitFor(() => expect(box()).resolves.toHaveAttribute("readonly"));
+    expect(marked()).toBe(false); // su único texto es el que está saliendo
+    toNote();
+    await type("Pidió delivery", "Nota interna");
+    expect(marked()).toBe(true); // la nota no está saliendo
+    await type("", "Nota interna");
+    expect(marked()).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Responder al cliente" }));
+    s.go();
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(marked()).toBe(true); // falló: el texto sigue sin enviar
+    await type(""); // queda el intento (su id), pero sin texto no hay borrador
+    expect(marked()).toBe(false);
+    await type("Hola Rosa");
+    fail = false;
+    fireEvent.click(await screen.findByRole("button", { name: /^(Reintentar|Enviar)$/ }));
+    await waitFor(() => expect(box()).resolves.toHaveValue(""));
+    expect(marked()).toBe(false);
+  });
+
+  it("una nota que se está guardando no marca; si falla, vuelve a marcar", async () => {
+    const s = server(); // este doble no tiene la ruta de notas: responde 404
+    show(grants("conversations.view", "messages.note"));
+    await openChat();
+    await type("Pidió delivery", "Nota interna");
+    s.wait();
+    fireEvent.click(screen.getByRole("button", { name: "Guardar nota" }));
+    await waitFor(() => expect(box("Nota interna")).resolves.toHaveAttribute("readonly"));
+    expect(marked()).toBe(false);
+    s.go();
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(marked()).toBe(true);
+  });
+
+  it("convive con «La respuesta no llegó» y «Pide atención humana»", async () => {
+    const asked = {
+      reason: "UPSET",
+      requested_at: "2026-11-04T15:31:00Z",
+      requested_by_user_id: "u1",
+    };
+    server({ conversation: { last_reply_failed: true, human_request: asked } as never });
+    show();
+    await openChat();
+    await type("Hola Rosa");
+    for (const text of ["La respuesta no llegó", "Pide atención humana", "Borrador"]) {
+      expect(within(row(/Rosa Díaz/)).getByText(text)).toBeInTheDocument();
+    }
+  });
+
+  it("escribir solo vuelve a dibujar la fila cuya marca cambia, y una sola vez", async () => {
+    server();
+    show();
+    await openChat();
+    await settle();
+    rowRenders.count = 0;
+    await type("H");
+    expect(rowRenders.count).toBe(1); // la de Rosa, que pasa a «Borrador»; no la de Juan
+    await type("Hola Rosa");
+    await settle();
+    expect(rowRenders.count).toBe(1); // sigue con borrador: nada cambia en la lista
+  });
+
   // Mismos ids y dirección; otra persona de la misma organización entra tras cerrar sesión.
   it.each([
     ["otra organización", { organization: { ...tenant.organization, id: "o2" } }],
@@ -600,6 +712,7 @@ describe("borradores por organización, conversación y modo (UX-INBOX-04)", () 
       fireEvent.click(screen.getByRole("button", { name: "Cambiar" }));
       await openChat();
       expect(await box(), `vuelta ${round}`).toHaveValue("");
+      expect(marked(), `vuelta ${round}`).toBe(false); // tampoco su marca en la lista
     }
   });
 });

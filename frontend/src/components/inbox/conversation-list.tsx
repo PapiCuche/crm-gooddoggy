@@ -1,7 +1,7 @@
 "use client";
 
 import { useInfiniteQuery } from "@tanstack/react-query";
-import { BotOff, CircleAlert, Hand, RefreshCw } from "lucide-react";
+import { BotOff, CircleAlert, Hand, PencilLine, RefreshCw } from "lucide-react";
 import { useFormatter, useTranslations } from "next-intl";
 
 import { useTenant } from "@/components/app-shell/tenant-context";
@@ -26,6 +26,7 @@ import { cn } from "@/lib/utils";
 
 import { Assignee } from "./assignment";
 import { useUnanswered } from "./attention";
+import { useDraftsValue } from "./drafts";
 import { Plain } from "./plain";
 
 export const BOXES = ["all", "mine", "unassigned"] as const;
@@ -286,6 +287,8 @@ function Row({
   const t = useTranslations("inbox");
   const format = useFormatter();
   const name = row.contact.display_name;
+  // Solo un sí o un no: escribir vuelve a dibujar únicamente la fila cuya marca cambia (UX-INBOX-04b).
+  const draft = useDraftsValue((drafts) => drafts.has(row.id));
   // Sin nombre, la API tampoco da la vista previa: se explica en lugar de dejar un hueco.
   let preview = <span className="italic">{t("noAccess")}</span>;
   if (name !== null && row.last_message_preview !== null) {
@@ -342,6 +345,12 @@ function Row({
             <span className="text-foreground inline-flex items-center gap-1 font-semibold">
               <Hand aria-hidden className="size-3" />
               {t("humanRequest.badge")}
+            </span>
+          ) : null}
+          {draft ? (
+            <span className="text-foreground inline-flex items-center gap-1">
+              <PencilLine aria-hidden className="size-3" />
+              {t("draft")}
             </span>
           ) : null}
           {row.ai_excluded_at ? (

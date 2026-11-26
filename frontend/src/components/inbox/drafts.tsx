@@ -15,6 +15,7 @@ import type { Mode } from "./composer";
 type Attempt = { id: string; first: string; media: boolean };
 export type Draft = { text: string; attempt: Attempt | null; sending: boolean };
 const EMPTY: Draft = { text: "", attempt: null, sending: false };
+const MODES: readonly Mode[] = ["reply", "note"];
 
 // Borradores de una organización (UX-INBOX-04), solo en la memoria de la pestaña. Clave: organización,
 // conversación y modo. Cerrado, se vacía y no acepta lo que llegue después (un envío que termina).
@@ -22,12 +23,15 @@ export class Drafts {
   #rows = new Map<string, Draft>();
   #listeners = new Set<() => void>();
   #open = true;
+  #unsent = new Set<string>(); // conversaciones con respuesta o nota sin enviar (UX-INBOX-04b)
   constructor(readonly organization: string) {}
 
   key = (conversation: string, mode: Mode) => `${this.organization}/${conversation}/${mode}`;
   #own = (key: string) => key.startsWith(`${this.organization}/`); // los ids son UUID, sin «/»
 
   get = (key: string): Draft => this.#rows.get(key) ?? EMPTY;
+  // Lo calcula `update` para su conversación: cada fila, en cada tecla, solo mira un `Set`.
+  has = (conversation: string) => this.#unsent.has(conversation);
 
   // Cambia el borrador de esa clave a partir del que hay ahora (nunca de una copia vieja).
   update = (key: string, change: (draft: Draft) => Partial<Draft>) => {
@@ -35,6 +39,14 @@ export class Drafts {
     const next = { ...this.get(key), ...change(this.get(key)) };
     if (next.text === "" && !next.attempt && !next.sending) this.#rows.delete(key);
     else this.#rows.set(key, next);
+    // Respuesta o nota con texto sin enviar; un modo con un envío en curso no cuenta (lo que sale).
+    const conversation = key.slice(this.organization.length + 1, key.lastIndexOf("/"));
+    const unsent = MODES.some((mode) => {
+      const { text, sending } = this.get(this.key(conversation, mode));
+      return text.trim() !== "" && !sending;
+    });
+    if (unsent) this.#unsent.add(conversation);
+    else this.#unsent.delete(conversation);
     this.#listeners.forEach((listener) => listener());
   };
 
@@ -47,6 +59,7 @@ export class Drafts {
   close = () => {
     this.#open = false;
     this.#rows.clear();
+    this.#unsent.clear();
     this.#listeners.forEach((listener) => listener());
   };
 }
