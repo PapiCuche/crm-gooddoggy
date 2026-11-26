@@ -375,6 +375,8 @@ describe("seguir lo nuevo y «N mensajes nuevos» (UX-INBOX-06b)", () => {
     const calls = state.api.mock.calls.length;
     await scroll(700); // «Nuevo 1» a la vista; «Nuevo 2» empieza justo en el borde: debajo
     expect(unseen()).toHaveTextContent("1 mensaje nuevo");
+    await scroll(752); // «Nuevo 2» asoma 52 px: bajo el botón (44 + 8), aún sin leer
+    expect(unseen()).toHaveTextContent("1 mensaje nuevo");
     await scroll(bottom() - 30); // a 30 px del final (no es «el final»), los dos a la vista
     expect(unseen()).toBeNull();
     await scroll(0); // volver a subir no los vuelve a contar
@@ -404,8 +406,16 @@ describe("seguir lo nuevo y «N mensajes nuevos» (UX-INBOX-06b)", () => {
     const state = server(history(9));
     await open("Historial 9");
     await scroll(0);
+    const live = chat().previousElementSibling!; // existe y está vacía antes: se anuncia el cambio
+    expect(live).toHaveAttribute("role", "status");
+    expect(live).toBeEmptyDOMElement();
+    expect(live).toHaveClass("pointer-events-none", "absolute"); // superpuesta: deja pasar la rueda
+    expect(chat().parentElement).toHaveClass("relative");
+    expect(chat()).not.toHaveClass("scroll-pb-16");
     await arrive(state, message("n1", "Nuevo 1"));
     const button = unseen()!;
+    expect(button.closest("[role=status]")).toBe(live); // la misma región, no una nueva
+    expect(chat()).toHaveClass("scroll-pb-16"); // un control enfocado no queda bajo el botón
     expect(button.compareDocumentPosition(chat()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(chat()).not.toContainElement(button);
     expect(button.closest("[aria-hidden=true]")).toBeNull();

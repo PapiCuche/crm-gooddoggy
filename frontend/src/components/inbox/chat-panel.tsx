@@ -69,11 +69,13 @@ const LABELS: Record<string, ReactNode> = {
 const END = 8; // px: a menos de esto del final, se lee lo último
 const still = () =>
   typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
-// La última fila a la vista (y la siguiente) y su altura en la región: al releer no se mueve.
-const lastSeen = (box: HTMLElement) => {
+const PILL = 52; // px: el botón «N mensajes nuevos» (44) y su margen (8) tapan el pie de la región
+// La última fila a la vista (y la siguiente) y su altura en la región: al releer no se mueve. Con
+// `hidden`, a la vista por encima de esos px del pie (lo que asoma bajo el botón no se ha leído).
+const lastSeen = (box: HTMLElement, hidden = 0) => {
   const view = box.getBoundingClientRect();
   const rows = [...box.querySelectorAll<HTMLElement>("li[data-id]")];
-  const last = rows.findLastIndex((li) => li.getBoundingClientRect().top < view.bottom);
+  const last = rows.findLastIndex((li) => li.getBoundingClientRect().top < view.bottom - hidden);
   return rows
     .slice(Math.max(last, 0), last + 2)
     .map((li) => ({ id: li.dataset.id!, top: li.getBoundingClientRect().top - view.top }));
@@ -406,7 +408,8 @@ export function ChatPanel({
             if (pinned.current || box.scrollTop < chase.current.top) chase.current.on = false;
             chase.current.top = box.scrollTop;
             anchor.current = lastSeen(box);
-            const shown = rows.findIndex(({ id }) => id === anchor.current[0]?.id);
+            const read = lastSeen(box, PILL)[0]?.id;
+            const shown = rows.findIndex(({ id }) => id === read);
             const upto = rows.findLastIndex(
               (row, i) => i <= shown && !row.id.startsWith("pending-"),
             );
