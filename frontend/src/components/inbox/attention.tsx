@@ -26,23 +26,29 @@ import { Plain } from "./plain";
 // cuentas de canal que no pueden atender. La red de cada conversación está en `channel-identity`.
 
 // Cuántas conversaciones abiertas esperan respuesta (lo último lo dijo el cliente), las que la API
-// deja ver (`conversations.view` y su alcance) en esa bandeja y esa red (UX-INBOX-02). Cuelga de la
-// clave de la lista: lo que la relee (responder, asignar, un evento del tiempo real) también relee
+// deja ver (`conversations.view` y su alcance) en esa bandeja, red y cuenta (UX-INBOX-02). Cuelga de
+// la clave de la lista: lo que la relee (responder, asignar, un evento del tiempo real) también relee
 // el número.
 export function useUnanswered(
   {
     box = "all",
     platform = "",
+    account = "",
   }: {
     box?: ConversationsUnansweredCountBox;
     platform?: ConversationsUnansweredCountPlatform | "";
+    account?: string;
   },
   enabled = true,
 ) {
   const slug = useTenant().organization.slug;
-  const params = { ...(box === "all" ? {} : { box }), ...(platform ? { platform } : {}) };
+  const params = {
+    ...(box === "all" ? {} : { box }),
+    ...(platform ? { platform } : {}),
+    ...(account ? { account } : {}),
+  };
   const count = useQuery({
-    queryKey: [...getConversationsListQueryKey(slug), "unanswered", box, platform],
+    queryKey: [...getConversationsListQueryKey(slug), "unanswered", box, platform, account],
     queryFn: ({ signal }) => conversationsUnansweredCount(slug, params, { signal }),
     enabled,
     gcTime: 0, // como la lista: al salir de la organización no queda nada suyo en memoria
