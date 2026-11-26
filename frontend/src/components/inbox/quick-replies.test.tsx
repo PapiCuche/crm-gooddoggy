@@ -7,7 +7,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TenantProvider } from "@/components/app-shell/tenant-context";
@@ -64,7 +64,7 @@ type Reply = { status: number; body?: unknown };
 // El servidor de dos conversaciones; con `hold`, cada `render` espera a `release()`.
 function server(
   render: () => Reply = () => ({ status: 200, body: rendered }),
-  { hold = false, replies = REPLIES } = {},
+  { hold = false, holdSend = false, replies = REPLIES } = {},
 ) {
   const routes: Record<string, Reply | (() => Reply)> = { [`GET ${BASE}/`]: page([rosa, juan]) };
   for (const one of [rosa, juan]) {
@@ -81,6 +81,8 @@ function server(
   api.mockImplementation(async (input, init) => {
     const url = new URL(String(input), "http://x");
     if (hold && url.pathname.endsWith("/render/")) await new Promise<void>((go) => held.push(go));
+    if (holdSend && url.pathname.endsWith("/messages/") && init?.method === "POST")
+      await new Promise<void>((go) => held.push(go));
     if (!/\/conversations\/\d\/quick-replies\/$/.test(url.pathname)) return inner(input, init);
     const q = url.searchParams.get("q") ?? "";
     const found = replies.filter((one) => `${one.shortcut} ${one.title}`.includes(q));
@@ -371,6 +373,7 @@ describe("respuestas rápidas en el cuadro de respuesta (F6-08b)", () => {
     });
     await settle();
     expect(screen.queryByRole("listbox")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Respuestas rápidas" })).toBeNull(); // ni su botón
     expect(s.searches()).toEqual([]);
   });
 
@@ -483,5 +486,172 @@ describe("respuestas rápidas en el cuadro de respuesta (F6-08b)", () => {
     await s.release();
     await settle();
     expect(insert).not.toHaveBeenCalled();
+  });
+});
+
+// jsdom no trae los métodos de `<dialog>`: se refleja `open` y se anota cómo se abrió.
+const opened: string[] = [];
+Object.assign(HTMLDialogElement.prototype, {
+  show(this: HTMLDialogElement) {
+    this.open = true;
+    opened.push("show");
+  },
+  showModal(this: HTMLDialogElement) {
+    this.open = true;
+    opened.push("modal");
+  },
+  close(this: HTMLDialogElement) {
+    this.open = false;
+    this.dispatchEvent(new Event("close"));
+  },
+});
+const button = () => screen.findByRole("button", { name: "Respuestas rápidas" });
+const search = () => screen.findByRole("combobox", { name: "Buscar por atajo o texto" });
+const browse = async (query: string) => {
+  fireEvent.click(await button());
+  fireEvent.change(await search(), { target: { value: query } });
+  return screen.findByRole("option", { name: /Envío en Lima/ });
+};
+
+describe("respuestas rápidas con su botón (UX-INBOX-05)", () => {
+  beforeEach(() => void (opened.length = 0));
+
+  it("abre con el buscador enfocado, busca con `q` y un toque inserta sin enviar", async () => {
+    const s = server();
+    show();
+    await openChat();
+    const option = await browse("lima");
+    expect(screen.getByRole("dialog", { name: "Respuestas rápidas" })).toBeInTheDocument();
+    expect(opened).toEqual(["show"]); // en escritorio, el desplegable
+    expect(await search()).toHaveFocus();
+    await waitFor(() => expect(options()).toHaveLength(1));
+    expect(s.searches()).toContain("lima");
+    fireEvent.pointerDown(option);
+    fireEvent.click(option);
+    await waitFor(() => expect(box()).resolves.toHaveValue(rendered.text));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(await box()).toHaveFocus();
+    await waitFor(() =>
+      expect(box()).resolves.toHaveProperty("selectionStart", rendered.text.length),
+    );
+    await key("Enter"); // recién insertado: un Enter no envía
+    fireEvent.click(screen.getByRole("button", { name: "Enviar" })); // ni un segundo toque
+    await settle();
+    expect(s.sends()).toEqual([]);
+    await settle(500); // pasado el margen, «Enviar» envía
+    fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
+    await waitFor(() => expect(s.sends()).toHaveLength(1));
+  });
+
+  it("con un borrador lo conserva y añade al final; Enter en el buscador nunca envía", async () => {
+    const s = server();
+    show();
+    await openChat();
+    await type("Hola Rosa");
+    await browse("lima");
+    await waitFor(() => expect(options()).toHaveLength(1));
+    expect(((await search()) as HTMLInputElement).form).toBeNull(); // fuera del formulario
+    fireEvent.keyDown(await search(), { key: "Enter", isComposing: true });
+    await settle();
+    expect(s.renders()).toBe(0);
+    fireEvent.keyDown(await search(), { key: "Enter" });
+    await waitFor(() => expect(box()).resolves.toHaveValue(`Hola Rosa\n\n${rendered.text}`));
+    await settle();
+    expect(s.sends()).toEqual([]);
+  });
+
+  it("Escape y «Cerrar» cierran sin tocar el texto y devuelven el foco al botón", async () => {
+    server();
+    show();
+    await openChat();
+    await type("/deli");
+    fireEvent.click(await button());
+    fireEvent.keyDown(await search(), { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(await button()).toHaveFocus();
+    expect(await box()).toHaveValue("/deli");
+    fireEvent.click(await button());
+    fireEvent.click(await screen.findByRole("button", { name: "Cerrar respuestas rápidas" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(await button()).toHaveFocus();
+  });
+
+  it("en un teléfono es una hoja modal, la página no se desplaza detrás y la ayuda es táctil", async () => {
+    const back = vi.fn();
+    vi.stubGlobal("scrollTo", back);
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: query === "(max-width: 639px)" || query === "(pointer: coarse)",
+    }));
+    server();
+    show();
+    await openChat();
+    fireEvent.click(await button());
+    expect(await search()).toHaveFocus();
+    expect(opened).toEqual(["modal"]);
+    expect(document.body.style.position).toBe("fixed");
+    expect(screen.getByText(/Toca una respuesta para ponerla en el cuadro/)).toBeInTheDocument();
+    fireEvent.click(await search()); // un toque dentro no es el fondo
+    fireEvent.blur(await search()); // «OK» del teclado de iOS: la hoja modal sigue
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    fireEvent(screen.getByRole("dialog"), new Event("cancel", { cancelable: true })); // «atrás»
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(document.body.style.position).toBe("");
+    expect(back).toHaveBeenCalledWith(0, 0);
+    expect(await button()).toHaveFocus();
+    fireEvent.click(await browse("lima")); // elegir también cierra la hoja
+    await waitFor(() => expect(box()).resolves.toHaveValue(rendered.text));
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("elegir con un envío en curso solo inserta: no sale otro envío", async () => {
+    const s = server(undefined, { holdSend: true });
+    show();
+    await openChat();
+    await type("hola");
+    fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
+    await waitFor(() => expect(s.held).toHaveLength(1));
+    fireEvent.click(await browse("lima"));
+    await waitFor(() => expect(box()).resolves.toHaveValue(`hola\n\n${rendered.text}`));
+    await s.release();
+    await waitFor(() => expect(box()).resolves.toHaveValue(rendered.text));
+    await settle();
+    expect(s.sends()).toEqual([expect.objectContaining({ body: "hola" })]);
+  });
+
+  it("se cierra al dejar de poder responder o cambiar de conversación, con el foco en el cuadro", async () => {
+    server();
+    let change!: (next: { enabled: boolean; id: string }) => void;
+    function Probe() {
+      const [state, setState] = useState({ enabled: true, id: "1" });
+      change = setState;
+      const field = useRef<HTMLTextAreaElement>(null);
+      const quick = useQuickReplies({
+        ...{ enabled: state.enabled, conversationId: state.id, text: "", insert: vi.fn() },
+        box: field,
+      });
+      return (
+        <>
+          <textarea ref={field} aria-label="Cuadro" disabled={!state.enabled} />
+          {quick.trigger}
+          {quick.sheet}
+        </>
+      );
+    }
+    renderApp(
+      <TenantProvider value={tenant}>
+        <Probe />
+      </TenantProvider>,
+    );
+    fireEvent.click(await button());
+    expect(await search()).toHaveFocus();
+    act(() => change({ enabled: true, id: "2" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByRole("textbox", { name: "Cuadro" })).toHaveFocus();
+    fireEvent.click(await button());
+    expect(await search()).toHaveFocus();
+    act(() => change({ enabled: false, id: "2" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Respuestas rápidas" })).toBeNull();
+    expect(document.activeElement?.isConnected).toBe(true);
   });
 });

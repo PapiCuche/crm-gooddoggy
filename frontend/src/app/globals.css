@@ -128,3 +128,15 @@
     opacity: 0;
   }
 }
+
+/* Hoja de respuestas rápidas (modal en teléfonos): sube breve; `prefers-reduced-motion` la deja quieta. */
+.quick-sheet:modal {
+  translate: 0 0;
+  transition:
+    translate 200ms var(--ease-out),
+    overlay 200ms allow-discrete,
+    display 200ms allow-discrete;
+  @starting-style {
+    translate: 0 100%;
+  }
+}
