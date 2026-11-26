@@ -928,8 +928,9 @@ describe("móvil: la conversación en la URL (UX-INBOX-03)", () => {
       return inner(input, init);
     });
     const { client } = show();
-    const loading = await screen.findByText("Cargando mensajes…");
+    const loading = await screen.findByText("Cargando la conversación…");
     expect(loading).not.toHaveClass("max-lg:hidden");
+    expect(loading).toHaveAttribute("role", "status"); // se anuncia (UX-INBOX-03c)
     expect(screen.getByRole("region", { name: "Conversaciones" })).toHaveClass("max-lg:hidden");
     arrive();
     expect(await screen.findByRole("heading", { level: 2 })).toHaveTextContent("Rosa Díaz");

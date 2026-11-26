@@ -171,8 +171,11 @@ export function Inbox() {
               ) : null}
             </>
           ) : (
-            <p className={cn("text-muted", !wanted && "max-lg:hidden")}>
-              {t(wanted ? "chat.loading" : "chat.choose")}
+            <p
+              role={wanted ? "status" : undefined} // un enlace `?c=`: se anuncia que se abre
+              className={cn("text-muted", !wanted && "max-lg:hidden")}
+            >
+              {t(wanted ? "chat.opening" : "chat.choose")}
             </p>
           )}
         </section>

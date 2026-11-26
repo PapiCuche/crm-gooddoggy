@@ -266,7 +266,7 @@ export function ChatPanel({
     <div
       ref={panel}
       data-composing={composing || undefined}
-      className="group border-border bg-surface flex h-[calc(var(--keyboard-vh,100dvh)-8rem)] min-h-min flex-col rounded-lg border max-sm:data-composing:relative max-sm:data-composing:z-10 max-sm:data-composing:-mx-4 max-sm:data-composing:-mt-[92px] max-sm:data-composing:-mb-8 max-sm:data-composing:h-[var(--keyboard-vh,100dvh)] max-sm:data-composing:rounded-none max-sm:data-composing:border-0 lg:h-[calc(100dvh-18rem)] lg:min-h-[26rem]"
+      className="group border-border bg-surface flex h-[calc(var(--keyboard-vh,100dvh)-8rem)] min-h-min flex-col rounded-lg border max-sm:data-composing:relative max-sm:data-composing:z-10 max-sm:data-composing:-mx-(--shell-gutter) max-sm:data-composing:-mt-[calc(var(--shell-bar)+var(--shell-pad))] max-sm:data-composing:-mb-(--shell-pad) max-sm:data-composing:h-[var(--keyboard-vh,100dvh)] max-sm:data-composing:rounded-none max-sm:data-composing:border-0 lg:h-[calc(100dvh-18rem)] lg:min-h-[26rem]"
     >
       <header className="border-border relative flex shrink-0 flex-col gap-1 border-b p-2 lg:gap-2 lg:p-3">
         {/* Una sola fila que se parte en líneas. El DOM va en el orden de tabulación que se ve en
@@ -299,8 +299,6 @@ export function ChatPanel({
           <Button
             variant="ghost"
             className="border-border order-4 hidden size-11 border px-0 max-sm:group-data-composing:inline-flex"
-            aria-expanded="false"
-            onMouseDown={(event) => event.preventDefault()}
             onClick={() => (release(), refresh.current?.focus())}
           >
             <Ellipsis aria-hidden />
@@ -460,6 +458,7 @@ export function ChatPanel({
           {t("copilot.excluded")}
         </p>
       ) : null}
+      {/* El redactor va el último del panel: `useComposing` lo reconoce así (nada después). */}
       {modes.reply || modes.note ? (
         <Composer
           inserter={inserter}

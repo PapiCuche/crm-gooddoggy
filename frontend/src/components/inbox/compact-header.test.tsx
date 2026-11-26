@@ -1,4 +1,5 @@
 import { act, configure, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TenantProvider } from "@/components/app-shell/tenant-context";
@@ -138,7 +139,7 @@ describe("cabecera compacta mientras se escribe (UX-INBOX-03b)", () => {
     const header = panel.querySelector("header")!;
     const more = button("Más acciones de la conversación");
     expect(more).toHaveClass("hidden", "size-11", "max-sm:group-data-composing:inline-flex");
-    expect(more).toHaveAttribute("aria-expanded", "false");
+    expect(more).not.toHaveAttribute("aria-expanded"); // no abre nada: suelta lo compacto (03c)
     const hides = "Actualizar mensajes|Excluir de la IA|Cliente y oportunidades|Acciones".split(
       "|",
     );
@@ -203,5 +204,140 @@ describe("cabecera compacta mientras se escribe (UX-INBOX-03b)", () => {
         expect(each.className, name).toMatch(/(^| )([a-z:-]*max-lg:)?(min-h|h|size)-11( |$)/);
       }
     }
+  });
+});
+
+describe("pulido de la cabecera compacta (UX-INBOX-03c)", () => {
+  it("compacto, pulsar un botón del panel no quita el foco al cuadro; fuera o sin compactar, sí", async () => {
+    serve();
+    show();
+    const panel = await openChat();
+    const row = within(screen.getByRole("region", { name: "Conversaciones" })).getByRole("button", {
+      name: /Rosa Díaz/,
+    });
+    fireEvent.change(box(), { target: { value: "Hola" } });
+    const pressed = (element: Element) => fireEvent.mouseDown(element); // `false`: sin foco nuevo
+    for (const name of ["Enviar", "Volver a las conversaciones", "Adjuntar imagen o PDF"]) {
+      expect(pressed(button(name)), name).toBe(true); // aún sin compactar
+    }
+    act(() => box().focus());
+    expect(panel).toHaveAttribute("data-composing");
+    for (const name of ["Enviar", "Volver a las conversaciones", "Adjuntar imagen o PDF"]) {
+      expect(pressed(button(name).firstElementChild!), name).toBe(false); // su icono, dentro
+    }
+    expect(pressed(button("Más acciones de la conversación"))).toBe(false);
+    expect(pressed(box())).toBe(true); // el cuadro mismo, ni lo que no es botón
+    expect(pressed(row)).toBe(true); // fuera del panel
+    const picker = vi.spyOn(HTMLInputElement.prototype, "click").mockImplementation(() => {});
+    fireEvent.click(button("Adjuntar imagen o PDF")); // el clip sigue abriendo el selector
+    expect(picker).toHaveBeenCalledTimes(1);
+    act(() => screen.getByRole("region", { name: "Mensajes de la conversación" }).focus());
+    await tick();
+    expect(panel).not.toHaveAttribute("data-composing");
+    expect(pressed(button("Enviar"))).toBe(true); // ya sin compactar, lo de siempre
+  });
+
+  it("Android: si el teclado se cierra sin quitar el foco, se suelta el cuadro; girar o la barra no", async () => {
+    const viewport = Object.assign(new EventTarget(), { width: 390, height: 780, scale: 1 });
+    vi.stubGlobal("visualViewport", viewport);
+    serve();
+    show();
+    const panel = await openChat();
+    const resize = (width: number, height: number) =>
+      act(() => void Object.assign(viewport, { width, height }).dispatchEvent(new Event("resize")));
+    act(() => box().focus());
+    resize(390, 400); // se abre el teclado
+    resize(390, 456); // la barra de direcciones se recoge (56 px)
+    resize(844, 200); // se gira con el teclado abierto…
+    resize(390, 400); // …y se vuelve: crece 200 px, pero con otro ancho
+    resize(390, 370); // el teclado crece un poco (emojis)
+    resize(390, 500); // y vuelve: 130 px
+    expect(box()).toHaveFocus();
+    expect(panel).toHaveAttribute("data-composing");
+    resize(390, 521); // 151 px más que lo menor visto: el teclado se cerró
+    expect(box()).not.toHaveFocus();
+    await tick();
+    expect(panel).not.toHaveAttribute("data-composing");
+    act(() => box().focus()); // otra vez: se mide desde aquí, no desde lo de antes
+    expect(box()).toHaveFocus();
+    pointer(false); // con ratón, cambiar el tamaño de la ventana no suelta nada
+    act(() => box().focus());
+    resize(390, 300);
+    resize(390, 780);
+    expect(box()).toHaveFocus();
+  });
+
+  it("con lo último a la vista, encoger el chat lo sigue: el desplazamiento al encoger no cuenta", async () => {
+    vi.stubGlobal("visualViewport", Object.assign(new EventTarget(), { height: 780, scale: 1 }));
+    const watched: [ResizeObserverCallback, Element[]][] = [];
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        targets: Element[] = [];
+        constructor(callback: ResizeObserverCallback) {
+          watched.push([callback, this.targets]);
+        }
+        observe(target: Element) {
+          this.targets.push(target);
+        }
+        disconnect() {}
+      },
+    );
+    serve();
+    show();
+    await openChat();
+    const scroller = screen.getByRole("region", { name: "Mensajes de la conversación" });
+    const size = { clientHeight: 500, scrollHeight: 1000, scrollTop: 500 };
+    for (const key of Object.keys(size) as (keyof typeof size)[]) {
+      Object.defineProperty(scroller, key, {
+        get: () => size[key],
+        // como el navegador: `scrollTop` no pasa del final
+        set: (value: number) =>
+          (size[key] = Math.min(value, size.scrollHeight - size.clientHeight)),
+      });
+    }
+    const resized = () =>
+      act(() =>
+        watched
+          .filter(([, targets]) => targets.includes(scroller))
+          .forEach(([callback]) => callback([], {} as ResizeObserver)),
+      );
+    resized(); // se mide el alto: lo último está a la vista
+    fireEvent.scroll(scroller);
+    size.clientHeight = 300; // se abre el teclado: el navegador avisa del desplazamiento antes
+    fireEvent.scroll(scroller);
+    resized();
+    expect(size.scrollTop).toBe(700); // sigue en lo último
+  });
+
+  it("los márgenes del chat compacto son las medidas del AppShell, definidas una vez", async () => {
+    serve();
+    show();
+    const panel = await openChat();
+    const shell = [
+      "max-sm:data-composing:-mx-(--shell-gutter)",
+      "max-sm:data-composing:-mt-[calc(var(--shell-bar)+var(--shell-pad))]",
+      "max-sm:data-composing:-mb-(--shell-pad)",
+    ];
+    expect(panel).toHaveClass(...shell);
+    const css = readFileSync("src/app/globals.css", "utf8"); // vitest corre en frontend/
+    for (const name of ["--shell-bar: 60px;", "--shell-gutter: 1rem;", "--shell-pad: 2rem;"]) {
+      expect(css).toContain(name);
+    }
+  });
+
+  it("escribiendo, la etiqueta del cuadro queda para lectores; «Reintentar» mide 44 px", async () => {
+    mockApi({
+      [`GET ${BASE}/`]: page([rosa]),
+      [`GET ${BASE}/1/`]: { status: 200, body: rosa },
+      [`GET ${BASE}/1/messages/`]: { status: 500, body: { code: "INTERNAL_ERROR" } },
+    });
+    show();
+    await openChat();
+    const label = screen.getByText("Responder al cliente", { selector: "label" });
+    expect(label).toHaveClass("max-sm:group-data-composing:sr-only");
+    const retry = await screen.findByRole("button", { name: "Reintentar" });
+    expect(retry).toHaveClass("min-h-11", "lg:min-h-9");
+    expect(retry).not.toHaveClass("sm:min-h-9");
   });
 });
