@@ -8,7 +8,11 @@ se listan abajo: nunca la organización, el `id`, la clave de una regla ni la cl
 de una ejecución. Los CHECK guardan lo que la aplicación no debe poder romper: modos y estados
 cerrados, `simulate_since` solo en `SIMULATE`, `max_recipients` de 1 a 3 (D-F11-04, E1), como
 mucho 3 destinatarios y 3 tareas por ejecución (E1), ninguna tarea en `SIMULATE` y `depth = 0`.
-`subject_id` y `task_ids` no tienen FK (sujeto polimórfico y lista; ADR-049, Consecuencias).
+`subject_id`, `recipients` y `task_ids` no tienen FK (sujeto polimórfico y listas; ADR-049,
+Consecuencias). `rule_key` es la clave de su regla: FK compuesta
+(`organization_id, rule_id, rule_key`).
+Las columnas que el barrido no tiene por qué dar tienen valor por omisión en la base, para que un
+`INSERT … ON CONFLICT` en SQL (F11-03) funcione.
 
 La purga de 180 días (D-F11-07) es de F11-10 (#1185); el camino elegido está en
 docs/phases/phase-11.md. Hacia atrás se borran las tablas."""
@@ -77,6 +81,17 @@ COLUMNS = {  # (INSERT, UPDATE) de `crm_app`
         "rule_version, status, reason, recipients, task_ids, attempts, updated_at, closed_at",
     ),
 }
+
+
+DEFAULTS = (  # en la base, para los INSERT en SQL; el `id` ya lo tiene (uuidv7)
+    *(("automation_runs", c, "'{}'") for c in ("recipients", "task_ids")),
+    *(("automation_runs", c, "0") for c in ("attempts", "depth")),
+    *(
+        (t, c, "now()")
+        for t in ("automation_rules", "automation_runs")
+        for c in ("created_at", "updated_at")
+    ),
+)
 
 
 def _grants(apps: Any, schema_editor: Any) -> None:
@@ -284,6 +299,20 @@ class Migration(migrations.Migration):
             f"FOREIGN KEY (organization_id, changed_by_user_id) REFERENCES {MEMBERS}",
         ),
         CompositeTenantFK("AutomationRun", "rule", "AutomationRule", "automation_runs_rule_fk"),
+        _sql("automation_rules", "org_id_key_uq", "UNIQUE (organization_id, id, key)"),
+        _sql(
+            "automation_runs",
+            "rule_key_fk",
+            "FOREIGN KEY (organization_id, rule_id, rule_key)"
+            " REFERENCES automation_rules (organization_id, id, key)",
+        ),
+        *(
+            migrations.RunSQL(
+                f"ALTER TABLE public.{table} ALTER COLUMN {column} SET DEFAULT {value}",
+                f"ALTER TABLE public.{table} ALTER COLUMN {column} DROP DEFAULT",
+            )
+            for table, column, value in DEFAULTS
+        ),
         *(
             _sql(table, name, f"CHECK ({definition})")
             for table, checks in CHECKS.items()

@@ -15,6 +15,7 @@ import psycopg
 import pytest
 from django.db import DatabaseError, connection
 
+from apps.access.apps import extend_owner_roles
 from apps.access.catalog import BY_CODE, ROLE_TEMPLATES
 from apps.access.models import MembershipRole, Role
 from apps.access.selectors import AccessDenied, Denied
@@ -26,6 +27,8 @@ from apps.automations.params import defaults
 from config.settings import base
 from core.tenancy.scope import tenant_scope
 from tests.factories import make_user
+from tests.test_access import as_migrator
+from tests.test_authorization import give
 from tests.test_contacts_api import crm
 from tests.test_memberships import ctx, join
 
@@ -39,7 +42,7 @@ SWITCH = (
 )
 BAD_PARAMS: tuple[dict[str, Any], ...] = (
     {"note": "Ana Pérez"}, {"max_recipients": 4}, {"max_recipients": 0}, {"max_recipients": True},
-    {"days": []}, {"opens_at": "19:00"}, {"first_after_minutes": "15"},
+    {"days": []}, {"days": [[1]]}, {"opens_at": "19:00"}, {"first_after_minutes": "15"},
 )  # fmt: skip
 AUDIT = (
     "SELECT action, entity_type, changes, metadata, actor_id FROM audit_logs"
@@ -48,9 +51,8 @@ AUDIT = (
 
 
 def rule(db: Any, org: UUID, key: str = QUOTE, mode: str = "OFF", params: str = "{}") -> UUID:
-    since = "2026-11-01" if mode == "SIMULATE" else None
     pk = uuid4()
-    db.execute(RULE, [pk, org, key, mode, params, since])
+    db.execute(RULE, [pk, org, key, mode, params, "2026-11-01" if mode == "SIMULATE" else None])
     return pk
 
 
@@ -181,6 +183,17 @@ def test_checks_guard_modes_simulation_caps_and_the_idempotency_key(
     with pytest.raises(psycopg.errors.UniqueViolation):  # otra versión de la regla: misma clave
         run(migrator, a, pk, version=2)
     run(migrator, a, pk, mode="SIMULATE")  # pasar de SIMULATE a ON sí crea la tarea real
+    with pytest.raises(psycopg.errors.ForeignKeyViolation) as fk:  # `rule_key`, el de su regla
+        run(migrator, a, rule(migrator, a, CONV))
+    assert fk.value.diag.constraint_name == "automation_runs_rule_key_fk"
+    bare = (  # lo que dará el barrido en SQL (F11-03): el resto, por omisión en la base
+        "INSERT INTO automation_runs (organization_id, rule_id, rule_version, rule_key,"
+        " subject_type, subject_id, episode_at, step, mode, status) VALUES (%s, %s, 1,"
+        " 'quote.no_response', 'quote', %s, '2026-11-02', 1, 'ON', 'DONE') ON CONFLICT DO NOTHING"
+    )
+    episode = [a, pk, UUID(int=9)]
+    assert as_app(a, bare, episode) == 1
+    assert as_app(a, bare, episode) == 0  # idempotente
 
 
 def test_templates_and_denials_owner_admin_manage_supervisor_reads_and_pauses(
@@ -209,6 +222,27 @@ def test_templates_and_denials_owner_admin_manage_supervisor_reads_and_pauses(
     with tenant_scope(ctx(a, team.ada)) as scope:
         assert commands.resume(scope) is False  # la Administradora reanuda y configura
         assert commands.set_rule(scope, key=CONV, version=0, mode="SIMULATE").version == 1
+    give(a, team.m["bea"], {"automations.manage": None})  # `manage` solo también pausa
+    with tenant_scope(ctx(a, team.bea)) as scope:
+        assert commands.pause(scope) is True
+
+
+def test_existing_organizations_get_them_only_on_the_owner_role(
+    crm: SimpleNamespace, migrator: DB
+) -> None:
+    """ADR-018 §3: el despliegue no se los da al Administrador ni al Supervisor que ya existen."""
+    held = (
+        "SELECT DISTINCT r.code FROM role_permissions g JOIN roles r ON r.id = g.role_id"
+        " WHERE g.permission_code LIKE 'automations.%%' AND r.organization_id = %s ORDER BY 1"
+    )
+    assert [c for (c,) in migrator.execute(held, [crm.a]).fetchall()] == [
+        "admin",
+        "owner",
+        "supervisor",
+    ]
+    migrator.execute("DELETE FROM role_permissions WHERE permission_code LIKE 'automations.%'")
+    assert as_migrator(lambda: extend_owner_roles("default")) == 3
+    assert migrator.execute(held, [crm.a]).fetchall() == [("owner",)]
 
 
 def test_set_rule_versions_validates_closed_params_and_audits_only_codes_and_numbers(

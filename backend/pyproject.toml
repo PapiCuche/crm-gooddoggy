@@ -152,16 +152,13 @@ ignore_imports = [
 ]
 
 [[tool.importlinter.contracts]]
-# ADR-049 §1 (F11-02): una automatización nunca escribe al cliente ni cambia el estado de una
-# conversación, una cotización o un consentimiento, y no llama a ningún modelo de IA. Directa o
-# indirectamente: nada de `apps.automations` llega a estos módulos.
+# ADR-049 §1 (F11-02): ni directa ni indirectamente llega a envíos, cambios de estado, consentimientos, correo ni IA.
 name = "automations no envía mensajes ni cambia conversaciones, cotizaciones o consentimientos (ADR-049 §1)"
 type = "forbidden"
 source_modules = ["apps.automations"]
 forbidden_modules = [
-    "apps.conversations.commands", "apps.conversations.delivery", "apps.conversations.api", "apps.conversations.tasks",
-    "apps.quotes.api", "apps.quotes.commands", "apps.quotes.answers", "apps.quotes.decisions", "apps.quotes.lifecycle", "apps.quotes.tasks",
-    "apps.contacts.consents", "core.mail", "apps.ai_gateway",
+    "apps.conversations.commands", "apps.conversations.delivery", "apps.conversations.api", "apps.conversations.tasks", "apps.conversations.whatsapp", "apps.conversations.meta_page", "apps.conversations.graph", "apps.conversations.outbound_media",
+    "apps.quotes.api", "apps.quotes.commands", "apps.quotes.answers", "apps.quotes.decisions", "apps.quotes.lifecycle", "apps.quotes.tasks", "apps.contacts.consents", "core.mail", "apps.ai_gateway",
 ]
 
 [[tool.importlinter.contracts]]

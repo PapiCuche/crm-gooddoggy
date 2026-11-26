@@ -27,9 +27,10 @@ def _clock(value: Any) -> str:
 
 def _days(value: Any) -> list[int]:
     """Días ISO (1 = lunes … 7 = domingo), sin repetir y al menos uno; se guardan ordenados."""
-    if not isinstance(value, list) or not value or len(set(value)) != len(value):
+    days = [_int(1, 7)(day) for day in value] if isinstance(value, list) else []
+    if not days or len(set(days)) != len(days):
         raise ValueError("una lista de días sin repetir")
-    return sorted(_int(1, 7)(day) for day in value)
+    return sorted(days)
 
 
 _HOURS: dict[str, tuple[Callable[[Any], Any], Any]] = {  # D-F11-03: lunes a sábado, 09:00-19:00
