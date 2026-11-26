@@ -430,23 +430,60 @@ describe("seguir lo nuevo y «N mensajes nuevos» (UX-INBOX-06b)", () => {
   });
 });
 
-// UX-INBOX-06e. El anuncio espera `SAY` (500 ms): aquí ese plazo se suelta a mano con `say()`.
+// UX-INBOX-06e. El anuncio espera `SAY` (500 ms): ese plazo corre en un reloj a mano (`wait`, o
+// `say()` para soltarlo ya); los demás temporizadores (TanStack, `waitFor`) siguen siendo reales.
 describe("anuncios del contador y ancla ante crecimiento dentro de la vista (UX-INBOX-06e)", () => {
-  const held = new Map<number, () => void>();
-  const say = () => act(() => [...held.values()].forEach((fn) => fn()));
+  const held = new Map<number, { at: number; fn: () => void }>();
+  let clock = 0;
+  const wait = (ms: number) =>
+    act(() => {
+      clock += ms;
+      for (const [id, { at, fn }] of held) if (at <= clock) void (held.delete(id), fn());
+    });
+  const say = () => wait(1e9);
   const hold = () => {
     const [set, clear] = [globalThis.setTimeout, globalThis.clearTimeout];
     let next = 1e6;
     vi.spyOn(globalThis, "setTimeout").mockImplementation(((fn: () => void, ms?: number) => {
       if (ms !== 500) return set(fn, ms);
-      held.set(++next, () => (held.delete(next), fn()));
+      held.set(++next, { at: clock + ms, fn });
       return next;
     }) as typeof setTimeout);
     vi.spyOn(globalThis, "clearTimeout").mockImplementation((id) =>
       held.has(id as number) ? void held.delete(id as number) : clear(id),
     );
   };
-  beforeEach(() => held.clear());
+  beforeEach(() => void (held.clear(), (clock = 0)));
+
+  it("cada cambio reinicia el plazo: a 499 ms no se dice nada; al cerrar, nada queda pendiente", async () => {
+    const state = server(history(9));
+    const { unmount } = await open("Historial 9");
+    hold();
+    await scroll(0);
+    await arrive(state, message("n1", "Nuevo 1"));
+    await wait(499);
+    await arrive(state, message("n2", "Nuevo 2")); // a 499 ms de la primera: el plazo vuelve a empezar
+    await wait(499);
+    expect(live()).toBeEmptyDOMElement();
+    await wait(1);
+    expect(live()).toHaveTextContent(/^2 mensajes nuevos$/);
+    const said: string[] = [];
+    const watcher = new MutationObserver(() => said.push(live().textContent!));
+    watcher.observe(live(), { subtree: true, childList: true, characterData: true });
+    for (const n of [3, 4, 5]) {
+      await arrive(state, message(`n${n}`, `Nuevo ${n}`));
+      await wait(400);
+    }
+    await wait(99); // una ráfaga de 800 ms: nada hasta 500 ms tras la última llegada
+    expect(live()).toBeEmptyDOMElement();
+    await wait(1);
+    watcher.disconnect();
+    expect(said.filter((text, i) => text !== said[i - 1])).toEqual(["", "5 mensajes nuevos"]);
+    await arrive(state, message("n6", "Nuevo 6"));
+    expect(held.size).toBe(1);
+    unmount();
+    expect(held.size).toBe(0); // nada se dispara después de cerrar el chat
+  });
 
   it("se oye la llegada, no cada paso al bajar leyendo; una ráfaga, una vez", async () => {
     const state = server(history(9));
