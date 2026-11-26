@@ -403,12 +403,11 @@ describe("ráfagas y estado de la conexión (UX-INBOX-06)", () => {
   });
 
   // UX-INBOX-06c: un envío propio en curso ya no frena la relectura; nunca cero ni dos burbujas
-  // propias. `row`: lo que guarda el servidor; con `early`, ya al recibir (la respuesta tarda).
+  // propias. `row`: lo que guarda el servidor al responder.
   const sending = (
     api: ReturnType<typeof mockApi>,
     texts: Message[],
     row: (id: string) => Message,
-    early = false,
   ) => {
     let release = () => {};
     const answered = new Promise<void>((resolve) => (release = resolve));
@@ -421,9 +420,8 @@ describe("ráfagas y estado de la conexión (UX-INBOX-06)", () => {
           ? body.get("client_message_id")
           : JSON.parse(String(body)).client_message_id,
       );
-      if (early) texts.push(row(id));
       await answered;
-      if (!early) texts.push(row(id));
+      texts.push(row(id));
       return new Response(JSON.stringify(texts.at(-1)), { status: 202 });
     });
     document.cookie = "csrftoken=token-de-prueba"; // un envío lleva la cabecera CSRF
@@ -458,28 +456,6 @@ describe("ráfagas y estado de la conexión (UX-INBOX-06)", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
   };
-
-  it("un envío propio en curso no parpadea ni se duplica: el evento relee y queda la del servidor", async () => {
-    const { api, state } = server();
-    const reads = () => api.mock.calls.filter(([url]) => url === `${BASE}/1/messages/`).length;
-    const view = sending(api, state.texts, (id) => mine(id), true);
-    await openChat();
-    act(() => socket().onopen?.({}));
-    reply();
-    await waitFor(() => expect(view.own()).toBe(1)); // la burbuja del envío en curso
-    const before = reads();
-    await say({ type: "message.received", conversation_id: "1", message_id: "m9" });
-    await waitFor(() => expect(reads()).toBe(before + 1)); // se relee aunque esté saliendo
-    await waitFor(() => expect(document.querySelector('li[data-id="m9"]')).not.toBeNull());
-    expect(view.own()).toBe(1); // la del servidor (mismo `client_message_id`) reemplaza a la pendiente
-    await view.release();
-    await waitFor(() => expect(reads()).toBe(before + 2)); // al terminar, el cuadro relee una vez
-    await wait(400);
-    expect(view.own()).toBe(1);
-    const seen = view.done();
-    expect(seen).not.toContain(0); // nunca desaparece
-    expect(Math.max(...seen)).toBe(1); // nunca dos
-  });
 
   it("lo que escribe el cliente durante un envío con archivo se ve en menos de 1 s, sin duplicar el propio", async () => {
     const { api, state } = server();

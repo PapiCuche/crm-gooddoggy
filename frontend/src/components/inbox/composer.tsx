@@ -2,7 +2,6 @@
 
 import {
   type InfiniteData,
-  type Mutation,
   type QueryClient,
   type QueryKey,
   useMutation,
@@ -128,24 +127,22 @@ const edit = (data: Pages | undefined, change: (rows: Message[], newest: boolean
 const holds = (data: Pages | undefined, id: string | null) =>
   !!data?.pages.some((page) => page.results.some((row) => row.client_message_id === id));
 
-// UX-INBOX-06c: releer la página más reciente conserva las burbujas `pending-…` de esta conversación
-// (su caché, `key`) salvo la que el servidor ya trae (mismo `client_message_id`). Al terminar el
-// envío, `onSuccess`/`onError` quitan la burbuja y releen: eso cancela una lectura en curso.
-export function keepPending(
-  client: QueryClient,
-  key: QueryKey,
-  page: PaginatedMessageList,
-): PaginatedMessageList {
+// UX-INBOX-06c: releer la primera página conserva las respuestas `pending-…` de esta conversación
+// salvo la que ya trae el servidor (mismo `client_message_id`); una nota no: la API no da su id y
+// saldría dos veces. `onSuccess`/`onError` quitan la burbuja y releen: cancelan otra lectura.
+export function keepPending(client: QueryClient, key: QueryKey, page: PaginatedMessageList) {
   const mine = client.getQueryData<Pages>(key)?.pages[0]?.results ?? [];
   const kept = mine.filter(
     (row) =>
+      row.direction === "OUTBOUND" &&
       row.id === `pending-${row.client_message_id}` &&
       !page.results.some(({ client_message_id }) => client_message_id === row.client_message_id),
   );
   return kept.length ? { ...page, results: [...kept, ...page.results] } : page;
 }
-// Lo que la pantalla sabe de un envío en pausa (sin conexión): solo su id, nunca el texto ni el archivo.
-export const pausedId = ({ state }: Mutation<unknown, unknown, unknown>) =>
+// Un envío en pausa (sin conexión): la pantalla solo sabe su id, nunca el texto ni el archivo.
+type Sending = { state: { isPaused: boolean; status: string; variables?: unknown } }; // mutación
+export const pausedId = ({ state }: Sending) =>
   state.isPaused && state.status === "pending"
     ? ((state.variables as Partial<Outgoing> | undefined)?.client_message_id ?? null)
     : null;

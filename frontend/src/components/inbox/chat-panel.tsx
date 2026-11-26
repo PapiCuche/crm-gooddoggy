@@ -1,11 +1,6 @@
 "use client";
 
-import {
-  useInfiniteQuery,
-  useMutationState,
-  useQuery,
-  useQueryClient,
-} from "@tanstack/react-query";
+import { useInfiniteQuery, useMutationState, useQuery } from "@tanstack/react-query";
 import {
   ArrowDown,
   ArrowLeft,
@@ -165,12 +160,11 @@ export function ChatPanel({
   const chase = useRef({ on: false, top: 0 }); // el botón va al final: lo que llegue mientras, también
   const [atEnd, setAtEnd] = useState(true);
   const [seen, setSeen] = useState<string | null>(null);
-  const client = useQueryClient();
   const key = messagesKey(slug, conversation.id);
   const list = useInfiniteQuery<PaginatedMessageList, ApiError>({
     queryKey: key,
     // La más reciente conserva la burbuja de un envío propio en curso (UX-INBOX-06c).
-    queryFn: async ({ pageParam, signal }) => {
+    queryFn: async ({ client, pageParam, signal }) => {
       const cursor = pageParam ? { cursor: pageParam as string } : undefined;
       const page = await conversationMessagesList(slug, conversation.id, cursor, { signal });
       return cursor ? page : keepPending(client, key, page);

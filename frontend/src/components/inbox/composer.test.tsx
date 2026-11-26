@@ -7,7 +7,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { type Mutation, onlineManager, QueryClient } from "@tanstack/react-query";
+import { onlineManager, QueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -688,15 +688,41 @@ describe("sin conexión y reintentos (UX-INBOX-06c)", () => {
     expect(s.stored).toHaveLength(1);
   });
 
+  it("una nota ya guardada que llega en una relectura antes de su respuesta se ve una sola vez", async () => {
+    const s = server();
+    const inner = s.api.getMockImplementation()!;
+    let open = () => {};
+    const gate = new Promise<void>((resolve) => (open = resolve));
+    s.api.mockImplementation(async (input, init) => {
+      if (init?.method !== "POST") return inner(input, init);
+      // Como la API: una nota vuelve sin `client_message_id` (solo lo lleva lo saliente propio).
+      const changes = {
+        direction: "INTERNAL",
+        message_type: "NOTE",
+        client_message_id: null,
+      } as const;
+      s.stored.push(saved("n1", "Llamar mañana", changes)); // guardada; la respuesta tarda
+      await gate;
+      return new Response(JSON.stringify(s.stored[0]), { status: 201 });
+    });
+    const { client } = show(grants("conversations.view", "messages.note"));
+    await openChat();
+    await type("Llamar mañana", "Nota interna");
+    fireEvent.click(sendButton("Guardar nota"));
+    await waitFor(() => expect(s.stored).toHaveLength(1));
+    await act(() => client.invalidateQueries({ queryKey: messagesKey("acme", "1") })); // un evento
+    const notes = async () => (await settle(), within(await log()).getAllByText("Llamar mañana"));
+    expect(await notes()).toHaveLength(1);
+    open();
+    expect(await notes()).toHaveLength(1);
+  });
+
   it("de un envío en pausa la pantalla solo conoce su id: ni el texto ni el archivo", () => {
     const file = new File(["x"], "privado.pdf", { type: "application/pdf" });
     const variables = { client_message_id: "cm-1", body: "secreto", file, draft: "1:reply" };
-    const state = (isPaused: boolean, status = "pending") =>
-      ({ state: { isPaused, status, variables } }) as unknown as Mutation<
-        unknown,
-        unknown,
-        unknown
-      >;
+    const state = (isPaused: boolean, status = "pending") => ({
+      state: { isPaused, status, variables },
+    });
     expect(pausedId(state(true))).toBe("cm-1");
     expect(pausedId(state(false))).toBeNull(); // en vuelo, no en pausa
     expect(pausedId(state(true, "error"))).toBeNull();
