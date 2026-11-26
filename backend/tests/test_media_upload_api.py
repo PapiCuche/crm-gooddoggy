@@ -430,10 +430,14 @@ def test_an_identical_retry_after_the_policy_closes_is_the_saved_message_unscann
     mismo cuerpo) aunque la política ya no deje enviar; cualquier otra cosa recibe su 409."""
     ana, convo, key = signed(inbox.ana), whatsapp_convo(inbox, dt.timedelta(hours=1)), str(uuid4())
     first = upload(ana, convo.pk, form(caption="Su foto", client_message_id=key))
-    assert first.status_code == 202
+    bare = str(uuid4())
+    plain = upload(ana, convo.pk, form(PDF, client_message_id=bare))  # sin pie
+    assert (first.status_code, plain.status_code) == (202, 202)
     _closed(inbox.a, convo, how)
     again = upload(ana, convo.pk, form(caption="Su foto", client_message_id=key))
     assert (again.status_code, again.json()) == (200, first.json())
+    same = upload(ana, convo.pk, form(PDF, client_message_id=bare))
+    assert (same.status_code, same.json()) == (200, plain.json())  # «Documento», la etiqueta
     for other in (
         form(caption="Otra", client_message_id=key),
         form(client_message_id=key),
@@ -442,9 +446,9 @@ def test_an_identical_retry_after_the_policy_closes_is_the_saved_message_unscann
     ):
         refused = upload(ana, convo.pk, other)  # otro pie, sin pie, otro archivo u otro id
         assert (refused.status_code, refused.json()["code"]) == (409, code)
-    assert len(blobs.objects) == 1 and clamd.bodies == [JPEG]  # ni otro escaneo ni otro blob
-    assert migrator.execute(COUNT).fetchone() == (1, 1)
-    assert len(sinks) == 6 and all(sink.file.closed for sink in sinks)  # cada temporal, cerrado
+    assert len(blobs.objects) == 2 and clamd.bodies == [JPEG, PDF]  # ni otro escaneo ni otro blob
+    assert migrator.execute(COUNT).fetchone() == (2, 2)
+    assert len(sinks) == 8 and all(sink.file.closed for sink in sinks)  # cada temporal, cerrado
 
 
 def test_a_retry_is_only_the_senders_own_in_its_conversation_and_organization(
@@ -496,3 +500,38 @@ def test_the_replay_rechecks_the_permission_and_the_scope_under_the_lock(
         sends.delete()  # ni el permiso
         with pytest.raises(AccessDenied):
             commands.replayed_media(me, **wanted)
+
+
+def test_a_near_retry_scans_without_holding_the_conversation_lock(
+    inbox: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """El mismo id y el mismo archivo con otro pie (o sin él) no es un reintento: el antivirus y el
+    almacén corren sin el bloqueo de la conversación, y luego llega su 409."""
+    ana, convo, key = signed(inbox.ana), inbox.convs["nobody"], str(uuid4())
+    assert upload(ana, convo, form(caption="Su foto", client_message_id=key)).status_code == 202
+    free: list[bool] = []
+    real = outbound_media.prepare
+
+    def prepare(*args: Any) -> Any:
+        with migrator.transaction():  # otra conexión: falla si la vista tiene la fila
+            lock = "SELECT 1 FROM conversations WHERE id = %s FOR NO KEY UPDATE NOWAIT"
+            free.append(migrator.execute(lock, [convo]).fetchone() == (1,))
+        return real(*args)
+
+    monkeypatch.setattr(outbound_media, "prepare", prepare)
+    for other in (form(caption="Otra", client_message_id=key), form(client_message_id=key)):
+        taken = upload(ana, convo, other)
+        assert (taken.status_code, taken.json()["code"]) == (409, "CLIENT_MESSAGE_ID_TAKEN")
+    assert free == [True, True]
+
+
+def test_a_replay_shows_the_body_only_to_who_sees_the_contact(inbox: SimpleNamespace) -> None:
+    user = make_user(email="sin-contactos@example.com")
+    give(inbox.a, join(inbox.a, user).pk, {"conversations.view": "ORGANIZATION",
+                                           "messages.send": "ORGANIZATION"})  # fmt: skip
+    client, convo, key = signed(user), inbox.convs["nobody"], str(uuid4())
+    first = upload(client, convo, form(caption="Su foto", client_message_id=key))
+    set_state(inbox.a, convo, status="CLOSED", closed_at=timezone.now())
+    again = upload(client, convo, form(caption="Su foto", client_message_id=key))
+    assert (first.status_code, again.status_code) == (202, 200)
+    assert first.json()["body"] is None and again.json() == first.json()  # sin `contacts.view`

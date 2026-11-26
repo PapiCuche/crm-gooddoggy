@@ -578,18 +578,22 @@ def replayed_media(
     """El medio que el actor ya guardó en esta conversación con ese `client_message_id`, el mismo
     pie y el mismo archivo (`sha256`), o `None` (UX-INBOX-04c). Un reintento idéntico se devuelve
     antes de la política, como en `record_outbound`, y sin volver a escanear ni guardar el archivo.
-    Solo bloquea si hay algo que devolver (la vista es una transacción: el bloqueo no debe cubrir el
-    antivirus) y lo vuelve a leer bajo el bloqueo, tras el permiso y el alcance de `messages.send`.
-    Cualquier diferencia es `None`: decide el camino de siempre, con sus errores."""
+    Solo bloquea si ya coincide todo, también el cuerpo (la vista es una transacción: el bloqueo no
+    debe cubrir el antivirus), y lo vuelve a leer bajo el bloqueo, tras el permiso y el alcance de
+    `messages.send`. Cualquier diferencia es `None`: decide el camino de siempre y sus errores."""
     alias = require_scope(ctx)
     conversation_id, client_id = (
         _uuid(conversation_id, "conversación"),
         _uuid(client_message_id, "id"),
     )
+    body = (  # el pie, o la etiqueta del tipo sin pie
+        Q(body=caption) if caption
+        else Q(*(Q(message_type=kind, body=label) for kind, label in outbound_media.LABELS.items()),
+               _connector=Q.OR)
+    )  # fmt: skip
     mine = Message.objects.using(alias).filter(
-        conversation_id=conversation_id, client_message_id=client_id, direction="OUTBOUND",
-        sender_type="USER", sender_user_id=ctx.user_id,
-        message_type__in=outbound_media.LABELS,
+        body, conversation_id=conversation_id, client_message_id=client_id, direction="OUTBOUND",
+        sender_type="USER", sender_user_id=ctx.user_id, message_type__in=outbound_media.LABELS,
         file_id__in=File.objects.using(alias).filter(sha256=sha256).values("pk"),
     )  # fmt: skip
     if not mine.exists():  # sin bloqueo: lo nuevo pasa por `record_outbound`
@@ -599,8 +603,6 @@ def replayed_media(
         convo = _locked(alias, conversation_id)
         _in_scope(ectx, "messages.send", convo)
         found: Message | None = mine.first()  # otra vez, bajo el bloqueo
-        if found is None or found.body != (caption or outbound_media.LABELS[found.message_type]):
-            return None
         return found
 
 

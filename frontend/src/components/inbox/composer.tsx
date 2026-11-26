@@ -406,7 +406,8 @@ function ComposeBox({
       // fallo, lo primero pudo haber salido: se avisa en lugar de mandarlo otra vez.
       const tried = drafts.get(request.draft).attempt;
       const grown = tried?.id === request.client_message_id && tried.first !== request.body;
-      if (error.code === "CLIENT_MESSAGE_ID_TAKEN") forget(request);
+      // Uno dudoso sigue dudoso: otro id podría repetir lo que ya llegó (UX-INBOX-04c).
+      if (error.code === "CLIENT_MESSAGE_ID_TAKEN" && !tried?.unsure) forget(request);
       if (error.code === "NETWORK_ERROR" && request.file) {
         drafts.update(request.draft, ({ attempt }) =>
           attempt?.id === request.client_message_id
@@ -429,10 +430,10 @@ function ComposeBox({
       setProblem(
         error.status === 403 || error.status === 404
           ? t(note ? "deniedNote" : "denied")
-          : reason === "CLIENT_MESSAGE_ID_TAKEN" && request.file
-            ? t("idTakenMedia")
-            : reason === "CLIENT_MESSAGE_ID_TAKEN" && grown
-              ? t("idTakenGrown")
+          : reason === "CLIENT_MESSAGE_ID_TAKEN" && (grown || tried?.unsure)
+            ? t("idTakenGrown")
+            : reason === "CLIENT_MESSAGE_ID_TAKEN" && request.file
+              ? t("idTakenMedia")
               : errors(`api.${reason}`),
       );
     },
@@ -446,9 +447,15 @@ function ComposeBox({
     // respuesta, el mismo id no deja que salga dos veces. Otro texto empieza un intento nuevo.
     let tried = drafts.get(draft).attempt;
     const sameFile = tried?.media ? file !== null && file === sentFile.current : file === null;
-    if (!tried || !text.startsWith(tried.first) || !sameFile) {
-      // Su archivo pudo llegar sin respuesta: otro id repetiría el pie. El primer toque solo avisa.
-      if (tried?.unsure && !confirmed) return setArmed({ text, file });
+    // Uno dudoso solo se repite idéntico: con otro texto, el mismo id chocaría y otro lo duplicaría.
+    const same = tried?.unsure ? text === tried.first : text.startsWith(tried?.first ?? "");
+    if (!tried || !same || !sameFile) {
+      // Su archivo pudo llegar sin respuesta: otro id repetiría el pie. El primer toque solo avisa
+      // (y un doble toque no confirma: espera `SETTLE`).
+      if (tried?.unsure && !confirmed) {
+        settleUntil.current = performance.now() + SETTLE;
+        return setArmed({ text, file });
+      }
       tried = { id: uuid(), first: text, media: file !== null };
     }
     sentFile.current = file;
