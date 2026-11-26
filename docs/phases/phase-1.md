@@ -62,6 +62,13 @@ Previos transversales: [#3](https://github.com/PapiCuche/crm-gooddoggy/issues/3)
 
 La parte del propietario (identidades, entorno `production`, token, avisos y la habilitación expresa) es el checklist F1-20g ([#1198](https://github.com/PapiCuche/crm-gooddoggy/issues/1198)).
 
+- **Hecho en F1-20a ([#1167](https://github.com/PapiCuche/crm-gooddoggy/issues/1167)):** `.github/scripts/deploy_class.py` calcula la clase de despliegue (ADR-048 §2) de un rango `(base, SHA]` leyendo solo el repositorio: sin red, sin token y sin secretos. Clasifica cada commit con la tabla `deploy_class_rules.json` (§2 y §2.1; cambiarla es C; revisión prevista el 2027-02-26) y la clase del release es la mayor. Cada regla que coincide solo puede subir la clase. Las migraciones nuevas se analizan con `ast`, sin ejecutarlas, con las reglas de §2.2.
+  - **Falla cerrado (C):** una ruta desconocida, un enlace simbólico, una migración que producción ya tiene y se edita o se borra, una migración no analizable, una operación desconocida o importada con otro nombre, un rango que no desciende de la base y cualquier error.
+  - **`RunPython`, `RunSQL` y `SeparateDatabaseAndState` son C:** el clasificador no puede probar que sean compatibles con la imagen anterior. Por eso la mayoría de los releases del backend con migraciones saldrán C (GO exacto por SHA).
+  - **Workflows:** los que construyen, publican o despliegan imágenes, o usan secretos o entornos, son B como mínimo.
+  - **Clase declarada:** el PR la declara en «Clase de despliegue» de la plantilla; solo sube la clase, nunca la baja.
+  - **Solo informativo en la fase 1:** el workflow `deploy-class.yml` (solo `contents: read`, no requerido) escribe la clase y sus motivos en el resumen del run.
+
 ## Definition of Done de la fase
 
 - ✅ `docker compose up` levanta todo en limpio siguiendo `docs/runbooks/local-stack.md` (F1-10).

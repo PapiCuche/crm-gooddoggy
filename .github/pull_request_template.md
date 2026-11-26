@@ -11,6 +11,14 @@ Closes #
 
 <!-- Archivos o módulos principales. Migraciones incluidas (si aplica). -->
 
+## Clase de despliegue
+
+<!-- ADR-048 §2: none, A1, A2, A3, B o C. La calculada está en el resumen del check «deploy class»
+     (solo informativa en la fase 1). Se puede declarar una mayor, nunca una menor: manda la mayor.
+     Declara C si el release exige cambiar un archivo de entorno (/etc/crm/*.env) o rotar una KEK. -->
+
+Declarada:
+
 ## No incluye
 
 <!-- Qué queda fuera explícitamente (trabajo de otros issues o fases). -->
