@@ -15,9 +15,8 @@ import pytest
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 from django.test import override_settings
-from django.utils import timezone
 
-from apps.ai_agents import context, guard
+from apps.ai_agents import context, copilot, guard
 from apps.ai_agents.guard import KINDS, Finding, Malformed, Problem, render, reply_schema
 from apps.ai_agents.registry import TOOLS, Evidence, ToolSpec, invoke_read_only
 from apps.ai_agents.tools.catalog import GET_PRODUCT_VARIANTS, SEARCH_PRODUCT
@@ -397,14 +396,14 @@ def test_with_the_real_tools_the_text_has_their_values_and_never_the_exact_stock
     (index,) = [n for n, v in enumerate(variants) if v["variant_id"] == str(shop.big.pk)]
     claims = [{**c, "path": f"variants.{index}.name"} if c["id"] == "c1" else c
               for c in FULL["claims"]]  # fmt: skip
-    done = render({**FULL, "claims": claims}, found, timezone.now())
+    now = copilot._now(ctx(world.a, world.ana))  # el de la base, como el copiloto (F1-TEST-02)
+    done = render({**FULL, "claims": claims}, found, now)
     assert done.text == (
         f"El {variants[index]['name']} cuesta S/ 49.90 (no S/ 10), precio regular S/ 59.90 con "
         "Promo Verano (Solo esta semana), y está disponible."
     )
     assert done.ok and str(SENTINEL) not in done.text
-    exact = render(reply("{{c1}}", claim("c1", "STOCK", "tu_s", "available")), found,
-                   timezone.now())  # fmt: skip
+    exact = render(reply("{{c1}}", claim("c1", "STOCK", "tu_s", "available")), found, now)
     assert marks(exact) == ["PATH_MISSING"] and str(SENTINEL) not in exact.text
 
 

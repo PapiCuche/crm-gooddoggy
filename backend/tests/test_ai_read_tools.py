@@ -11,7 +11,7 @@ from uuid import uuid4
 import pytest
 
 from apps.access.selectors import member_context
-from apps.ai_agents import registry
+from apps.ai_agents import copilot, registry
 from apps.ai_agents.registry import (
     TOOLS,
     Audience,
@@ -270,13 +270,14 @@ def test_no_output_carries_costs_or_internal_fields(shop: Any) -> None:
 
 def test_every_result_carries_evidence_kept_on_the_server(shop: Any) -> None:
     allow(shop.world, "products.view")
+    before = copilot._now(ctx(shop.world.a))  # el reloj de la base (F1-TEST-02)
     done, body = run(shop.world, "search_product", {"query": "collar"})
-    evidence = done.evidence
+    after, evidence = copilot._now(ctx(shop.world.a)), done.evidence
     assert evidence is not None and evidence.tool == "search_product"
     assert body["meta"] == {"evidence_id": str(evidence.evidence_id), "kind": "CATALOG",
                             "as_of": evidence.as_of.isoformat()}  # fmt: skip
     assert evidence.subjects == (shop.red.pk,) and isinstance(evidence.as_of, datetime)
-    assert abs((datetime.now(evidence.as_of.tzinfo) - evidence.as_of).total_seconds()) < 60
+    assert before <= evidence.as_of <= after  # con el de Python, falla si los relojes difieren
     _, again = run(shop.world, "search_product", {"query": "collar"})
     assert again["meta"]["evidence_id"] != body["meta"]["evidence_id"]
     done, _ = run(shop.world, "get_product_variants", {"product_id": str(shop.red.pk)})
