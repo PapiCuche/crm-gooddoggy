@@ -91,7 +91,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const { organization, permissions } = useTenant();
   // Las conversaciones que esperan respuesta, delante del título (F6-09): se ve desde otra pestaña.
   const inbox = permissions.some((grant) => grant.code === "conversations.view");
-  const waiting = useUnanswered("all", inbox);
+  const waiting = useUnanswered({}, inbox);
   const item = NAVIGATION.find((entry) => holds(entry, `/o/${organization.slug}`, pathname));
   const section = item && item.path ? `${t(`shell.nav.${item.key}`)} · ` : "";
   const title = `${waiting ? `(${waiting}) ` : ""}${section}${organization.name} · ${t("app.name")}`;

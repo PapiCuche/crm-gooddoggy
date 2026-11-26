@@ -32,7 +32,9 @@ export function Inbox() {
   const { slug } = organization;
   const { failed } = useReads();
   const live = useInboxRealtime(); // los cambios llegan sin recargar (si el tiempo real está encendido)
-  const [filters, setFilters] = useState<Filters>({ box: "all", status: "", unanswered: false });
+  const [filters, setFilters] = useState<Filters>({
+    ...{ box: "all", status: "", unanswered: false, platform: "" },
+  });
   const wanted = useSearchParams()?.get("c") || null;
   const [picked, setPicked] = useState<{ slug: string; row: Conversation } | null>(null); // con su organización
   const fromList = picked?.slug === slug && picked.row.id === wanted ? picked.row : null;

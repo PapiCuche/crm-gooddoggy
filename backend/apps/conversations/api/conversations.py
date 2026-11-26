@@ -30,7 +30,7 @@ from core.api.schema import errors
 from core.tenancy import context
 
 BOXES = (("all", "all"), ("mine", "mine"), ("unassigned", "unassigned"))
-FILTERS = ("box", "status", "unanswered")
+FILTERS = ("box", "status", "unanswered", "platform")
 
 
 class ConversationContactSerializer(serializers.Serializer[Any]):
@@ -120,6 +120,12 @@ class BoxFilterSerializer(serializers.Serializer[Any]):
         error_messages={"invalid_choice": "No válido."},
         help_text="`all` (por omisión), `mine` (asignadas a quien consulta) o `unassigned`.",
     )
+    platform = serializers.ChoiceField(
+        choices=Platform.choices,
+        required=False,
+        error_messages={"invalid_choice": "No válido."},
+        help_text="UX-INBOX-02: solo las de cuentas de esa red (`channel.platform`).",
+    )
 
 
 class ConversationFilterSerializer(BoxFilterSerializer):
@@ -138,8 +144,9 @@ class UnansweredCountSerializer(serializers.Serializer[Any]):
 
 
 class ConversationFilters(BaseFilterBackend):
-    """`?box=`, `?status=` y `?unanswered=`, detrás de `ScopeFilter`: recortan lo que el alcance ya
-    dejó. Cada uno, una sola vez; vacío es lo mismo que no pedirlo."""
+    """`?box=`, `?status=`, `?unanswered=` y `?platform=`, detrás de `ScopeFilter`: recortan lo
+    que el alcance ya dejó. Cada uno, una sola vez; vacío es lo mismo que no pedirlo. La red sale
+    de la cuenta de canal, con un JOIN dentro del mismo `tenant_scope` (RLS en las dos tablas)."""
 
     def filter_queryset(self, request: Any, queryset: Any, view: Any) -> QuerySet[Conversation]:
         params, names = request.query_params, getattr(view, "filters", FILTERS)
@@ -151,6 +158,8 @@ class ConversationFilters(BaseFilterBackend):
         found: QuerySet[Conversation] = queryset
         if (status := wanted.validated_data.get("status")) is not None:
             found = found.filter(status=status)
+        if (platform := wanted.validated_data.get("platform")) is not None:
+            found = found.filter(channel_account__platform=platform)
         if wanted.validated_data.get("unanswered"):
             found = found.filter(selectors.UNANSWERED)
         match wanted.validated_data.get("box", "all"):
@@ -189,9 +198,9 @@ class ConversationsQuery:
         parameters=[ConversationFilterSerializer],
         responses={200: ConversationSerializer(many=True), **errors(400, 401, 403, 404)},
         description="Las conversaciones dentro del alcance de `conversations.view`, la de mensaje "
-        "más reciente primero (`last_message_at`, `id`; cursor de dos valores). `box`, `status` y "
-        "`unanswered` se combinan y la página siguiente se pide con los mismos. 400: un filtro "
-        "repetido o no válido.",
+        "más reciente primero (`last_message_at`, `id`; cursor de dos valores). `box`, `status`, "
+        "`unanswered` y `platform` se combinan y la página siguiente se pide con los mismos. 400: "
+        "un filtro repetido o no válido.",
     ),
 )
 class ConversationsView(ConversationsQuery, generics.ListAPIView):
@@ -224,13 +233,13 @@ class ConversationView(ConversationsQuery, generics.RetrieveAPIView):
         parameters=[BoxFilterSerializer],
         responses={200: UnansweredCountSerializer, **errors(400, 401, 403, 404)},
         description="Cuántas conversaciones sin responder (`unanswered=true` de la lista) hay "
-        "dentro del alcance de `conversations.view` y de `box`. Solo el número.",
+        "dentro del alcance de `conversations.view`, de `box` y de `platform`. Solo el número.",
     ),
 )
 class UnansweredCountView(generics.GenericAPIView[Conversation]):
     required_permissions = {"GET": "conversations.view"}
     filter_backends = [ScopeFilter, ConversationFilters]  # en este orden
-    filters = ("box",)
+    filters = ("box", "platform")
 
     def get_queryset(self) -> QuerySet[Conversation]:
         return Conversation.objects.all()

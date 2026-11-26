@@ -23,6 +23,7 @@ from tests.test_conversation_commands import send
 from tests.test_member_branch import DENIED
 from tests.test_memberships import ctx
 from tests.test_self_context import NOT_FOUND, reply, signed
+from tests.test_social_schema import account, identity
 
 crm, inbox, real_stack = scopes.crm, scopes.inbox, scopes.real_stack
 pytestmark = pytest.mark.usefixtures("tenant_db")
@@ -143,6 +144,150 @@ def test_the_filters_cut_what_the_scope_left(inbox: SimpleNamespace) -> None:
         assert response.status_code == 400 and response.json()["code"] == "VALIDATION_ERROR"
     twice = ana.get(BASE + "?box=mine&box=all")
     assert twice.status_code == 400 and set(twice.json()["fields"]) == {"box"}
+
+
+@pytest.fixture
+def networks(inbox: SimpleNamespace) -> SimpleNamespace:
+    """UX-INBOX-02: en A, vera y nobody por Instagram, sam por WhatsApp, team por Messenger; ana y
+    both siguen en Sandbox. La de B, por un Instagram de B."""
+    made: dict[UUID, dict[str, Any]] = {}
+    for n, org in ((1, inbox.a), (2, inbox.b)):
+        page = f"{n}00000000000001"  # su página de Facebook, y la de su Instagram
+        made[org] = {
+            "MESSENGER": account(org, "MESSENGER", page),
+            "INSTAGRAM": account(org, "INSTAGRAM", f"{n}00000000000002", external_parent_id=page),
+        }
+    made[inbox.a]["WHATSAPP"] = account(inbox.a, "WHATSAPP", "100000000000003",
+                                        external_parent_id="100000000000004")  # fmt: skip
+    for key, platform in (("vera", "INSTAGRAM"), ("nobody", "INSTAGRAM"), ("sam", "WHATSAPP"),
+                          ("team", "MESSENGER"), ("b", "INSTAGRAM")):  # fmt: skip
+        move(inbox, key, made[inbox.b if key == "b" else inbox.a][platform])
+    return SimpleNamespace(**vars(inbox), accounts=made)
+
+
+def move(inbox: SimpleNamespace, key: str, where: Any) -> None:
+    """Pasa la conversación a la cuenta `where`, con su identidad si es social (`0040`)."""
+    org = inbox.b if key == "b" else inbox.a
+    with tenant_scope(ctx(org)):
+        row = Conversation.objects.get(pk=inbox.convs[key])
+    over = {}
+    if where.platform in ("INSTAGRAM", "MESSENGER"):
+        who = identity(org, SimpleNamespace(pk=row.contact_id), where, f"9{uuid4().int % 10**15}")
+        over["contact_identity_id"] = who.pk
+    stamp(org, row.pk, channel_account_id=where.pk, **over)
+
+
+def test_the_platform_filter_cuts_what_the_scope_left_and_combines(
+    networks: SimpleNamespace,
+) -> None:
+    ana, vera, sam = (signed(getattr(networks, k)) for k in ("ana", "vera", "sam"))
+    by = {"INSTAGRAM": {"vera", "nobody"}, "WHATSAPP": {"sam"}, "MESSENGER": {"team"},
+          "SANDBOX": {"ana", "both"}}  # fmt: skip
+    for platform, wanted in by.items():
+        assert names(networks, ids(ana, platform=platform)) == wanted, platform
+        rows = ana.get(BASE, {"platform": platform}).json()["results"]
+        assert {r["channel"]["platform"] for r in rows} == {platform}
+    assert names(networks, ids(vera, platform="INSTAGRAM")) == {"vera", "nobody"}  # `OWN`
+    assert names(networks, ids(vera, platform="WHATSAPP")) == set()  # la de sam no es suya
+    assert names(networks, ids(sam, platform="INSTAGRAM")) == {"nobody"}  # `TEAM`
+    assert names(networks, ids(sam, platform="MESSENGER")) == {"team"}
+    assert names(networks, ids(vera, platform="INSTAGRAM", box="mine")) == {"vera"}
+    assert names(networks, ids(ana, platform="INSTAGRAM", box="unassigned")) == {"nobody"}
+    stamp(networks.a, networks.convs["nobody"], status="OPEN")
+    assert names(networks, ids(ana, platform="INSTAGRAM", status="OPEN")) == {"nobody"}
+    assert names(networks, ids(ana, platform="WHATSAPP", status="OPEN")) == set()
+    assert len(ids(ana, platform="")) == 6  # vacío: sin filtro
+
+
+def test_a_bad_or_repeated_platform_is_a_400_like_the_other_filters(
+    networks: SimpleNamespace,
+) -> None:
+    ana = signed(networks.ana)
+    for bad in ("instagram", "TIKTOK", "UNKNOWN", "INSTAGRAM ", "x"):
+        response = ana.get(BASE, {"platform": bad})
+        assert response.status_code == 400, bad
+        why = [{"code": "invalid_choice", "message": "No válido."}]
+        assert response.json() == {"code": "VALIDATION_ERROR", "fields": {"platform": why}}
+        assert ana.get(BASE, {"status": bad}).json()["fields"] == {"status": why}  # igual
+        assert ana.get(BASE + "unanswered/", {"platform": bad}).status_code == 400, bad
+    for url in (BASE, BASE + "unanswered/"):
+        twice = ana.get(url + "?platform=INSTAGRAM&platform=WHATSAPP")
+        once = [{"code": "invalid", "message": "Una sola vez."}]
+        assert twice.status_code == 400 and twice.json()["fields"] == {"platform": once}
+
+
+def test_the_platform_filter_never_reaches_another_organization(
+    networks: SimpleNamespace,
+) -> None:
+    for key in ("vera", "nobody", "b"):
+        stamp(networks.b if key == "b" else networks.a, networks.convs[key],
+              last_message_preview="Hola", last_message_direction="INBOUND")  # fmt: skip
+    ana = signed(networks.ana)
+    assert networks.convs["b"] not in ids(ana, platform="INSTAGRAM")
+    assert ana.get(BASE + "unanswered/", {"platform": "INSTAGRAM"}).json() == {"count": 2}
+    give(networks.b, networks.m_luis, {"conversations.view": "ORGANIZATION"})
+    luis, other = signed(networks.luis), BASE.replace("org-a", "org-b")
+    assert ids(luis, other, platform="INSTAGRAM") == [networks.convs["b"]]
+    assert ids(luis, other, platform="WHATSAPP") == []
+    assert luis.get(other + "unanswered/", {"platform": "INSTAGRAM"}).json() == {"count": 1}
+    assert reply(luis.get(BASE, {"platform": "INSTAGRAM"})) == NOT_FOUND  # la ruta de A
+
+
+def test_the_unanswered_count_follows_the_platform_and_the_box(networks: SimpleNamespace) -> None:
+    for key in ("vera", "nobody", "sam", "team"):
+        stamp(networks.a, networks.convs[key], last_message_preview="Hola",
+              last_message_direction="INBOUND")  # fmt: skip
+    ana, vera = signed(networks.ana), signed(networks.vera)
+
+    def count(client: Client, **query: Any) -> int:
+        return client.get(BASE + "unanswered/", query).json()["count"]  # type: ignore[no-any-return]
+
+    assert count(ana) == 4 and count(ana, platform="") == 4
+    assert [count(ana, platform=p) for p in ("INSTAGRAM", "WHATSAPP", "MESSENGER", "SANDBOX")] == [
+        2, 1, 1, 0,
+    ]  # fmt: skip
+    assert count(ana, platform="INSTAGRAM", box="unassigned") == 1
+    assert count(vera, platform="INSTAGRAM") == 2 and count(vera, platform="WHATSAPP") == 0
+    assert count(vera, platform="INSTAGRAM", box="mine") == 1
+    for platform in ("INSTAGRAM", "WHATSAPP"):  # la lista y su número dicen lo mismo
+        assert len(ids(ana, platform=platform, unanswered="true")) == count(ana, platform=platform)
+
+
+def test_the_next_page_keeps_the_platform_without_repeating_or_skipping(
+    networks: SimpleNamespace,
+) -> None:
+    now, instagram = timezone.now(), networks.accounts[networks.a]["INSTAGRAM"]
+    for n in range(5):  # más de Instagram, entre las demás y con un empate
+        with tenant_scope(ctx(networks.a)):
+            who = Contact.objects.create(display_name=f"ig{n}")
+            made = Conversation.objects.create(
+                number=f"CONV-{800 + n:05d}", contact_id=who.pk, channel_account_id=instagram.pk,
+                last_message_at=now, contact_identity_id=identity(
+                    networks.a, who, instagram, f"8{n:014d}").pk,
+            )  # fmt: skip
+        networks.convs[f"ig{n}"] = made.pk
+    order = ["ig0", "sam", "vera", "ig1", "team", "ig2", "ig3", "nobody", "ig4", "ana", "both"]
+    for index, key in enumerate(order):
+        stamp(networks.a, networks.convs[key], last_message_at=now - dt.timedelta(minutes=index))
+    tied = now - dt.timedelta(minutes=30)
+    for key in ("ig3", "nobody"):
+        stamp(networks.a, networks.convs[key], last_message_at=tied)
+    ana, query = signed(networks.ana), {"platform": "INSTAGRAM", "limit": "2"}
+    wanted = [networks.convs[k] for k in ("ig0", "vera", "ig1", "ig2", "ig4")] + sorted(
+        [networks.convs["ig3"], networks.convs["nobody"]], reverse=True
+    )
+    assert ids(ana, platform="INSTAGRAM") == wanted
+    seen: list[UUID] = []
+    body = ana.get(BASE, query).json()
+    while True:
+        seen += [UUID(r["id"]) for r in body["results"]]
+        if body["next"] is None:
+            break
+        body = ana.get(BASE, {**query, "cursor": body["next"]}).json()
+    assert seen == wanted  # en orden, sin repetir ni saltarse una, tampoco en el empate
+    after = ana.get(BASE, query).json()["next"]  # el cursor es una posición, no un filtro
+    assert ids(ana, platform="WHATSAPP", cursor=after) == []  # sam es más reciente que vera
+    assert names(networks, ids(ana, platform="MESSENGER", cursor=after)) == {"team"}
 
 
 def test_the_list_costs_the_same_queries_however_many_rows(inbox: SimpleNamespace) -> None:

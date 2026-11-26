@@ -14,7 +14,11 @@ import {
   getChannelsListQueryKey,
   getConversationsListQueryKey,
 } from "@/lib/api/client";
-import type { ChannelAccount, ConversationsUnansweredCountBox } from "@/lib/api/model";
+import type {
+  ChannelAccount,
+  ConversationsUnansweredCountBox,
+  ConversationsUnansweredCountPlatform,
+} from "@/lib/api/model";
 
 import { Plain } from "./plain";
 
@@ -22,13 +26,23 @@ import { Plain } from "./plain";
 // cuentas de canal que no pueden atender. La red de cada conversación está en `channel-identity`.
 
 // Cuántas conversaciones abiertas esperan respuesta (lo último lo dijo el cliente), las que la API
-// deja ver (`conversations.view` y su alcance) en esa bandeja. Cuelga de la clave de la lista: lo
-// que la relee (responder, asignar, un evento del tiempo real) también relee el número.
-export function useUnanswered(box: ConversationsUnansweredCountBox = "all", enabled = true) {
+// deja ver (`conversations.view` y su alcance) en esa bandeja y esa red (UX-INBOX-02). Cuelga de la
+// clave de la lista: lo que la relee (responder, asignar, un evento del tiempo real) también relee
+// el número.
+export function useUnanswered(
+  {
+    box = "all",
+    platform = "",
+  }: {
+    box?: ConversationsUnansweredCountBox;
+    platform?: ConversationsUnansweredCountPlatform | "";
+  },
+  enabled = true,
+) {
   const slug = useTenant().organization.slug;
-  const params = box === "all" ? {} : { box };
+  const params = { ...(box === "all" ? {} : { box }), ...(platform ? { platform } : {}) };
   const count = useQuery({
-    queryKey: [...getConversationsListQueryKey(slug), "unanswered", box],
+    queryKey: [...getConversationsListQueryKey(slug), "unanswered", box, platform],
     queryFn: ({ signal }) => conversationsUnansweredCount(slug, params, { signal }),
     enabled,
     gcTime: 0, // como la lista: al salir de la organización no queda nada suyo en memoria
@@ -39,7 +53,7 @@ export function useUnanswered(box: ConversationsUnansweredCountBox = "all", enab
 // El número del menú «Inbox»: nada si no hay ninguna o la lectura falla.
 export function UnansweredCount() {
   const t = useTranslations("inbox");
-  const count = useUnanswered();
+  const count = useUnanswered({});
   if (!count) return null;
   return (
     <>
