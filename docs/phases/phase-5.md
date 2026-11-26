@@ -76,6 +76,25 @@ Cada work item es un issue con el alcance completo. Este documento solo los orde
 
 Con ganar y perder (F5-04h) la API de oportunidades queda completa; siguen las pantallas (F5-05 en adelante): el tablero y la pestaña de la ficha.
 
+### Serie F5-10 — Sales Intelligence, Motor A (ADR-050)
+
+**Hecho en ADR-ACC ([#1166](https://github.com/PapiCuche/crm-gooddoggy/issues/1166)):** [ADR-050](../adr/ADR-050-sales-priority-motor-a.md) aceptada el 2026-11-26 (D-SI-1 a D-SI-5, con D-SI-5 (a)). El puntaje de 0 a 100 ordena el trabajo y no es una probabilidad de compra; Motor B sigue apagado. La serie va después de R0 ([#760](https://github.com/PapiCuche/crm-gooddoggy/issues/760)) y sin bloquear las entregas de canales (`release:sales-intelligence`), detrás del interruptor `SALES_INTEL_ENABLED`, apagado hasta revisar el aviso de privacidad.
+
+| ID | Issue | Depende de |
+|---|---|---|
+| F5-10a | [#1186](https://github.com/PapiCuche/crm-gooddoggy/issues/1186) Prioridad de un cliente calculada al leer, en el panel del Inbox | #1166, #760 |
+| F5-10b | [#1188](https://github.com/PapiCuche/crm-gooddoggy/issues/1188) Motor A completo y tarjeta en la ficha 360° | #1186 |
+| F5-10c | [#1187](https://github.com/PapiCuche/crm-gooddoggy/issues/1187) Eventos del outbox con ids | #1166, #760 |
+| F5-10d1 | [#1189](https://github.com/PapiCuche/crm-gooddoggy/issues/1189) Tabla `sales_priorities`, recálculo por contacto y reconciliación | #1188, #1187 |
+| F5-10d2 | [#1190](https://github.com/PapiCuche/crm-gooddoggy/issues/1190) Recálculo por el outbox y por umbrales de tiempo | #1189 |
+| F5-10e | [#1191](https://github.com/PapiCuche/crm-gooddoggy/issues/1191) API «Leads que requieren atención» | #1190 |
+| F5-10f1 | [#1192](https://github.com/PapiCuche/crm-gooddoggy/issues/1192) Pantalla: lista, razones y aviso | #1191 |
+| F5-10f2 | [#1193](https://github.com/PapiCuche/crm-gooddoggy/issues/1193) Pantalla: filtros | #1192 |
+| F5-10g | [#1194](https://github.com/PapiCuche/crm-gooddoggy/issues/1194) Revisión humana (backend) | #1191 |
+| F5-10g2 | [#1195](https://github.com/PapiCuche/crm-gooddoggy/issues/1195) Revisión desde la pantalla y la tarjeta | #1194, #1192 |
+| F5-10h | [#1196](https://github.com/PapiCuche/crm-gooddoggy/issues/1196) Insignia y filtro «Prioridad alta» en el Inbox | #1190 |
+| F5-10i | [#1197](https://github.com/PapiCuche/crm-gooddoggy/issues/1197) Señal «volvió el stock» | #1190 |
+
 ## Historias
 
 | Historia                                        | Estado                                                                                                                                                                                           |
