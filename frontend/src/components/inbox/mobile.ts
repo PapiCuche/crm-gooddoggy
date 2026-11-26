@@ -81,13 +81,20 @@ export function useComposing(panel: RefObject<HTMLElement | null>) {
     root.addEventListener("focusout", leave, { signal: off.signal });
     return () => (clearTimeout(wait), off.abort());
   }, [panel]);
-  // UX-INBOX-03c: compacto, pulsar un botón del panel no quita el foco al cuadro. Si lo quitara, la
-  // cabecera y `--keyboard-vh` cambiarían entre `mousedown` y el clic (WebKit lo perdía).
+  // UX-INBOX-03c: compacto (táctil y por debajo de 640 px, como `max-sm`), pulsar un botón del panel
+  // no quita el foco al cuadro. Si lo quitara, la cabecera y `--keyboard-vh` cambiarían entre
+  // `mousedown` y el clic (WebKit lo perdía). En una tableta, o con el foco fuera del cuadro (p. ej.,
+  // en el buscador de respuestas rápidas), el foco se mueve como siempre.
   useEffect(() => {
     const root = panel.current;
     if (!root || !on) return;
-    const keep = (event: MouseEvent) =>
-      event.target instanceof Element && event.target.closest("button") && event.preventDefault();
+    const keep = (event: MouseEvent) => {
+      const [typing, press] = [document.activeElement, event.target];
+      if (!(press instanceof Element && press.closest("button"))) return;
+      if (!matchMedia("(max-width: 639px)").matches) return;
+      if (typing instanceof HTMLTextAreaElement && root.lastElementChild?.contains(typing))
+        event.preventDefault();
+    };
     root.addEventListener("mousedown", keep);
     return () => root.removeEventListener("mousedown", keep);
   }, [panel, on]);

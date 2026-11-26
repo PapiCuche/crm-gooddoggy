@@ -71,8 +71,11 @@ const inCompact = (element: Element) => element.closest(`.${CSS.escape(COMPACT)}
 
 configure({ asyncUtilTimeout: 4000 });
 vi.setConfig({ testTimeout: 15_000 });
-const pointer = (touch: boolean) =>
-  vi.stubGlobal("matchMedia", (query: string) => ({ matches: touch && query.includes("coarse") }));
+// Por defecto, un teléfono táctil de 390 px; `width` ≥ 640, una tableta (sin `max-sm`).
+const pointer = (touch: boolean, width = 390) =>
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    matches: query.includes("coarse") ? touch : query.includes("max-width: 639px") && width < 640,
+  }));
 beforeEach(() => (pointer(true), void (document.cookie = "csrftoken=token-de-prueba")));
 afterEach(() => vi.unstubAllGlobals()); // `cleanup`, en vitest.setup.ts
 
@@ -235,6 +238,50 @@ describe("pulido de la cabecera compacta (UX-INBOX-03c)", () => {
     await tick();
     expect(panel).not.toHaveAttribute("data-composing");
     expect(pressed(button("Enviar"))).toBe(true); // ya sin compactar, lo de siempre
+    pointer(false); // con ratón, el cuadro enfocado no compacta ni retiene el foco
+    act(() => box().focus());
+    expect(panel).not.toHaveAttribute("data-composing");
+    expect(pressed(button("Enviar"))).toBe(true);
+  });
+
+  it("en una tableta táctil (≥640 px) no hay vista compacta: pulsar mueve el foco y la ventana de respuestas se cierra", async () => {
+    pointer(true, 800);
+    Object.assign(HTMLDialogElement.prototype, {
+      show(this: HTMLDialogElement) {
+        this.open = true; // jsdom no trae los métodos de `<dialog>`
+      },
+      close(this: HTMLDialogElement) {
+        this.open = false;
+        this.dispatchEvent(new Event("close"));
+      },
+    });
+    serve();
+    show();
+    await openChat();
+    act(() => box().focus());
+    expect(fireEvent.mouseDown(button("Enviar"))).toBe(true);
+    fireEvent.click(button("Respuestas rápidas"));
+    const popup = await screen.findByRole("dialog", { name: "Respuestas rápidas" });
+    const search = within(popup).getByRole("combobox");
+    await waitFor(() => expect(search).toHaveFocus());
+    const more = button("Actualizar mensajes");
+    if (fireEvent.mouseDown(more)) act(() => more.focus()); // lo que hace el navegador si no se impide
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("en el teléfono, con el foco fuera del cuadro (el buscador de respuestas), pulsar no se impide", async () => {
+    serve();
+    show();
+    const panel = await openChat();
+    act(() => box().focus());
+    expect(panel).toHaveAttribute("data-composing");
+    const search = document.createElement("input"); // otro campo del redactor, enfocado
+    box().closest("form")!.append(search);
+    act(() => search.focus());
+    expect(fireEvent.mouseDown(button("Enviar"))).toBe(true);
+    act(() => box().focus());
+    expect(fireEvent.mouseDown(button("Enviar"))).toBe(false);
+    search.remove();
   });
 
   it("Android: si el teclado se cierra sin quitar el foco, se suelta el cuadro; girar o la barra no", async () => {
@@ -243,8 +290,11 @@ describe("pulido de la cabecera compacta (UX-INBOX-03c)", () => {
     serve();
     show();
     const panel = await openChat();
-    const resize = (width: number, height: number) =>
-      act(() => void Object.assign(viewport, { width, height }).dispatchEvent(new Event("resize")));
+    const resize = (width: number, height: number, scale = 1) =>
+      act(
+        () =>
+          void Object.assign(viewport, { width, height, scale }).dispatchEvent(new Event("resize")),
+      );
     act(() => box().focus());
     resize(390, 400); // se abre el teclado
     resize(390, 456); // la barra de direcciones se recoge (56 px)
@@ -252,6 +302,8 @@ describe("pulido de la cabecera compacta (UX-INBOX-03c)", () => {
     resize(390, 400); // …y se vuelve: crece 200 px, pero con otro ancho
     resize(390, 370); // el teclado crece un poco (emojis)
     resize(390, 500); // y vuelve: 130 px
+    resize(390, 250, 2); // se amplía con los dedos: lo visible en CSS se reduce, en pantalla no
+    resize(390, 500);
     expect(box()).toHaveFocus();
     expect(panel).toHaveAttribute("data-composing");
     resize(390, 521); // 151 px más que lo menor visto: el teclado se cerró
