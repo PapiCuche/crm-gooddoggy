@@ -40,7 +40,28 @@ const message = (id: string, body: string, mine = false) =>
 const SEEN = 300;
 const tops = new WeakMap<Element, number>();
 const isChat = (el: Element) => el.getAttribute("aria-label") === "Mensajes de la conversación";
-const tall = (li: Element) => (li.textContent?.includes("largo") ? 300 : 100);
+const grown = new Map<string, number>(); // px de más en la fila con ese texto (aviso, adjunto, estado)
+const tall = (li: Element) =>
+  (li.textContent?.includes("largo") ? 300 : 100) +
+  [...grown].reduce((sum, [text, px]) => sum + (li.textContent?.includes(text) ? px : 0), 0);
+// `ResizeObserver` falso: `resized()` avisa al que vigila el contenido de la región.
+const observers: { fire: () => void; targets: Element[]; off: boolean }[] = [];
+class Observer {
+  entry: (typeof observers)[number];
+  constructor(fire: () => void) {
+    observers.push((this.entry = { fire, targets: [], off: false }));
+  }
+  observe(target: Element) {
+    this.entry.targets.push(target);
+  }
+  unobserve() {}
+  disconnect() {
+    this.entry.off = true;
+  }
+}
+const watching = () =>
+  observers.filter(({ targets }) => targets.includes(chat().firstElementChild!));
+const resized = () => watching().forEach(({ fire, off }) => off || fire());
 const rowsOf = (el: Element) => [...el.querySelectorAll("li")];
 const full = (el: Element) => rowsOf(el).reduce((sum, li) => sum + tall(li), 0);
 const from: number[] = []; // dónde estaba la vista al empezar cada desplazamiento suave
@@ -84,6 +105,9 @@ beforeEach(() => {
   proto.scrollTo = scrollTo as unknown as typeof proto.scrollTo;
   scrollTo.mockClear();
   boxTop = 40; // la región empieza más abajo en la página
+  grown.clear();
+  observers.length = 0;
+  vi.stubGlobal("ResizeObserver", Observer);
   document.cookie = "csrftoken=token-de-prueba";
 });
 afterEach(() => {
@@ -117,7 +141,7 @@ function server(texts: Message[], size = 50) {
     const next = end > size ? results[0]!.id : null;
     return new Response(JSON.stringify({ results: results.toReversed(), next }));
   });
-  return state;
+  return Object.assign(state, { api });
 }
 const history = (n: number) =>
   Array.from({ length: n }, (_, i) => message(`h${i + 1}`, `Historial ${i + 1}`));
@@ -128,7 +152,7 @@ const unseen = () => screen.queryByRole("button", { name: /^\d+\+? mensajes? nue
 const at = (text: string) => screen.getByText(text).closest("li")!.getBoundingClientRect().top;
 const tick = () => act(() => new Promise((resolve) => setTimeout(resolve, 0)));
 async function open(last = "Historial 5") {
-  const { client } = renderApp(
+  const view = renderApp(
     <TenantProvider value={tenant}>
       <Inbox />
     </TenantProvider>,
@@ -136,7 +160,7 @@ async function open(last = "Historial 5") {
   fireEvent.click(await screen.findByRole("button", { name: /Rosa Díaz/ }));
   await screen.findByText(last);
   await waitFor(() => expect(top()).toBe(bottom())); // abre al final
-  return client;
+  return view;
 }
 async function arrive(state: { texts: Message[] }, ...more: Message[]) {
   state.texts = [...state.texts, ...more];
@@ -144,6 +168,12 @@ async function arrive(state: { texts: Message[] }, ...more: Message[]) {
   await screen.findByText(more.at(-1)!.body!);
   await tick();
 }
+// Un cambio de ancho sin cambio de alto, antes del `scroll` de quien acaba de desplazarse: no se toca.
+const widen = async (value: number) => {
+  act(() => void ((chat().scrollTop = value), resized()));
+  await tick();
+  expect(top()).toBe(value);
+};
 const scroll = async (value: number) => {
   act(() => void (chat().scrollTop = value));
   await tick();
@@ -268,7 +298,7 @@ describe("seguir lo nuevo y «N mensajes nuevos» (UX-INBOX-06b)", () => {
 
   it("una relectura que cancela «Cargar mensajes anteriores» no mueve la vista", async () => {
     const state = server(history(10), 5);
-    const client = await open("Historial 10");
+    const { client } = await open("Historial 10");
     await scroll(150);
     const before = at("Historial 10");
     state.hold = new Promise(() => {}); // la página anterior no llega
@@ -306,5 +336,80 @@ describe("seguir lo nuevo y «N mensajes nuevos» (UX-INBOX-06b)", () => {
     await screen.findByText("Historial 1");
     await waitFor(() => expect(top()).toBe(550)); // arriba crecieron 500 px: lo leído no se mueve
     expect(unseen()).toBeNull();
+  });
+
+  it("un alto que cambia sin filas nuevas no mueve la fila leída; al final, se sigue", async () => {
+    const state = server(history(9));
+    const { unmount } = await open("Historial 9");
+    grown.set("Historial 9", 40); // la última crece (un estado de entrega): se sigue el final
+    act(resized);
+    await tick();
+    expect(top()).toBe(bottom());
+    await scroll(100);
+    const before = at("Historial 4");
+    grown.set("Historial 1", 60); // arriba crece algo (un aviso, un adjunto): sin filas nuevas
+    act(resized);
+    await tick();
+    expect(at("Historial 4")).toBe(before);
+    expect(top()).toBe(160);
+    await widen(100); // tras colocar por el observador
+    await arrive(state, message("n1", "Nuevo 1"));
+    expect(top()).toBe(100); // lo de siempre: lo que llega no mueve la vista
+    await widen(0); // tras colocar por la llegada
+    fireEvent.click(unseen()!); // el botón baja y, a medio camino, algo crece: se sigue igual
+    grown.set("Nuevo 1", 50);
+    act(resized);
+    await tick();
+    expect(top()).toBe(bottom());
+    expect(watching().length).toBeGreaterThan(0);
+    unmount(); // al cerrar el chat (o cambiar de conversación, que lo vuelve a montar), sin fugas
+    expect(observers.filter(({ off }) => !off)).toEqual([]);
+  });
+
+  it("el contador cuenta solo lo que queda bajo el borde visible, sin pedir nada", async () => {
+    const state = server(history(9));
+    await open("Historial 9");
+    await scroll(0);
+    await arrive(state, message("n1", "Nuevo 1"), message("n2", "Nuevo 2"));
+    expect(unseen()).toHaveTextContent("2 mensajes nuevos");
+    const calls = state.api.mock.calls.length;
+    await scroll(700); // «Nuevo 1» a la vista; «Nuevo 2» empieza justo en el borde: debajo
+    expect(unseen()).toHaveTextContent("1 mensaje nuevo");
+    await scroll(bottom() - 30); // a 30 px del final (no es «el final»), los dos a la vista
+    expect(unseen()).toBeNull();
+    await scroll(0); // volver a subir no los vuelve a contar
+    expect(unseen()).toBeNull();
+    expect(state.api.mock.calls.length).toBe(calls); // ver no marca nada en el servidor
+    await arrive(state, message("n3", "Nuevo 3"));
+    expect(unseen()).toHaveTextContent("1 mensaje nuevo");
+  });
+
+  it("la burbuja pendiente a la vista no pasa a ser lo último visto", async () => {
+    const state = server(history(5));
+    await open();
+    const box = screen.getByRole("textbox", { name: "Responder al cliente" });
+    fireEvent.change(box, { target: { value: "Hola Rosa" } });
+    fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
+    await screen.findByText("Hola Rosa");
+    await tick();
+    await scroll(bottom() - 30); // deja el final
+    await scroll(bottom() - 20); // la burbuja pendiente, a la vista
+    await act(async () => state.sending?.());
+    await waitFor(() => expect(state.texts.at(-1)!.id).toBe("s1"));
+    await arrive(state, message("n1", "Nuevo 1"));
+    expect(unseen()).toHaveTextContent("1 mensaje nuevo"); // no «50+»
+  });
+
+  it("el botón va antes que la región en el orden de foco y se anuncia con su número", async () => {
+    const state = server(history(9));
+    await open("Historial 9");
+    await scroll(0);
+    await arrive(state, message("n1", "Nuevo 1"));
+    const button = unseen()!;
+    expect(button.compareDocumentPosition(chat()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(chat()).not.toContainElement(button);
+    expect(button.closest("[aria-hidden=true]")).toBeNull();
+    expect(button).not.toHaveAttribute("tabindex", "-1");
+    expect(button.closest("[role=status]")).toHaveTextContent(/^1 mensaje nuevo$/);
   });
 });
