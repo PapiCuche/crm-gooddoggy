@@ -946,7 +946,7 @@ describe("móvil: la conversación en la URL (UX-INBOX-03)", () => {
 
   it("llegar con «adelante» a un `?c=` válido quita el aviso de uno que no existía", async () => {
     history.replaceState(null, "", "/?c=no-existe");
-    serve(routes);
+    serve({ ...routes, [MESSAGES(ID)]: page([]) }); // sin ella, el 404 de los mensajes es otra alerta
     show();
     expect(await screen.findByRole("alert")).toHaveTextContent("No encontramos lo que buscas.");
     await waitFor(() => expect(at()).toBeNull());
