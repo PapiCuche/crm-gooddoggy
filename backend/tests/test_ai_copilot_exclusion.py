@@ -530,21 +530,34 @@ def test_a_stale_version_is_refused_before_waiting_and_takes_no_waiting_slot(
     assert outcome == ["OK"] and excluded_at(migrator, desk) is None
 
 
+def ended(migrator: DB, pid: int) -> None:
+    """F1-TEST-02: cerrar una conexión solo cierra el socket; su proceso en la base suelta los
+    candados de sesión al salir, un poco después. Espera (como mucho 10 s) a que el proceso `pid`
+    salga, y si no sale falla; nunca espera a que la cuenta de candados llegue a 0. `migrator` es
+    autocommit: cada consulta ve `pg_stat_activity` de nuevo (no la foto de una transacción)."""
+    alive, end = "SELECT count(*) FROM pg_stat_activity WHERE pid = %s", time.monotonic() + 10
+    while migrator.execute(alive, [pid]).fetchone() != (0,):
+        assert time.monotonic() < end, "el proceso de la conexión cerrada sigue vivo"
+        threading.Event().wait(0.01)  # `desk` sustituye `time.sleep`
+
+
 def test_a_call_lock_whose_short_transaction_fails_after_taking_it_closes_the_connection(
     desk: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """F8-13d: el candado es de sesión; si su transacción corta falla después de tomarlo, la
     conexión se cierra (la base lo suelta) y no queda retenido."""
-    real = attention._locked
+    real, pids = attention._locked, list[int]()
 
     def broken(*args: Any) -> None:
         real(*args)
+        pids.append(connection.connection.info.backend_pid)
         raise OperationalError("tras tomarlo")
 
     monkeypatch.setattr(attention, "_locked", broken)
     with pytest.raises(OperationalError), attention.ai_call(ctx(desk.a, desk.ana), desk.convo, 5):
         pytest.fail("no entra")
     assert connection.connection is None
+    ended(migrator, *pids)
     assert migrator.execute(
         "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory'"
     ).fetchone() == (0,)

@@ -34,7 +34,7 @@ from core import http
 from core.tenancy import scope
 from core.tenancy.scope import tenant_scope
 from tests import ai_sim
-from tests.test_ai_copilot_exclusion import LEDGER, RUNS, USAGE, excluded_at, mark, put
+from tests.test_ai_copilot_exclusion import LEDGER, RUNS, USAGE, ended, excluded_at, mark, put
 from tests.test_ai_copilot_runtime import PLAIN, desk
 from tests.test_ai_copilot_suggest_api import DB
 from tests.test_ai_gateway import world
@@ -315,12 +315,19 @@ def test_a_lost_lock_on_a_reopened_connection_withholds_and_is_not_reported_as_e
     `AI_EXCLUDED` que diría algo falso."""
     owner, name, _ = WHERE["tls"]
     monkeypatch.setattr(owner, name, getattr(owner, name))
-    ahead_of(owner, name, connection.close)
+    pids = list[int]()
+
+    def close() -> None:
+        pids.append(connection.connection.info.backend_pid)
+        connection.close()
+
+    ahead_of(owner, name, close)
     desk.fake.replies = [PLAIN]
     assert suggest(desk) == "INTERNAL_ERROR"
     assert provider.settled(1) == [b""] and excluded_at(migrator, desk) is None
     assert migrator.execute(RUNS).fetchall() == [("INTERNAL_ERROR", 1)]
     assert migrator.execute(LEDGER).fetchall() == [("PROVIDER_UNAVAILABLE", 0)]
+    ended(migrator, *pids)  # F1-TEST-02: el candado se suelta cuando sale su proceso
     assert migrator.execute(ADVISORY).fetchone() == (0,)
 
 
