@@ -1,6 +1,11 @@
 "use client";
 
-import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import {
+  useInfiniteQuery,
+  useMutationState,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import {
   ArrowDown,
   ArrowLeft,
@@ -17,6 +22,7 @@ import {
   TriangleAlert,
   UserRound,
   Video,
+  WifiOff,
 } from "lucide-react";
 import { useFormatter, useTranslations } from "next-intl";
 import { type ReactNode, type Ref, useEffect, useLayoutEffect, useRef, useState } from "react";
@@ -43,7 +49,14 @@ import { cn } from "@/lib/utils";
 
 import { useAiExclusion } from "./ai-exclusion";
 import { Assignee, AssignmentActions } from "./assignment";
-import { Composer, type Inserter, messagesKey, writableModes } from "./composer";
+import {
+  Composer,
+  type Inserter,
+  keepPending,
+  messagesKey,
+  pausedId,
+  writableModes,
+} from "./composer";
 import { AI_USE, useCopilot } from "./copilot";
 import { useHumanRequest } from "./human-request";
 import { MediaFile } from "./media-file";
@@ -152,15 +165,16 @@ export function ChatPanel({
   const chase = useRef({ on: false, top: 0 }); // el botón va al final: lo que llegue mientras, también
   const [atEnd, setAtEnd] = useState(true);
   const [seen, setSeen] = useState<string | null>(null);
+  const client = useQueryClient();
+  const key = messagesKey(slug, conversation.id);
   const list = useInfiniteQuery<PaginatedMessageList, ApiError>({
-    queryKey: messagesKey(slug, conversation.id),
-    queryFn: ({ pageParam, signal }) =>
-      conversationMessagesList(
-        slug,
-        conversation.id,
-        pageParam ? { cursor: pageParam as string } : undefined,
-        { signal },
-      ),
+    queryKey: key,
+    // La más reciente conserva la burbuja de un envío propio en curso (UX-INBOX-06c).
+    queryFn: async ({ pageParam, signal }) => {
+      const cursor = pageParam ? { cursor: pageParam as string } : undefined;
+      const page = await conversationMessagesList(slug, conversation.id, cursor, { signal });
+      return cursor ? page : keepPending(client, key, page);
+    },
     initialPageParam: "",
     getNextPageParam: (last) => last.next ?? undefined,
     gcTime: 0,
@@ -176,6 +190,8 @@ export function ChatPanel({
       : after < 0
         ? Infinity
         : rows.slice(after + 1).filter((message) => message.sender_user_id !== user.id).length;
+  // Envíos en pausa sin conexión (TanStack los suelta al volver la red): su burbuja lo dice.
+  const paused = useMutationState({ filters: { status: "pending" }, select: pausedId });
   const problem = failed(list, t("denied"));
   const stale = failed(detail, t("denied")); // el detalle no llegó: se sigue con lo que dio la lista
 
@@ -239,6 +255,7 @@ export function ChatPanel({
           <Bubble
             key={message.id}
             message={message}
+            paused={message.id.startsWith("pending-") && paused.includes(message.client_message_id)}
             conversationId={conversation.id}
             platform={conversation.channel.platform}
           />
@@ -488,10 +505,12 @@ const MEDIA: Record<string, ReactNode> = {
 
 function Bubble({
   message,
+  paused,
   conversationId,
   platform,
 }: {
   message: Message;
+  paused: boolean; // un envío propio sin conexión: sale al volver la red
   conversationId: string;
   platform: string;
 }) {
@@ -598,7 +617,12 @@ function Bubble({
         <time dateTime={message.created_at}>
           {format.dateTime(new Date(message.created_at), WHEN)}
         </time>
-        {shown && state && STATES.includes(state) && t.has(`delivery.${shown}`) ? (
+        {paused ? (
+          <span className="inline-flex items-center gap-1 [&_svg]:size-3.5">
+            <WifiOff aria-hidden />
+            {t(note ? "pausedNote" : "paused")}
+          </span>
+        ) : shown && state && STATES.includes(state) && t.has(`delivery.${shown}`) ? (
           <span
             className={cn(
               "inline-flex items-center gap-1 [&_svg]:size-3.5",

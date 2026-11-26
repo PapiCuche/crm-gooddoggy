@@ -11,11 +11,6 @@ import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TenantProvider } from "@/components/app-shell/tenant-context";
-import {
-  getConversationMessagesListQueryKey,
-  getConversationsListQueryKey,
-  getConversationsRetrieveQueryKey,
-} from "@/lib/api/client";
 import type { Conversation, Grant, Message, SelfContext } from "@/lib/api/model";
 import { mockApi, renderApp } from "@/test-utils";
 
@@ -327,6 +322,19 @@ describe("ráfagas y estado de la conexión (UX-INBOX-06)", () => {
     online.mockRestore();
   });
 
+  it("la región de estado tiene caja (WebKit saca `display: contents` del árbol accesible)", async () => {
+    server();
+    show();
+    await openChat();
+    const region = screen
+      .getByRole("heading", { level: 1 })
+      .parentElement!.querySelector(":scope > [role=status]")!;
+    expect(region).toBeEmptyDOMElement(); // conectando: existe vacía, fuera del flujo (sin hueco)
+    expect(region).toHaveClass("empty:absolute");
+    act(() => socket().onclose?.({ code: 4403 }));
+    expect(region).toHaveTextContent("Tiempo real no disponible"); // la misma región
+  });
+
   it("apagado no muestra ningún estado, ni su región", async () => {
     vi.stubEnv("NEXT_PUBLIC_INBOX_WS", "off");
     server();
@@ -394,62 +402,136 @@ describe("ráfagas y estado de la conexión (UX-INBOX-06)", () => {
     expect(reads("1/messages/")).toBe(messages + 2); // y nada más: no se sondea
   });
 
-  it("un envío propio en curso no parpadea ni se duplica cuando llega su evento", async () => {
-    const { api, state } = server();
+  // UX-INBOX-06c: un envío propio en curso ya no frena la relectura; nunca cero ni dos burbujas
+  // propias. `row`: lo que guarda el servidor; con `early`, ya al recibir (la respuesta tarda).
+  const sending = (
+    api: ReturnType<typeof mockApi>,
+    texts: Message[],
+    row: (id: string) => Message,
+    early = false,
+  ) => {
     let release = () => {};
     const answered = new Promise<void>((resolve) => (release = resolve));
     const inner = api.getMockImplementation()!;
     api.mockImplementation(async (input, init) => {
       if (init?.method !== "POST") return inner(input, init);
-      const sent = {
-        ...message("m9", "Hola Rosa"),
-        ...{ direction: "OUTBOUND", sender_type: "USER", sender_user_id: "u1" },
-        ...{ client_message_id: JSON.parse(String(init.body)).client_message_id },
-      } as Message;
-      state.texts.push(sent); // el servidor ya lo guardó; la respuesta tarda
+      const { body } = init;
+      const id = String(
+        body instanceof FormData
+          ? body.get("client_message_id")
+          : JSON.parse(String(body)).client_message_id,
+      );
+      if (early) texts.push(row(id));
       await answered;
-      return new Response(JSON.stringify(sent), { status: 202 });
+      if (!early) texts.push(row(id));
+      return new Response(JSON.stringify(texts.at(-1)), { status: 202 });
     });
     document.cookie = "csrftoken=token-de-prueba"; // un envío lleva la cabecera CSRF
     const send: Grant = { code: "messages.send", scopes: ["ORGANIZATION"] };
-    const { client } = renderApp(
+    renderApp(
       <TenantProvider value={{ ...tenant, permissions: [...tenant.permissions, send] }}>
         <Inbox />
       </TenantProvider>,
     );
+    const own = () =>
+      [...document.querySelectorAll<HTMLElement>("ol li[data-id]")].filter(
+        ({ dataset }) => dataset.id!.startsWith("pending-") || dataset.id === "m9",
+      ).length;
+    const seen: number[] = [];
+    const watcher = new MutationObserver(() => seen.push(own()));
+    watcher.observe(document.body, { subtree: true, childList: true, characterData: true });
+    const done = () => {
+      watcher.disconnect();
+      return seen.slice(seen.indexOf(1));
+    };
+    return { own, done, release: () => act(async () => release()) };
+  };
+  const mine = (id: string, changes: Partial<Message> = {}) =>
+    ({
+      ...message("m9", "Hola Rosa"),
+      ...{ direction: "OUTBOUND", sender_type: "USER", sender_user_id: "u1" },
+      ...{ client_message_id: id, delivery_status: "QUEUED", ...changes },
+    }) as Message;
+  const reply = () => {
+    fireEvent.change(screen.getByRole("textbox", { name: "Responder al cliente" }), {
+      target: { value: "Hola Rosa" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
+  };
+
+  it("un envío propio en curso no parpadea ni se duplica: el evento relee y queda la del servidor", async () => {
+    const { api, state } = server();
+    const reads = () => api.mock.calls.filter(([url]) => url === `${BASE}/1/messages/`).length;
+    const view = sending(api, state.texts, (id) => mine(id), true);
     await openChat();
     act(() => socket().onopen?.({}));
-    const count = () =>
-      [...document.querySelectorAll("ol li")].filter((li) => li.textContent?.includes("Hola R"))
-        .length;
-    const seen: number[] = [];
-    const watcher = new MutationObserver(() => seen.push(count()));
-    watcher.observe(document.body, { subtree: true, childList: true, characterData: true });
-    const box = screen.getByRole("textbox", { name: "Responder al cliente" });
-    fireEvent.change(box, { target: { value: "Hola Rosa" } });
-    fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
-    await waitFor(() => expect(count()).toBe(1)); // la burbuja del envío en curso
-    const reads = () => api.mock.calls.filter(([url]) => url === `${BASE}/1/messages/`).length;
+    reply();
+    await waitFor(() => expect(view.own()).toBe(1)); // la burbuja del envío en curso
     const before = reads();
-    const invalidate = vi.spyOn(client, "invalidateQueries");
     await say({ type: "message.received", conversation_id: "1", message_id: "m9" });
-    await say({ type: "message.received", conversation_id: "7", message_id: "m7" });
+    await waitFor(() => expect(reads()).toBe(before + 1)); // se relee aunque esté saliendo
+    await waitFor(() => expect(document.querySelector('li[data-id="m9"]')).not.toBeNull());
+    expect(view.own()).toBe(1); // la del servidor (mismo `client_message_id`) reemplaza a la pendiente
+    await view.release();
+    await waitFor(() => expect(reads()).toBe(before + 2)); // al terminar, el cuadro relee una vez
     await wait(400);
-    expect(reads()).toBe(before); // mientras sale, sus mensajes no se releen
-    // la lista y el detalle del chat que envía, sí; los mensajes de otra conversación, también
-    expect(invalidate.mock.calls.map(([filters]) => filters?.queryKey)).toEqual([
-      getConversationsListQueryKey("acme"),
-      getConversationsRetrieveQueryKey("acme", "1"),
-      getConversationsRetrieveQueryKey("acme", "7"),
-      getConversationMessagesListQueryKey("acme", "7"),
-    ]);
-    await act(async () => release());
-    await waitFor(() => expect(reads()).toBe(before + 1)); // al terminar, el cuadro relee una vez
-    await wait(400);
-    watcher.disconnect();
-    expect(count()).toBe(1);
-    expect(seen.slice(seen.indexOf(1))).not.toContain(0); // nunca desaparece
+    expect(view.own()).toBe(1);
+    const seen = view.done();
+    expect(seen).not.toContain(0); // nunca desaparece
     expect(Math.max(...seen)).toBe(1); // nunca dos
+  });
+
+  it("lo que escribe el cliente durante un envío con archivo se ve en menos de 1 s, sin duplicar el propio", async () => {
+    const { api, state } = server();
+    const doc = (id: string) => mine(id, { message_type: "DOCUMENT", body: "Documento" });
+    const view = sending(api, state.texts, doc); // el archivo sigue subiendo (hasta 120 s)
+    await openChat();
+    act(() => socket().onopen?.({}));
+    await screen.findByRole("button", { name: "Adjuntar imagen o PDF" });
+    const pdf = new File(["%PDF-1.7"], "cotizacion.pdf", { type: "application/pdf" });
+    fireEvent.change(document.querySelector('input[type="file"]')!, { target: { files: [pdf] } });
+    fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
+    await waitFor(() => expect(view.own()).toBe(1));
+    state.texts.push(message("m10", "¿Ya salió?"));
+    const start = performance.now();
+    await say({ type: "message.received", conversation_id: "1", message_id: "m10" });
+    expect(await screen.findByText("¿Ya salió?", {}, { timeout: 1000 })).toBeVisible();
+    expect(performance.now() - start).toBeLessThan(1000);
+    expect(view.own()).toBe(1); // la burbuja del archivo sigue, una sola
+    await view.release();
+    await waitFor(() => expect(document.querySelector('li[data-id="m9"]')).not.toBeNull());
+    await wait(400);
+    expect(view.own()).toBe(1);
+    const seen = view.done();
+    expect(seen).not.toContain(0);
+    expect(Math.max(...seen)).toBe(1);
+  });
+
+  it("con páginas anteriores cargadas, la burbuja en curso se conserva solo en la más reciente", async () => {
+    const page = (id: string, next: string | null) => () => ({
+      ...{ status: 200, body: { results: [message(id, `Texto ${id}`)], next } },
+    });
+    const api = mockApi({
+      [`GET ${BASE}/`]: { status: 200, body: { results: [conversation("Hola")], next: null } },
+      [`GET ${BASE}/1/`]: { status: 200, body: conversation("Hola") },
+      [`GET ${BASE}/1/messages/`]: page("m3", "p2"),
+      [`GET ${BASE}/1/messages/?cursor=p2`]: page("m2", null),
+    });
+    const view = sending(api, [], (id) => mine(id));
+    (await screen.findByRole("button", { name: /Rosa Díaz/ })).click();
+    (await screen.findByRole("button", { name: "Cargar mensajes anteriores" })).click();
+    await screen.findByText("Texto m2");
+    act(() => socket().onopen?.({}));
+    reply();
+    await waitFor(() => expect(view.own()).toBe(1));
+    const reads = () =>
+      api.mock.calls.filter(([url]) => String(url).startsWith(`${BASE}/1/messages/`)).length;
+    const before = reads();
+    await say({ type: "message.received", conversation_id: "1", message_id: "m4" });
+    await waitFor(() => expect(reads()).toBe(before + 2)); // las dos páginas cargadas
+    await wait(50);
+    expect(view.own()).toBe(1);
+    expect(Math.max(...view.done())).toBe(1);
   });
 
   it("con páginas anteriores cargadas, un evento o una reconexión relee cada página cargada", async () => {

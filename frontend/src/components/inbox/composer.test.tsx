@@ -7,6 +7,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
+import { type Mutation, onlineManager, QueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -14,6 +15,7 @@ import { TenantProvider } from "@/components/app-shell/tenant-context";
 import type { Conversation, Grant, Message, SelfContext } from "@/lib/api/model";
 import { hangPosts, mockApi, renderApp } from "@/test-utils";
 
+import { keepPending, messagesKey, pausedId } from "./composer";
 import { Inbox } from "./inbox";
 
 const BASE = "/api/v1/o/acme/conversations";
@@ -599,5 +601,122 @@ describe("borradores por organización, conversación y modo (UX-INBOX-04)", () 
       await openChat();
       expect(await box(), `vuelta ${round}`).toHaveValue("");
     }
+  });
+});
+
+describe("sin conexión y reintentos (UX-INBOX-06c)", () => {
+  afterEach(() => onlineManager.setOnline(true));
+  const log = () => screen.findByRole("list", { name: "Mensajes" });
+
+  it("sin conexión la burbuja lo dice y nada sale; el plazo empieza al salir, una sola vez", async () => {
+    const s = server({ send: () => ({ status: 202, body: saved("s1", "Hola Rosa") }) });
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    show();
+    await openChat();
+    act(() => onlineManager.setOnline(false));
+    await type("Hola Rosa");
+    fireEvent.click(sendButton());
+    const list = await log();
+    expect(await within(list).findByText("Sin conexión: se enviará al reconectar")).toBeVisible();
+    expect(within(list).queryByText("En cola")).toBeNull(); // no se afirma lo que no pasó
+    fireEvent.click(sendButton("Enviando…")); // el candado sigue: ni un segundo envío
+    await settle();
+    expect(s.posts()).toEqual([]);
+    expect(timeout).not.toHaveBeenCalled(); // el plazo de 30 s no corre mientras espera
+    act(() => onlineManager.setOnline(true));
+    await waitFor(() => expect(s.posts()).toHaveLength(1));
+    expect(timeout.mock.calls).toEqual([[30_000]]);
+    const [, init] = s.api.mock.calls.find(([, init]) => init?.method === "POST")!;
+    expect(init!.signal!.aborted).toBe(false); // recién creado: no sale ya vencido
+    await waitFor(() => expect(box()).resolves.toHaveValue(""));
+    expect(screen.queryByText(/Sin conexión/)).toBeNull();
+    expect(within(list).getAllByRole("listitem")).toHaveLength(1);
+  });
+
+  it("una nota en pausa dice que se guardará, no que se enviará", async () => {
+    server();
+    show(grants("conversations.view", "messages.note"));
+    await openChat();
+    act(() => onlineManager.setOnline(false));
+    await type("Llamar mañana", "Nota interna");
+    fireEvent.click(sendButton("Guardar nota"));
+    expect(await screen.findByText("Sin conexión: se guardará al reconectar")).toBeVisible();
+    expect(screen.queryByText(/se enviará/)).toBeNull();
+  });
+
+  it("la respuesta se perdió tras guardarse: el reintento lleva su id y se ve una sola burbuja", async () => {
+    const s = server();
+    const inner = s.api.getMockImplementation()!;
+    let lost = true;
+    let [gate, open] = [Promise.resolve(), () => {}];
+    s.api.mockImplementation(async (input, init) => {
+      if (init?.method !== "POST") return inner(input, init);
+      const { client_message_id } = JSON.parse(String(init.body));
+      // Como `messages_client_uq`: el mismo id devuelve lo que ya estaba guardado.
+      s.stored[0] ??= saved("s1", "Hola Rosa", { client_message_id });
+      if (lost) {
+        lost = false;
+        throw new TypeError("Failed to fetch");
+      }
+      await gate; // el reintento tarda: se mira la pantalla mientras sale
+      return new Response(JSON.stringify(s.stored[0]), { status: 202 });
+    });
+    show();
+    await openChat();
+    await type("Hola Rosa");
+    fireEvent.click(sendButton());
+    expect(await screen.findByRole("alert")).toHaveTextContent("No hay conexión con el servidor");
+    const list = await log();
+    await within(list).findByText("Hola Rosa"); // la relectura ya trae lo guardado
+    const own = () => within(list).queryAllByText("Hola Rosa").length;
+    const seen: number[] = [];
+    const watcher = new MutationObserver(() => seen.push(own()));
+    watcher.observe(list, { subtree: true, childList: true, characterData: true });
+    gate = new Promise<void>((resolve) => (open = resolve));
+    fireEvent.click(sendButton("Reintentar"));
+    await waitFor(() => expect(sendButton("Enviando…")).toBeInTheDocument());
+    await settle();
+    expect(own()).toBe(1); // mientras sale el reintento, sin la burbuja duplicada
+    open();
+    await waitFor(() => expect(box()).resolves.toHaveValue(""));
+    await settle();
+    watcher.disconnect();
+    const [first, retry] = s.ids();
+    expect(retry).toBe(first);
+    expect(own()).toBe(1);
+    expect(seen.filter((n) => n !== 1)).toEqual([]); // nunca dos (ni ninguna)
+    expect(s.stored).toHaveLength(1);
+  });
+
+  it("de un envío en pausa la pantalla solo conoce su id: ni el texto ni el archivo", () => {
+    const file = new File(["x"], "privado.pdf", { type: "application/pdf" });
+    const variables = { client_message_id: "cm-1", body: "secreto", file, draft: "1:reply" };
+    const state = (isPaused: boolean, status = "pending") =>
+      ({ state: { isPaused, status, variables } }) as unknown as Mutation<
+        unknown,
+        unknown,
+        unknown
+      >;
+    expect(pausedId(state(true))).toBe("cm-1");
+    expect(pausedId(state(false))).toBeNull(); // en vuelo, no en pausa
+    expect(pausedId(state(true, "error"))).toBeNull();
+  });
+
+  it("solo conserva las burbujas en curso de su conversación, y no la que el servidor ya trae", () => {
+    const client = new QueryClient();
+    const pending = (id: string) =>
+      saved(`pending-${id}`, "…", { client_message_id: id }) as Message;
+    const pages = (...rows: Message[]) => ({
+      pages: [{ results: rows, next: null }],
+      pageParams: [""],
+    });
+    const old = saved("s0", "ya no está en la primera página", { client_message_id: "c" });
+    client.setQueryData(messagesKey("acme", "1"), pages(pending("a"), pending("b"), old));
+    client.setQueryData(messagesKey("acme", "2"), pages(pending("z"))); // otra conversación
+    const fetched = { results: [saved("s1", "ok", { client_message_id: "b" })], next: null };
+    const kept = keepPending(client, messagesKey("acme", "1"), fetched).results;
+    expect(kept.map(({ id }) => id)).toEqual(["pending-a", "s1"]);
+    const empty = { results: [], next: null };
+    expect(keepPending(client, messagesKey("acme", "3"), empty)).toBe(empty);
   });
 });
