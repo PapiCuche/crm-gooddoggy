@@ -31,9 +31,15 @@ describe("el almacén de borradores (UX-INBOX-04; el recorrido, en `composer.tes
     const [key, heard] = [drafts.key("1", "reply"), vi.fn()];
     drafts.subscribe(heard);
     act(() => drafts.update(key, () => ({ text: "Hola", sending: true })));
+    act(() => drafts.update(drafts.key("2", "note"), () => ({ text: "Nota" })));
+    expect([drafts.has("1"), drafts.has("2")]).toEqual([false, true]); // lo que sale no marca
     view.unmount();
     expect(drafts.get(key)).toEqual({ text: "", attempt: null, sending: false });
     drafts.update(key, () => ({ text: "tarde" })); // un envío que termina después
-    expect([drafts.get(key).text, heard.mock.calls.length]).toEqual(["", 2]);
+    expect([drafts.get(key).text, heard.mock.calls.length, drafts.has("2")]).toEqual([
+      "",
+      3,
+      false,
+    ]);
   });
 });
