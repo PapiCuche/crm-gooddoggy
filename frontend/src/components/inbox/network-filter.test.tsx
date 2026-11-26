@@ -100,11 +100,20 @@ describe("filtro por red del Inbox (UX-INBOX-02)", () => {
     expect(slide).toHaveClass("overflow-x-auto", "motion-safe:snap-x", "lg:overflow-visible");
     expect(slide).not.toHaveClass("snap-x", "edge-fade");
     for (const chip of within(slide).getAllByRole("button")) expect(chip).toHaveClass("snap-start");
+    // Con el foco del teclado dentro, sin anclaje: devolvería el chip bajo el desvanecido.
+    expect(slide).toHaveClass("[&:has(:focus-visible)]:snap-none");
     const pruebas = chips().getByRole("button", { name: "Pruebas" });
     const into = vi.fn();
     pruebas.scrollIntoView = into;
+    const visible = vi.spyOn(pruebas, "matches");
+    visible.mockReturnValue(false); // el foco de un toque o un clic: la fila no se mueve
     act(() => pruebas.focus());
-    expect(into).toHaveBeenCalledWith({ block: "nearest", inline: "nearest" }); // sin animación
+    expect(visible).toHaveBeenCalledWith(":focus-visible");
+    expect(into).not.toHaveBeenCalled();
+    act(() => pruebas.blur());
+    visible.mockReturnValue(true); // el del teclado: sale del desvanecido, sin animación
+    act(() => pruebas.focus());
+    expect(into).toHaveBeenCalledWith({ block: "nearest", inline: "nearest" });
   });
 
   it("el chip pide la red a la API, se combina con la bandeja y su número es el de la red", async () => {

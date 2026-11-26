@@ -137,14 +137,17 @@ export function ConversationList({
             (sin barra ni desplazamiento de la página); en pantalla ancha, se reparten. `p-1`
             deja ver entero el contorno del foco, que el desplazamiento recortaría. UX-INBOX-02b:
             el borde final se desvanece (hay más chips); el relleno final y `scroll-padding` del
-            mismo ancho dejan fuera del desvanecido el último chip y el enfocado (con el teclado,
-            el navegador no mueve uno que ya se ve en parte: `scrollIntoView`, sin animación). Si
-            no se pide menos movimiento, se detiene en un chip. `relative`: el `sr-only` (absoluto)
-            queda dentro de la fila y no ensancha la página a 320 px. */}
+            mismo ancho dejan fuera del desvanecido el último chip y el enfocado con el teclado
+            (el navegador no mueve uno que ya se ve en parte: `scrollIntoView`, sin animación).
+            Solo con `:focus-visible`: Chromium enfoca al pulsar y, si la fila se moviera, el
+            toque o el clic acabarían fuera del chip. Si no se pide menos movimiento, se detiene
+            en un chip, salvo con el foco del teclado dentro (el anclaje lo devolvería bajo el
+            desvanecido). `relative`: el `sr-only` (absoluto) no ensancha la página a 320 px. */}
         <div
-          className="max-lg:edge-fade relative -m-1 flex scroll-ps-1 [scrollbar-width:none] gap-2 overflow-x-auto p-1 motion-safe:snap-x motion-safe:snap-proximity max-lg:scroll-pe-8 max-lg:pe-8 lg:flex-wrap lg:overflow-visible [&::-webkit-scrollbar]:hidden"
-          onFocus={(event) =>
-            event.target.scrollIntoView?.({ block: "nearest", inline: "nearest" })
+          className="max-lg:edge-fade relative -m-1 flex scroll-ps-1 [scrollbar-width:none] gap-2 overflow-x-auto p-1 motion-safe:snap-x motion-safe:snap-proximity max-lg:scroll-pe-8 max-lg:pe-8 lg:flex-wrap lg:overflow-visible [&::-webkit-scrollbar]:hidden [&:has(:focus-visible)]:snap-none"
+          onFocus={({ target }) =>
+            target.matches(":focus-visible") &&
+            target.scrollIntoView?.({ block: "nearest", inline: "nearest" })
           }
         >
           <div
