@@ -473,12 +473,15 @@ def test_the_row_gets_only_what_is_left_of_the_wait_and_a_busy_row_is_a_retryabl
     1,5 s cuentan desde que la petición pide el candado, y la espera se mide de ahí al fin de la
     fila: con la máquina cargada, el resto de la petición tarda segundos que no son espera
     (F1-TEST-01). Cuenta también lo que pase entre las dos esperas. Con 3 s (no 2), quien retiene
-    la llamada tiene 1,5 s, no 0,5, para soltarla antes del `lock_timeout` (F8-TEST-02)."""
+    la llamada tiene 1,5 s, no 0,5, para soltarla antes del `lock_timeout` (F8-TEST-02). El plazo
+    se comprueba con el `lock_timeout` que recibe la fila, no con el reloj de pared, que con la
+    máquina cargada solo se acota de lejos (F1-TEST-02)."""
     settings.AI_EXCLUSION_WAIT_SECONDS = 3
-    held, asked, waits = threading.Event(), threading.Event(), list[tuple[str, float, float]]()
+    held, asked, waits = threading.Event(), threading.Event(), list[tuple[str, float, float, Any]]()
+    kinds = {attention._WAIT: "timeout", attention._CALL_EXCLUSIVE: "call"}
 
     def timed(execute: Any, sql: str, params: Any, many: bool, context: Any) -> Any:
-        kind = "call" if sql == attention._CALL_EXCLUSIVE else "row" if "FOR NO KEY" in sql else ""
+        kind = kinds.get(sql, "row" if "FOR NO KEY" in sql else "")
         if kind == "call":
             asked.set()
         began = time.monotonic()
@@ -486,7 +489,7 @@ def test_the_row_gets_only_what_is_left_of_the_wait_and_a_busy_row_is_a_retryabl
             return execute(sql, params, many, context)
         finally:
             if kind:
-                waits.append((kind, began, time.monotonic()))
+                waits.append((kind, began, time.monotonic(), params))
 
     def hold() -> None:
         with attention.ai_call(ctx(desk.a, desk.ana), desk.convo, 5):
@@ -503,10 +506,13 @@ def test_the_row_gets_only_what_is_left_of_the_wait_and_a_busy_row_is_a_retryabl
             answer = put(desk)
     holder.join(10)
     assert (answer.status_code, answer.json()["code"]) == (409, "CONVERSATION_BUSY")
-    assert [kind for kind, *_ in waits] == ["call", "row"]  # una vez cada una, en este orden
-    (_, call, called), (_, _, row_end) = waits
-    assert 1.4 < called - call  # la petición esperó a la llamada
-    assert row_end - call < 3.4  # una espera de 3 s, no 1,5 + 3
+    # una vez cada una, en este orden, cada espera con su `lock_timeout`
+    assert [kind for kind, *_ in waits] == ["timeout", "call", "timeout", "row"]
+    (_, first, _, whole), (_, call, called, _), (_, second, _, rest), (_, _, row_end, _) = waits
+    assert whole == ["3000ms"] and 1.4 < called - call  # la petición esperó a la llamada
+    left = int(rest[0].removesuffix("ms")) / 1000
+    assert second - first + left < 3.1  # a la fila, lo que queda de los 3 s: no 1,5 + 3
+    assert row_end - first < 4.0  # y nada largo entre fijarlo y esperar la fila
     assert excluded_at(migrator, desk) is None and migrator_version(desk) == version
     assert migrator.execute(AUDITED).fetchone() == (0,)
     assert put(desk).status_code == 200  # reintentar, ya libre
