@@ -231,6 +231,8 @@ def test_the_platform_filter_never_reaches_another_organization(
     assert ids(luis, other, platform="WHATSAPP") == []
     assert luis.get(other + "unanswered/", {"platform": "INSTAGRAM"}).json() == {"count": 1}
     assert reply(luis.get(BASE, {"platform": "INSTAGRAM"})) == NOT_FOUND  # la ruta de A
+    for who, url in ((luis, BASE), (ana, other)):  # UX-INBOX-02b: y su número, desde la otra
+        assert reply(who.get(url + "unanswered/", {"platform": "INSTAGRAM"})) == NOT_FOUND
 
 
 def test_the_unanswered_count_follows_the_platform_and_the_box(networks: SimpleNamespace) -> None:

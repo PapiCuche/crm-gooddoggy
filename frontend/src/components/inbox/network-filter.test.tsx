@@ -1,4 +1,12 @@
-import { cleanup, configure, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  configure,
+  fireEvent,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { TenantProvider } from "@/components/app-shell/tenant-context";
@@ -79,6 +87,33 @@ describe("filtro por red del Inbox (UX-INBOX-02)", () => {
       expect(chip).toHaveClass("min-h-11", "lg:min-h-9", "shrink-0");
     }
     expect(screen.queryByText(/TikTok/i)).toBeNull();
+  });
+
+  it("bajo 1024 px la fila avisa que hay más chips y el enfocado sale del desvanecido", async () => {
+    mockApi({ [LIST]: page([rosa]) });
+    show();
+    await screen.findByRole("button", { name: /Rosa Díaz/ });
+    const slide = screen.getByRole("group", { name: "Red" }).parentElement!;
+    // El desvanecido y el relleno final del mismo ancho, solo bajo 1024 px; el anclaje en cada
+    // chip, solo sin movimiento reducido; `relative`: el `sr-only` no ensancha la página.
+    expect(slide).toHaveClass("max-lg:edge-fade", "max-lg:pe-8", "max-lg:scroll-pe-8", "relative");
+    expect(slide).toHaveClass("overflow-x-auto", "motion-safe:snap-x", "lg:overflow-visible");
+    expect(slide).not.toHaveClass("snap-x", "edge-fade");
+    for (const chip of within(slide).getAllByRole("button")) expect(chip).toHaveClass("snap-start");
+    // Con el foco del teclado dentro, sin anclaje: devolvería el chip bajo el desvanecido.
+    expect(slide).toHaveClass("[&:has(:focus-visible)]:snap-none");
+    const pruebas = chips().getByRole("button", { name: "Pruebas" });
+    const into = vi.fn();
+    pruebas.scrollIntoView = into;
+    const visible = vi.spyOn(pruebas, "matches");
+    visible.mockReturnValue(false); // el foco de un toque o un clic: la fila no se mueve
+    act(() => pruebas.focus());
+    expect(visible).toHaveBeenCalledWith(":focus-visible");
+    expect(into).not.toHaveBeenCalled();
+    act(() => pruebas.blur());
+    visible.mockReturnValue(true); // el del teclado: sale del desvanecido, sin animación
+    act(() => pruebas.focus());
+    expect(into).toHaveBeenCalledWith({ block: "nearest", inline: "nearest" });
   });
 
   it("el chip pide la red a la API, se combina con la bandeja y su número es el de la red", async () => {
