@@ -1,6 +1,6 @@
 "use client";
 
-import { type InfiniteData, type QueryKey, useQueryClient } from "@tanstack/react-query";
+import { type QueryKey, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useEffect, useState, useSyncExternalStore } from "react";
 
@@ -10,11 +10,9 @@ import {
   getConversationsListQueryKey,
   getConversationsRetrieveQueryKey,
 } from "@/lib/api/client";
-import type { PaginatedMessageList } from "@/lib/api/model";
 import { connectInbox, type InboxEvent, type SocketStatus } from "@/lib/realtime/inbox-socket";
 
 import { notifyNewMessage } from "./attention";
-import { messagesKey } from "./composer";
 
 // El tiempo real del Inbox (F6-07c): mientras la pantalla está abierta escucha
 // `/ws/o/{slug}/inbox/` y, por cada evento, vuelve a pedir lo que cambió con las mismas lecturas de
@@ -38,7 +36,6 @@ const watchLine = (change: () => void) => {
   window.addEventListener("offline", change, { signal: off.signal });
   return () => off.abort();
 };
-type Pages = InfiniteData<PaginatedMessageList>;
 
 export function useInboxRealtime(): LiveStatus {
   const client = useQueryClient();
@@ -50,21 +47,14 @@ export function useInboxRealtime(): LiveStatus {
     if (!inboxRealtimeOn() || typeof WebSocket === "undefined") return;
     const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
     const mine = `/api/v1/o/${slug}/conversations/`;
-    const due = new Map<string, { queryKey: QueryKey; chat?: string }>();
+    const due = new Map<string, QueryKey>();
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const want = (queryKey: QueryKey, chat?: string) =>
-      due.set(JSON.stringify(queryKey), { queryKey, chat });
-    // Con un envío propio en curso (burbuja `pending-…`, #1123), releer sus mensajes la quitaría
-    // antes de tiempo: los relee el cuadro de redacción al terminar el envío.
-    const sending = (chat: string) =>
-      !!client
-        .getQueryData<Pages>(messagesKey(slug, chat))
-        ?.pages[0]?.results.some(({ id }) => id.startsWith("pending-"));
+    const want = (queryKey: QueryKey) => due.set(JSON.stringify(queryKey), queryKey);
+    // También con un envío propio en curso (UX-INBOX-06c): la relectura conserva su burbuja
+    // `pending-…` (`keepPending` en el chat), así lo que escribe el cliente se ve mientras sale.
     const flush = () => {
       timer = undefined;
-      for (const { queryKey, chat } of due.values()) {
-        if (!chat || !sending(chat)) void client.invalidateQueries({ queryKey });
-      }
+      for (const queryKey of due.values()) void client.invalidateQueries({ queryKey });
       due.clear();
     };
     const reread = (event: InboxEvent) => {
@@ -72,7 +62,7 @@ export function useInboxRealtime(): LiveStatus {
       want(getConversationsListQueryKey(slug));
       want(getConversationsRetrieveQueryKey(slug, id));
       if (event.type !== "conversation.updated") {
-        want(getConversationMessagesListQueryKey(slug, id), id);
+        want(getConversationMessagesListQueryKey(slug, id));
       }
       timer ??= setTimeout(flush, WINDOW);
       if (event.type === "message.received") notifyNewMessage(title); // cada mensaje avisa, sin esperar
