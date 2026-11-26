@@ -1,9 +1,9 @@
 # ADR-048: Política de entrega continua: clases de cambio, aprobación por release ligada al SHA y a los digests, agente de despliegue en el servidor y adopción por fases
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-11-26, decisión del propietario registrada en [#1166](https://github.com/PapiCuche/crm-gooddoggy/issues/1166): acepta la entrega continua por fases con las once decisiones; autoriza **solo** implementar y probar la fase 1 en entornos seguros, sin despliegues automáticos a producción y sin fase 2; hasta que la fase 1 esté implementada, verificada y habilitada de forma expresa rige el GO exacto por SHA. Registro y enmiendas en «Registro de decisiones del propietario (2026-11-26)»)
 - **Date:** 2026-11-24
 - **Deciders:** propuesto por un agente del programa autónomo para la decisión del propietario. **No lo decide el programa autónomo:** cambia quién inicia un despliegue de producción (ADR-033 §7) y añade prohibiciones al programa (ADR-015 §3). Mientras esté `Proposed` no obliga a nada y **sigue vigente la fase 0**: cada despliegue necesita el mensaje exacto del propietario `GO DESPLIEGUE CRM <SHA de 40 caracteres>`. Las decisiones pendientes están en «Decisiones requeridas del propietario».
-- **Work items:** F1-20 (decisión del propietario) y F1-20a a F1-20g (fase 1), en «Trabajo necesario para la fase 1». Este ADR no crea workflows, entornos, tokens ni archivos en el servidor.
+- **Work items:** F1-20 (decisión del propietario) y F1-20a a F1-20g (fase 1), en «Trabajo necesario para la fase 1». Este ADR no crea workflows, entornos, tokens ni archivos en el servidor. Creados el 2026-11-26: F1-20 es ADR-ACC ([#1166](https://github.com/PapiCuche/crm-gooddoggy/issues/1166)); F1-20a [#1167](https://github.com/PapiCuche/crm-gooddoggy/issues/1167), F1-20b [#1168](https://github.com/PapiCuche/crm-gooddoggy/issues/1168), F1-20c [#1171](https://github.com/PapiCuche/crm-gooddoggy/issues/1171), F1-20d [#1169](https://github.com/PapiCuche/crm-gooddoggy/issues/1169), F1-20e dividido en F1-20e1 [#1172](https://github.com/PapiCuche/crm-gooddoggy/issues/1172) y F1-20e2 [#1173](https://github.com/PapiCuche/crm-gooddoggy/issues/1173), F1-20f [#1170](https://github.com/PapiCuche/crm-gooddoggy/issues/1170), F1-20g [#1198](https://github.com/PapiCuche/crm-gooddoggy/issues/1198) (checklist del propietario), F1-20h [#1174](https://github.com/PapiCuche/crm-gooddoggy/issues/1174) (fase 1a) y F1-20i [#1175](https://github.com/PapiCuche/crm-gooddoggy/issues/1175) (verificación en entorno seguro).
 - **Related:** [ADR-033](ADR-033-production-hosting.md) §6.2, §7 y §8 (lo amplía en §7: quién inicia el despliegue; §6.2 no cambia), [ADR-046](ADR-046-shared-host-variant.md) (servidor compartido), [ADR-015](ADR-015-autonomous-delivery-program.md) §1 y §3 (añade prohibiciones; no toca los gates de §2), [ADR-036](ADR-036-remote-full-gate.md) (Proposed; si se acepta, su check entra en «CI verde»), [ADR-002](ADR-002-postgresql-rls.md), [ADR-022](ADR-022-secrets-at-rest.md), [ADR-034](ADR-034-ai-copilot-first.md), [infra/prod/README.md](../../infra/prod/README.md), [production-shared-host.md](../runbooks/production-shared-host.md), [backup-restore.md](../runbooks/backup-restore.md)
 
 ## Context
@@ -76,7 +76,7 @@ Lo que no cumple la lista pero el PR demuestra compatible con la imagen anterior
 | Fase | Quién aprueba | Cómo | Quién ejecuta | Clases | Entra en vigor |
 | --- | --- | --- | --- | --- | --- |
 | **0 (hoy)** | El propietario, por release | Mensaje exacto `GO DESPLIEGUE CRM <SHA de 40>` en la sesión | Un operador por SSH, `deploy.sh` en `tmux`, con ensayo previo en local | Todas | Ya vigente |
-| **1** | El propietario, por release | Un clic en el entorno `production` de GitHub sobre un release preparado (§4, §11) | El agente del servidor (§11) | A1, A2, A3 y B. C sigue en fase 0 | Cuando el propietario acepte este ADR, los work items de la fase 1 estén mergeados y desplegados, y se hayan hecho dos despliegues de fase 1 acompañados por el operador sin incidencias |
+| **1** | El propietario, por release | Un clic en el entorno `production` de GitHub sobre un release preparado (§4, §11) | El agente del servidor (§11) | A1, A2, A3 y B. C sigue en fase 0 | Cuando el propietario acepte este ADR, los work items de la fase 1 estén mergeados y desplegados, y se hayan hecho dos despliegues de fase 1 acompañados por el operador sin incidencias. **Enmienda E1 (2026-11-26):** además, implementada, verificada en un entorno seguro y habilitada de forma expresa por el propietario |
 | **2a** | Nadie, por release: el propietario aprobó la política | Automático | El agente del servidor | A1 y A2 en ventana (§6). B con clic. C en fase 0 | Decisión explícita del propietario y los criterios de §3.1 |
 | **2b** | Igual | Automático | El agente del servidor | Además, A3 | Decisión explícita del propietario tras 4 semanas de 2a sin vuelta atrás no prevista |
 
@@ -163,7 +163,7 @@ El agente las comprueba antes de empezar y vuelve a comprobar las marcadas con *
 ### 9. Vuelta atrás y parar la línea
 
 - **Durante el despliegue:** la vuelta atrás automática de `deploy.sh` (puerta de salud) y la de §8.
-- **Ventana de observación de 30 min** después de `DESPLIEGUE OK`: el agente mira los reinicios de contenedores, `/health/ready`, la tasa de 5xx del log del proxy y la otra aplicación. Si se pasa de umbral, hace `deploy.sh --rollback` (con el checkout en la `REVISION` de `release.env.previous`), **solo** para las clases A y B y solo dentro de esa ventana. Es seguro porque A y B son compatibles con la imagen anterior.
+- **Ventana de observación de 30 min** después de `DESPLIEGUE OK`: el agente mira los reinicios de contenedores, `/health/ready`, la tasa de 5xx del log del proxy y la otra aplicación. Si se pasa de umbral, hace `deploy.sh --rollback` (con el checkout en la `REVISION` de `release.env.previous`), **solo** para las clases A y B y solo dentro de esa ventana. Es seguro porque A y B son compatibles con la imagen anterior. **Enmienda E2 (2026-11-26):** y solo cuando la recuperación es segura y está cubierta por procedimientos aprobados; si no, avisa y para la línea sin volver atrás.
 - **Nunca automático:** restaurar un volcado, volver atrás un release de clase C, ir más atrás de `release.env.previous`, ni usar `--allow-revision-mismatch`. Eso es de fase 0, con el propietario.
 - **Parar la línea.** Cualquier `DESPLIEGUE FALLIDO`, `ROLLBACK`, `INTERRUMPIDO`, parada de §8, vuelta atrás de la ventana de observación o aviso `backup.missing` deja una marca de parada en el servidor (`/var/lib/crm-deploy/cd-halted`, con el motivo). Con la marca puesta, el agente no despliega nada. **Solo la quita el propietario, o el operador por orden expresa suya**, en el servidor (`--resume <motivo>`, anotado en `deploy.log`). Nunca un agente; nunca un texto en un issue. El siguiente despliegue después de una parada es de fase 1, acompañado por el operador.
 
@@ -222,7 +222,7 @@ push a main → images.yml (imágenes, atestaciones, release.env)
 | E. Actualizador por etiqueta (tipo Watchtower) | Nada que escribir | Sigue etiquetas, no digests; no hace volcado previo, ni `migrate`, ni puerta de salud, ni vuelta atrás. Descartada |
 | F. Quedarse en la fase 0 | Nada cambia | El propietario sigue siendo el cuello de botella; ninguna condición se comprueba sola |
 
-Si el propietario quiere el clic antes de que exista el agente, hay un paso intermedio posible (fase 1a): la aprobación en GitHub sustituye al mensaje de GO y el operador sigue ejecutando a mano, con `cd-preflight.sh` (F1-20d). No cambia ADR-033, pero **exige lo mismo que la fase 1 en §4**: identidades separadas para los agentes (decisión 3), porque sin ellas un clic en GitHub es más débil que el GO por chat. Además, antes de ejecutar, el operador comprueba a mano la tupla de §5 (SHA, huella del `release.env`, base, clase y run aprobado) contra el release que va a desplegar.
+Si el propietario quiere el clic antes de que exista el agente, hay un paso intermedio posible (fase 1a): la aprobación en GitHub sustituye al mensaje de GO y el operador sigue ejecutando a mano, con `cd-preflight.sh` (F1-20d). No cambia ADR-033, pero **exige lo mismo que la fase 1 en §4**: identidades separadas para los agentes (decisión 3), porque sin ellas un clic en GitHub es más débil que el GO por chat. Además, antes de ejecutar, el operador comprueba a mano la tupla de §5 (SHA, huella del `release.env`, base, clase y run aprobado) contra el release que va a desplegar. El propietario permite la fase 1a de forma provisional si cumple esos requisitos de identidad; su entrada en vigor en producción también necesita su habilitación expresa (enmienda E1 del registro).
 
 ## Consequences
 
@@ -269,6 +269,8 @@ Para la fase 2 (no se detallan aquí): el clasificador como check bloqueante en 
 
 ## Decisiones requeridas del propietario
 
+**Respondidas por el propietario el 2026-11-26** ([#1166](https://github.com/PapiCuche/crm-gooddoggy/issues/1166)): lo que decidió está en «Registro de decisiones del propietario (2026-11-26)», justo debajo. La tabla queda como se propuso.
+
 | # | Decisión | Opciones | Recomendación |
 | --- | --- | --- | --- |
 | 1 | Política y clases | Aceptar §2 (A1, A2, A3, B, C y las rutas sensibles) / cambiarlas | Aceptar. Revisar la tabla de rutas a los 3 meses |
@@ -283,9 +285,40 @@ Para la fase 2 (no se detallan aquí): el clasificador como check bloqueante en 
 | 10 | Validez de la aprobación y avance de `main` | §5 (24 h; vale para ese SHA aunque `main` avance) / exigir que el SHA sea la cabeza de `main` | §5 |
 | 11 | Entrada en la fase 2 | Criterios de §3.1 / otros; A3 desde el principio o en 2b | §3.1, con A3 en 2b |
 
+## Registro de decisiones del propietario (2026-11-26)
+
+El propietario aceptó este ADR como **entrega continua por fases** el 2026-11-26 y pidió no volver a preguntar estas decisiones. Queda registrado en [#1166](https://github.com/PapiCuche/crm-gooddoggy/issues/1166). **Ninguna de estas decisiones es un GO de despliegue.**
+
+| # | Decisión del propietario |
+| --- | --- |
+| 1 | Se aceptan las clases A1, A2, A3, B y C y las rutas sensibles (§2 y §2.1). La clasificación se revisa a los 3 meses. |
+| 2 | Mecanismo C: entorno protegido más un agente del servidor que consulta las aprobaciones. Se permite la fase 1a provisional si cumple los requisitos de identidad. |
+| 3 | Identidad propia para el agente, no administradora. Nunca se comparte la cuenta ni el token del propietario. Sin autoaprobación. |
+| 4 | Token con permisos mínimos de lectura. `Deployments: write` solo si hace falta para informar el resultado. |
+| 5 | Ventanas de §6, más los feriados del Perú, los calendarios de congelación y las operaciones de la otra aplicación del servidor. |
+| 6 | Umbrales de §7 y §8 tal como se proponen. Se revisan tras los 10 primeros despliegues. |
+| 7 | Vuelta atrás automática para las clases A y B cuando la recuperación es segura y está cubierta por procedimientos aprobados. |
+| 8 | Avisos push al propietario y a un suplente autorizado. El proveedor y su coste se eligen antes de configurarlo. |
+| 9 | Lock común con la otra aplicación: solo se prepara el mecanismo. No se toca su repositorio ni su producción sin una autorización aparte. |
+| 10 | La aprobación va ligada al SHA y a los digests y vale 24 h (§5). |
+| 11 | Fase 2 con los criterios de §3.1; A3 entra en la fase 2b. |
+
+**Alcance autorizado ahora:** implementar y probar la fase 1 **solo en entornos seguros**. Ningún despliegue automático a producción. Sin fase 2. Hasta que la fase 1 esté implementada, verificada y habilitada de forma expresa, **rige el GO exacto por SHA** (`GO DESPLIEGUE CRM <SHA de 40 caracteres>`).
+
+### Enmiendas al texto propuesto
+
+- **E1 (§1, §3 fila «1» y fase 1a).** La fase 1 entra en vigor solo cuando, además de lo que pide §3, está implementada, verificada en un entorno seguro y habilitada de forma expresa por el propietario. La aceptación no autoriza instalar el agente en el servidor de producción, poner su modo en `approve`, activar `release.yml` en este repositorio ni hacer los dos despliegues acompañados de §3: todo eso espera a esa habilitación. La fase 1a queda permitida como paso provisional con los requisitos de identidad de §4 y de la decisión 3, y en producción también espera a la habilitación expresa del propietario (lectura conservadora; si el propietario la quiere sin ese paso, lo dice).
+- **E2 (§9).** La vuelta atrás automática de la ventana de observación exige, además de ser de clase A o B, que la recuperación sea segura y esté cubierta por procedimientos aprobados (decisión 7). Si no lo está, el agente avisa y para la línea sin volver atrás.
+
+### Precisiones que no cambian el texto
+
+- Fase 2 (decisiones 11 y alcance autorizado): no está autorizada. La fase 1 implementa solo los modos `off` y `approve` del agente; cualquier otro valor, incluido `auto`, se trata como `off`. Los criterios de §3.1 y A3 en 2b quedan para una decisión futura del propietario.
+- Lock común (decisión 9): F1-20f prepara solo el lado del CRM. Mientras la otra aplicación no lo use, el lock no la protege de un despliegue suyo simultáneo.
+- Avisos (decisión 8): la implementación usa un adaptador genérico; el propietario elige el proveedor y su coste antes de configurarlo (F1-20g).
+
 ## Anexo: plan de work items
 
-Orientativo: no se crea ningún issue de implementación hasta que el propietario acepte este ADR (F1-20). Al crearlos se aplica la plantilla `.github/ISSUE_TEMPLATE/work-item.yml`, con la etiqueta `status:blocked` mientras no se cumpla su dependencia. El tamaño es una estimación del redactor en líneas relevantes (tope de `.github/scripts/pr_governance.py`: 800) y se confirma al crear cada issue.
+Orientativo: no se crea ningún issue de implementación hasta que el propietario acepte este ADR (F1-20). **Creados el 2026-11-26** tras la aceptación, con los números de «Work items» (arriba). F1-20e se dividió en F1-20e1 (agente y verificación) y F1-20e2 (ejecución, observación, avisos y runbook), como preveía su fila; F1-20h (fase 1a) y F1-20i (verificación en entorno seguro) se añadieron por la decisión 2 y por la condición «implementada, verificada y habilitada de forma expresa». F1-20g es un checklist del propietario, no un work item. Al crearlos se aplica la plantilla `.github/ISSUE_TEMPLATE/work-item.yml`, con la etiqueta `status:blocked` mientras no se cumpla su dependencia. El tamaño es una estimación del redactor en líneas relevantes (tope de `.github/scripts/pr_governance.py`: 800) y se confirma al crear cada issue.
 
 | ID | Objetivo en una línea | Depende de | Tamaño estimado |
 | --- | --- | --- | --- |

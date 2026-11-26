@@ -1,9 +1,9 @@
 # ADR-050: Prioridad comercial explicable sin IA («Motor A»): puntaje operativo por cliente desde señales estructuradas, tabla derivada recalculada por el outbox y por umbrales de tiempo, revisión humana auditada; la intención leída del texto («Motor B») queda apagada y necesita su propio ADR
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-11-26, decisión del propietario registrada en [#1166](https://github.com/PapiCuche/crm-gooddoggy/issues/1166): Sales Intelligence Motor A con D-SI-1 a D-SI-5 (D-SI-5 opción (a)); el puntaje no es una probabilidad de compra; Motor B queda apagado y necesita su propio ADR. Registro y enmiendas en «Registro de decisiones del propietario (2026-11-26)»)
 - **Date:** 2026-11-24
 - **Deciders:** propietario del producto (pendiente); propuesta de diseño de la serie F5-10 («Sales Intelligence», primer hito).
-- **Work items:** este ADR lo publica #1106 (F0-PROP); la serie F5-10o, F5-10a … F5-10i está en el anexo «Plan de work items» y solo se implementa **si el propietario acepta este ADR**.
+- **Work items:** este ADR lo publica #1106 (F0-PROP); la serie F5-10o, F5-10a … F5-10i está en el anexo «Plan de work items» y solo se implementa **si el propietario acepta este ADR**. F5-10o es ADR-ACC ([#1166](https://github.com/PapiCuche/crm-gooddoggy/issues/1166)). Creados el 2026-11-26: F5-10a [#1186](https://github.com/PapiCuche/crm-gooddoggy/issues/1186), F5-10b [#1188](https://github.com/PapiCuche/crm-gooddoggy/issues/1188), F5-10c [#1187](https://github.com/PapiCuche/crm-gooddoggy/issues/1187), F5-10d1 [#1189](https://github.com/PapiCuche/crm-gooddoggy/issues/1189), F5-10d2 [#1190](https://github.com/PapiCuche/crm-gooddoggy/issues/1190), F5-10e [#1191](https://github.com/PapiCuche/crm-gooddoggy/issues/1191), F5-10f1 [#1192](https://github.com/PapiCuche/crm-gooddoggy/issues/1192), F5-10f2 [#1193](https://github.com/PapiCuche/crm-gooddoggy/issues/1193), F5-10g [#1194](https://github.com/PapiCuche/crm-gooddoggy/issues/1194), F5-10g2 [#1195](https://github.com/PapiCuche/crm-gooddoggy/issues/1195), F5-10h [#1196](https://github.com/PapiCuche/crm-gooddoggy/issues/1196) y F5-10i [#1197](https://github.com/PapiCuche/crm-gooddoggy/issues/1197).
 - **Related:** [ADR-001](ADR-001-multi-tenancy.md) y [ADR-002](ADR-002-postgresql-rls.md) (tablas tenant-owned con FORCE RLS y FKs compuestas; sin excepción nueva); [ADR-003](ADR-003-auth-session.md) §5 (permisos con alcance); [ADR-007](ADR-007-conversation-assignment.md) (responsable); [ADR-011](ADR-011-observability-and-logs.md) (auditoría); [ADR-016](ADR-016-api-list-convention.md) §6 (un orden nuevo pide su cursor; este ADR lo usa, no lo enmienda); [ADR-018](ADR-018-owner-role-follows-catalog.md); [ADR-028](ADR-028-store-data-connectors.md) (stock externo fuera); [ADR-034](ADR-034-ai-copilot-first.md) §7, §11 y §12 (sin cambios: Motor A no es IA y Motor B no se implementa con este ADR); `Organization.timezone` (`organizations/models.py:106`, por omisión `America/Lima`) para todo «hoy» y «día»; ADR-043 solo fija el día del presupuesto de IA y no se usa aquí; [ADR-049](ADR-049-internal-follow-up-automations.md) (propuesta paralela de automatizaciones: se beneficiaría de los eventos `task.*` y `opportunity.*` de F5-10c). Diseño de fase 0: [02 §E.10](../fase-0/02-modelo-de-datos.md) (`leads`, `lead_score_events`), [03 §J.11](../fase-0/03-tenancy-rbac-inbox-ia.md) (Supervisor con reglas deterministas), historias E09-02, E09-03 y E11-19.
 
 > **Mientras este ADR esté `Proposed` no se implementa nada.** No crea tablas, permisos, eventos ni pantallas. Es una propuesta para que el propietario decida.
@@ -97,7 +97,7 @@ La API devuelve **códigos y parámetros** (ids, números `COT-…`/`OPP-…`, h
 - **Permisos nuevos:** `sales_priority.view` y `sales_priority.review`, ambos con alcance (◎), en el módulo `sales_intel`. Plantillas propuestas (decisión del propietario): Owner (todo, ADR-018), Administrador y Supervisor con `ORGANIZATION`, Vendedor con `OWN`.
 - **Alcance de una fila:** visible si el contacto está en el alcance de quien consulta (la política de columnas de contactos: responsable y sucursal) **o** si lo está su `conversation_id` (la política del Inbox: asignada a mí, a mi equipo o sin asignar). Fuera de alcance, de otra organización o inexistente: el mismo 404.
 - **Cada señal se filtra por quien mira:** en el detalle y en la explicación de la lista, una señal se muestra solo si quien consulta ve su fuente con el permiso de su módulo y su alcance (`quotes.view`, `opportunities.view`, `tasks.view`, `conversations.view`), comprobado por lotes por página. El puntaje y la categoría que se muestran en esa explicación se **recalculan con `engine` sobre las señales visibles**.
-- **Límite abierto (decisión D-SI-5): los valores guardados no se filtran.** El orden de la lista, los filtros sobre valores guardados (`category`, `intent`, `pending_quote`, `overdue_followup`, `waiting`) y la insignia del Inbox (categoría, puntaje y titular, por el `LEFT JOIN`) usan lo guardado, que se calculó con **todas** las señales del contacto. Quien no ve alguna de las fuentes puede inferir que existe (por ejemplo, filtrar `pending_quote` revela que el contacto tiene una cotización que no puede ver). Este ADR **no afirma que eso sea seguro**. Opciones: (a) la insignia, el orden y esos filtros solo para quien tiene alcance `ORGANIZATION` en `sales_priority.view` y en los módulos de las señales; los demás ven la lista recalculada con sus señales visibles y sin esos filtros; (b) recalcular por página para todos, con el coste de consultas y un orden que ya no coincide con el índice; (c) aceptar la fuga para los cuatro roles de plantilla, porque la fuente de cada señal ya es visible para su responsable. Recomendación: (a) en el primer corte.
+- **Límite abierto (decisión D-SI-5): los valores guardados no se filtran.** El orden de la lista, los filtros sobre valores guardados (`category`, `intent`, `pending_quote`, `overdue_followup`, `waiting`) y la insignia del Inbox (categoría, puntaje y titular, por el `LEFT JOIN`) usan lo guardado, que se calculó con **todas** las señales del contacto. Quien no ve alguna de las fuentes puede inferir que existe (por ejemplo, filtrar `pending_quote` revela que el contacto tiene una cotización que no puede ver). Este ADR **no afirma que eso sea seguro**. Opciones: (a) la insignia, el orden y esos filtros solo para quien tiene alcance `ORGANIZATION` en `sales_priority.view` y en los módulos de las señales; los demás ven la lista recalculada con sus señales visibles y sin esos filtros; (b) recalcular por página para todos, con el coste de consultas y un orden que ya no coincide con el índice; (c) aceptar la fuga para los cuatro roles de plantilla, porque la fuente de cada señal ya es visible para su responsable. Recomendación: (a) en el primer corte. **Decidido el 2026-11-26 (D-SI-5): (a).** El primer corte ordena y filtra por el puntaje guardado solo para el alcance `ORGANIZATION`.
 - **Lista:** `GET /api/v1/o/{slug}/sales/attention/` con un `ScorePagination` (cursor de dos valores `score`, `id`, como `RecencyPagination`; ADR-016 §6) y filtros: `category`, `intent`, `channel` (plataforma de `conversation_id`), `assignee` (`me`, un id o `none`: quien atiende la conversación o, sin ella, el responsable del contacto), `last_interaction` (`today`, `7d`, `30d`, `older`), `waiting` (`15m`, `2h`, `24h`), `pending_quote`, `overdue_followup`, `review` (`pending`, `all`). **Detalle:** `GET …/contacts/{id}/sales-priority/`.
 - **Inbox:** la lista de conversaciones añade `priority` (`category`, `score`, código del titular) con un `LEFT JOIN` por `(organization_id, contact_id)`, sin recalcular nada al leer y sin cambiar su orden por recencia; un filtro «Prioridad alta». La insignia y ese filtro usan valores guardados y están sujetos a D-SI-5.
 
@@ -154,17 +154,19 @@ Motor B sería la intención **leída del texto** de una conversación por un mo
 
 - Sin excepción a ADR-001/ADR-002: FORCE RLS, FKs compuestas, organización del contexto, sin `SECURITY DEFINER` que escriba.
 - **Sin texto de clientes** en las tablas, en el outbox, en la auditoría ni en los logs: solo códigos, ids, números de documento y horas. Prueba: el payload y `signals` no contienen ningún campo libre de las fuentes.
-- La **explicación** (detalle y razones) no revela lo que quien mira no podría ver en su fuente: se recalcula con las señales visibles (§8), con pruebas de alcance cruzado (vendedor OWN, otro equipo, otra organización). El orden, los filtros sobre valores guardados y la insignia del Inbox **no tienen esa garantía** hasta que el propietario decida D-SI-5 (§8); no se afirma que sean seguros.
+- La **explicación** (detalle y razones) no revela lo que quien mira no podría ver en su fuente: se recalcula con las señales visibles (§8), con pruebas de alcance cruzado (vendedor OWN, otro equipo, otra organización). El orden, los filtros sobre valores guardados y la insignia del Inbox **no tienen esa garantía** hasta que el propietario decida D-SI-5 (§8); no se afirma que sean seguros. **D-SI-5 decidida el 2026-11-26: (a)**, así que solo los recibe quien tiene alcance `ORGANIZATION`.
 - El ajuste manual no borra el cálculo y queda auditado; `sales_priority_reviews` es de solo inserción por privilegios.
 - Ley 29733: es una priorización **interna** que no decide nada sobre el cliente (una persona decide siempre). Se recomienda que la asesoría confirme si el aviso de datos debe mencionarla (derecho al tratamiento objetivo).
 
 ## Operational implications
 
-- Al desplegar: migraciones, workers primero, el comando de reconciliación una vez. Sin variables de entorno nuevas en Motor A.
+- Al desplegar: migraciones, workers primero, el comando de reconciliación una vez. Sin variables de entorno nuevas en Motor A. **Enmienda E1 (2026-11-26):** salvo el interruptor `SALES_INTEL_ENABLED` (ver el registro).
 - Observabilidad: contadores del barredor (`refreshed`, `skipped`, `failed`) como `quotes.expired`; alerta si la cola de `sales_intel` crece.
 - `docs/phases/phase-5.md` recibe la serie F5-10; el runbook de activación de IA no cambia hasta que exista Motor B.
 
 ## Decisiones requeridas del propietario
+
+**Respondidas por el propietario el 2026-11-26** ([#1166](https://github.com/PapiCuche/crm-gooddoggy/issues/1166)): lo que decidió está en «Registro de decisiones del propietario (2026-11-26)», justo debajo. La tabla queda como se propuso.
 
 | # | Decisión | Opciones | Recomendación |
 | --- | --- | --- | --- |
@@ -174,9 +176,32 @@ Motor B sería la intención **leída del texto** de una conversación por un mo
 | D-SI-4 | Release de la serie frente a R0 a R4 | Después de cerrar R0 y sin bloquear R1 a R3 / otra / `release:later`. F5-10a es pequeño y puede ir antes para validar las frases | Después de R0, sin bloquear R1 a R3 |
 | D-SI-5 | Visibilidad de los valores guardados (§8): orden, filtros sobre lo guardado e insignia del Inbox | (a) solo con alcance `ORGANIZATION` / (b) recalcular por página para todos / (c) aceptar la inferencia | (a) en el primer corte |
 
+## Registro de decisiones del propietario (2026-11-26)
+
+El propietario aceptó este ADR como **Sales Intelligence Motor A** el 2026-11-26 y pidió no volver a preguntar estas decisiones. Queda registrado en [#1166](https://github.com/PapiCuche/crm-gooddoggy/issues/1166).
+
+| # | Decisión del propietario |
+| --- | --- |
+| D-SI-1 | Algoritmo `A1` con las señales, los pesos y los umbrales propuestos. Se revisan con datos reales antes de `A2`. |
+| D-SI-2 | Owner, Administrador y Supervisor ven la organización dentro de sus permisos. Vendedor ve solo su alcance. |
+| D-SI-3 | Ninguna regla nueva sobre el texto: solo las señales estructuradas. `HUMAN_REQUESTED` se permite, dejando documentado que puede fijarlo el copiloto. El aviso de privacidad se revisa antes de procesar en producción. |
+| D-SI-4 | Se construye después de R0, sin bloquear las entregas de canales (etiqueta `release:sales-intelligence`). |
+| D-SI-5 | (a): el primer corte ordena y filtra por el puntaje guardado solo para el alcance `ORGANIZATION`. |
+
+**El puntaje de 0 a 100 no es una probabilidad de compra.** Motor B (análisis semántico con IA) sigue apagado y necesita su propio ADR (§12).
+
+### Enmiendas al texto propuesto
+
+- **E1 (Operational implications y §10).** D-SI-3 pide revisar el aviso de privacidad antes de procesar en producción, y el texto propuesto no tenía forma de desplegar Motor A sin procesar: decía «sin variables de entorno nuevas». Como cada GO despliega todo lo que está en `main`, Motor A va detrás de un interruptor de servidor, `SALES_INTEL_ENABLED`, apagado por omisión (encendido solo en `local` y `test`). Apagado, no hay cálculo al leer, ni recálculo por eventos, ni barredor, ni reconciliación, ni datos de prioridad en la API. Encenderlo en producción es una operación del propietario, después de esa revisión. Es el mecanismo mínimo; si el propietario prefiere retener los despliegues en vez del interruptor, lo dice.
+
+### Precisiones que no cambian el texto
+
+- D-SI-4: F5-10a también espera a R0 ([#760](https://github.com/PapiCuche/crm-gooddoggy/issues/760)), aunque el anexo decía que podía ir antes.
+- `sales_priority.view` se adelanta a F5-10a, porque ese corte ya expone una API; F5-10e lo reutiliza.
+
 ## Anexo: plan de work items
 
-Orientativo: no se crea ningún issue de implementación hasta que el propietario acepte este ADR (F5-10o). Al crearlos se aplica la plantilla `.github/ISSUE_TEMPLATE/work-item.yml`, con las etiquetas `work-item`, `phase:f5`, la release que decida el propietario y `status:blocked` hasta que se cumpla su dependencia. El tamaño es una estimación del redactor en líneas relevantes (tope de `.github/scripts/pr_governance.py`: 800) y se confirma al crear cada issue. **Motor B no tiene work item:** necesita su propio ADR y un GO separado (§12).
+Orientativo: no se crea ningún issue de implementación hasta que el propietario acepte este ADR (F5-10o). **Creados el 2026-11-26** tras la aceptación, con los números de «Work items» (arriba). F5-10d se dividió en F5-10d1 (tabla, recálculo por contacto y reconciliación) y F5-10d2 (outbox y umbrales de tiempo), y F5-10f en F5-10f1 (lista) y F5-10f2 (filtros), para no rozar el tope de 800 líneas. Todos dependen de ADR-ACC y de R0 ([#760](https://github.com/PapiCuche/crm-gooddoggy/issues/760)). Al crearlos se aplica la plantilla `.github/ISSUE_TEMPLATE/work-item.yml`, con las etiquetas `work-item`, `phase:f5`, la release que decida el propietario y `status:blocked` hasta que se cumpla su dependencia. El tamaño es una estimación del redactor en líneas relevantes (tope de `.github/scripts/pr_governance.py`: 800) y se confirma al crear cada issue. **Motor B no tiene work item:** necesita su propio ADR y un GO separado (§12).
 
 | ID | Objetivo en una línea | Depende de | Tamaño estimado |
 | --- | --- | --- | --- |

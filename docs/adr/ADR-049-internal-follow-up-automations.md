@@ -1,9 +1,9 @@
 # ADR-049: Automatizaciones internas de seguimiento comercial: reglas fijas configurables por organización, evaluadas por barrido de estado, con efectos solo internos; el motor genérico (DSL y constructor) se aplaza
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-11-26, decisión del propietario registrada en [#1166](https://github.com/PapiCuche/crm-gooddoggy/issues/1166): automatizaciones internas de seguimiento con D-F11-01 a D-F11-07 y los modos OFF→SIMULATE→ON, con una semana de SIMULATE y revisión del propietario antes de ON; nunca mensajes a clientes. Registro y enmiendas en «Registro de decisiones del propietario (2026-11-26)»)
 - **Date:** 2026-11-24
 - **Deciders:** propietario del producto; redactado por el programa autónomo (ADR-015).
-- **Work items:** F11-02 … F11-09, en el anexo «Plan de work items» (sin issues de implementación hasta que el propietario acepte este ADR). Este ADR lo publica #1106 (F0-PROP).
+- **Work items:** F11-02 … F11-09, en el anexo «Plan de work items» (sin issues de implementación hasta que el propietario acepte este ADR). Este ADR lo publica #1106 (F0-PROP). Aceptación: ADR-ACC ([#1166](https://github.com/PapiCuche/crm-gooddoggy/issues/1166)). Creados el 2026-11-26: F11-02 [#1176](https://github.com/PapiCuche/crm-gooddoggy/issues/1176), F11-03 [#1177](https://github.com/PapiCuche/crm-gooddoggy/issues/1177), F11-04 [#1178](https://github.com/PapiCuche/crm-gooddoggy/issues/1178), F11-05 [#1180](https://github.com/PapiCuche/crm-gooddoggy/issues/1180), F11-06 [#1181](https://github.com/PapiCuche/crm-gooddoggy/issues/1181), F11-07 [#1179](https://github.com/PapiCuche/crm-gooddoggy/issues/1179), F11-08a [#1183](https://github.com/PapiCuche/crm-gooddoggy/issues/1183), F11-08b [#1184](https://github.com/PapiCuche/crm-gooddoggy/issues/1184), F11-09 [#1182](https://github.com/PapiCuche/crm-gooddoggy/issues/1182) y F11-10 [#1185](https://github.com/PapiCuche/crm-gooddoggy/issues/1185) (retención).
 - **Related:** [ADR-001](ADR-001-multi-tenancy.md), [ADR-002](ADR-002-postgresql-rls.md) (sin excepción nueva), [ADR-007](ADR-007-conversation-assignment.md), [ADR-010](ADR-010-messaging-policy.md) (no se toca: nada se envía), [ADR-011](ADR-011-observability-and-logs.md), [ADR-016](ADR-016-api-list-convention.md), [ADR-018](ADR-018-owner-role-follows-catalog.md), [ADR-019](ADR-019-outbound-email.md), [ADR-034](ADR-034-ai-copilot-first.md) §5 y §10 (patrón del kill switch), [ADR-045](ADR-045-ai-budget-alert-events.md) (patrón de aviso una sola vez), [ADR-048](ADR-048-continuous-delivery-policy.md) (clases de despliegue de las migraciones de esta serie, si se acepta), [ADR-050](ADR-050-sales-priority-motor-a.md) (propuesta paralela: añadiría eventos `task.*` al outbox)
 
 ## Context
@@ -64,7 +64,7 @@ Patrón: el de `quotes.expire_sweep` (`quotes/tasks.py:52-81`). Una entrada de b
 **`automation_runs`**: historial de ejecuciones, con idempotencia y cola de reintentos.
 - `id`, `organization_id`, `rule_id` (FK compuesta), `rule_version` (la versión con que se decidió), `rule_key`, `subject_type` ∈ {`conversation`, `quote`}, `subject_id`, `episode_at` (timestamptz: el inicio del episodio, ver §5), `step` (1 = aviso, 2 = escalado), `mode` ∈ {`SIMULATE`, `ON`}, `status` ∈ {`DONE`, `SKIPPED`, `FAILED`, `DEAD`, `CLOSED`}, `reason` (código cerrado: `NO_RECIPIENT`, `MEMBER_INACTIVE`, `CAPPED`, `LOCK_TIMEOUT`, `DB_ERROR`, `RESOLVED`, `RULE_CHANGED`…; nunca el texto de una excepción), `recipients` (lista de ids de miembro, ≤ 10), `task_ids` (≤ 10; las tareas creadas, sin FK de array; ver Consecuencias), `attempts` (≤ 3), `depth` (0), `created_at`, `updated_at`, `closed_at`.
 - **Clave de idempotencia:** UNIQUE (`organization_id`, `rule_id`, `subject_id`, `episode_at`, `step`, `mode`). Lleva `rule_id` y **no** `rule_version`: si la clave llevara la versión, cada edición de los parámetros volvería a avisar de todos los episodios abiertos, que es justo la tormenta que hay que evitar. La versión queda como dato. Lleva `mode` para que pasar de `SIMULATE` a `ON` sí cree la tarea real.
-- Escriben en ella el barrido (`crm_app`, bajo RLS) y nadie más. `crm_app` no tiene `DELETE` ni `TRUNCATE` sobre ella, como las tareas. La purga a 180 días (D-F11-07) necesita otro camino, que elige F11-02 y documenta: un `GRANT DELETE` limitado a esta tabla para `crm_app` (que cambia esta frase) o un comando de mantenimiento con el rol `crm_migrator`. Hasta que el propietario decida la retención, no se purga nada.
+- Escriben en ella el barrido (`crm_app`, bajo RLS) y nadie más. `crm_app` no tiene `DELETE` ni `TRUNCATE` sobre ella, como las tareas. La purga a 180 días (D-F11-07) necesita otro camino, que elige F11-02 y documenta: un `GRANT DELETE` limitado a esta tabla para `crm_app` (que cambia esta frase) o un comando de mantenimiento con el rol `crm_migrator`. Hasta que el propietario decida la retención, no se purga nada. **Decidida el 2026-11-26 (D-F11-07):** 180 días, con una purga segura y auditada (F11-10, [#1185](https://github.com/PapiCuche/crm-gooddoggy/issues/1185)).
 
 **`tasks`** (expand, sin contract): dos columnas nullable nuevas, `conversation_id` (FK compuesta a `conversations`; `tasks ──► inbox` ya está permitido en `module-dependencies.md`) y `quote_id` (FK compuesta a `quotes`). Se añaden `NOT VALID` y se validan en una migración aparte, como `core/db/member_fk.py`. El código viejo las ignora. La tarea enlaza a su conversación o a su cotización, y la pantalla lleva a ella.
 
@@ -73,7 +73,7 @@ Patrón: el de `quotes.expire_sweep` (`quotes/tasks.py:52-81`). Una entrada de b
 **`conversation.unanswered`** (conversación sin respuesta)
 - **Cuándo:** la conversación está en `UNANSWERED` (la regla de #1093) y `awaiting_reply_since ≤ now() − first_after` (por omisión 15 min). `awaiting_reply_since` es una columna nueva de `conversations` (F11-04). La fija el primer entrante de un episodio y la borran una respuesta que cuenta (según #1093) y el paso a resuelta o cerrada. Es el `waiting_since` de 02 §E.7. El episodio es ese instante (`episode_at`).
 - **Si:** la regla está en `SIMULATE` u `ON`, la organización no está pausada, `AUTOMATIONS_ENABLED` está encendido y la hora local de la organización (`Organization.timezone`, por omisión `America/Lima`, `organizations/models.py:106`; no el «día de Lima» de ADR-043, que solo vale para el presupuesto de IA) está dentro del horario de atención de los parámetros. Fuera de horario no se crea nada; al abrir, la condición sigue cumpliéndose y avisa entonces.
-- **Entonces (paso 1):** una tarea `MESSAGE`, prioridad `HIGH`, vencida ya (`due_at = now`), con un título fijo («Responder a la conversación {número}») y enlazada a la conversación y al contacto. Va para la persona asignada, si es miembro activo. Si no hay persona, va para los `SUPERVISOR` del equipo asignado. Si tampoco hay equipo, va para quienes tienen `conversations.assign`. En los dos últimos casos el tope es `max_recipients` (por omisión 3, el orden por `user_id`).
+- **Entonces (paso 1):** una tarea `MESSAGE`, prioridad `HIGH`, vencida ya (`due_at = now`), con un título fijo («Responder a la conversación {número}») y enlazada a la conversación y al contacto. Va para la persona asignada, si es miembro activo. Si no hay persona, va para los `SUPERVISOR` del equipo asignado. Si tampoco hay equipo, va para quienes tienen `conversations.assign`. **Enmienda E1 (2026-11-26, D-F11-04):** si no aplica ningún supervisor (sin equipo, o un equipo sin supervisores activos), va para quienes tienen `conversations.assign`, como mucho 3. En los dos últimos casos el tope es `max_recipients` (por omisión 3, el orden por `user_id`).
 - **Escalado (paso 2):** si a `escalate_after` (por omisión 45 min) **desde que se creó el paso 1** la conversación sigue sin responder, se crea una tarea `URGENT` para los `SUPERVISOR` del equipo (o, sin equipo, para quienes tienen `conversations.assign`), sin repetir a quien recibió el paso 1. Se cuenta desde el paso 1 y no desde el episodio para que, al abrir el horario, el aviso y el escalado no salgan a la vez.
 - **Cierre:** cuando el episodio termina, el barrido cancela las tareas abiertas de sus pasos con un motivo fijo y pone la ejecución en `CLOSED`/`RESOLVED`. Una tarea que una persona ya completó o cambió no se toca: el barrido compara su `version` y solo cancela si sigue abierta y sin cambios de nadie más.
 
@@ -89,7 +89,7 @@ Patrón: el de `quotes.expire_sweep` (`quotes/tasks.py:52-81`). Una entrada de b
 - **Concurrencia:** `pg_try_advisory_xact_lock(hashtextextended('automations:<org>:<rule>', 0))` por organización y regla durante la selección. Si otro barrido la tiene, este sale con `skipped_locked`. La unicidad sigue siendo la garantía última.
 - **Reintentos acotados:** un fallo deja la ejecución en `FAILED` con `attempts + 1` y su `reason`. El siguiente barrido la reintenta si `attempts < 3` y pasaron `2^attempts` minutos. Al tercer fallo pasa a `DEAD` (dead-letter): no se reintenta más, se ve en el historial con su motivo y deja un log `automations.run_dead` de nivel `ERROR` (y Sentry, si está configurado).
 - **Topes contra tormentas:** por pasada, organización y regla, como mucho `MAX_PER_PASS` = 100 tareas nuevas. Por persona, como mucho `max_open_per_user` (por omisión 20) tareas abiertas de la misma regla. Lo que pase el tope queda como `SKIPPED/CAPPED`, sin tarea, y se reintenta en el siguiente barrido. La pasada tiene un tope de 60 s. Si una regla supera el tope de pasada en tres barridos seguidos, se registra `automations.storm` (`ERROR`) y la regla **no** se apaga sola: lo decide una persona.
-- **Simulación (dry-run):** en `SIMULATE` se escribe la ejecución (`mode = SIMULATE`, `status = DONE`, `recipients` calculados) y no se crea ninguna tarea. La pantalla muestra cuántas tareas habría creado y para quién. Es el modo recomendado durante la primera semana.
+- **Simulación (dry-run):** en `SIMULATE` se escribe la ejecución (`mode = SIMULATE`, `status = DONE`, `recipients` calculados) y no se crea ninguna tarea. La pantalla muestra cuántas tareas habría creado y para quién. Es el modo recomendado durante la primera semana. **Enmienda E2 (2026-11-26):** deja de ser una recomendación: una regla pasa por `SIMULATE` al menos una semana, y el propietario revisa esa simulación antes de autorizar `ON`.
 - **Actor:** `TenantContext(org, "celery", actor_type=SYSTEM)`, sin `user_id`. La tarea lleva `created_by_user_id = NULL` y `source = AUTOMATION`, y la auditoría `task.created` añade `{"rule": key, "run_id": …}` en `metadata`.
 - **Entrada única a las tareas:** un módulo `apps.tasks.automation` (`create_automation_task`, `cancel_automation_task`) que solo puede importar `apps.automations` (contrato `protected`). Fija `source = AUTOMATION`, exige que el responsable sea miembro activo (`lock_active_member`) y no comprueba permisos de persona, porque no actúa ninguna.
 
@@ -104,7 +104,7 @@ Se comprueban al empezar la pasada y otra vez antes de cada sujeto. Pausar a mit
 ### 8. Permisos
 
 - Nuevos en el catálogo: `automations.view` (ver reglas e historial), `automations.manage` (cambiar modo y parámetros, reanudar) y `automations.kill_switch` (solo pausar; sensible, como `ai.kill_switch`).
-- Plantillas por defecto: lo decide el propietario (D-F11-05). El Owner los recibe por ADR-018.
+- Plantillas por defecto: lo decide el propietario (D-F11-05). El Owner los recibe por ADR-018. **Decidido el 2026-11-26:** Owner y Administrador administran (`view` y `manage`); Supervisor puede leer y pausar (`view` y `kill_switch`).
 - El historial muestra el número de la conversación o de la cotización, nunca textos del cliente, y solo a quien tiene además `conversations.view` o `quotes.view` sobre ese sujeto. A quien no los tiene se le muestra «sin acceso».
 
 ## Alternatives considered
@@ -146,6 +146,8 @@ Se comprueban al empezar la pasada y otra vez antes de cada sujeto. Pausar a mit
 
 ## Decisiones requeridas del propietario
 
+**Respondidas por el propietario el 2026-11-26** ([#1166](https://github.com/PapiCuche/crm-gooddoggy/issues/1166)): lo que decidió está en «Registro de decisiones del propietario (2026-11-26)», justo debajo. La tabla queda como se propuso.
+
 | # | Decisión | Opciones | Recomendación |
 |---|---|---|---|
 | D-F11-01 | Enfoque | (A) reglas fijas configurables ahora y motor genérico después / (B) motor genérico ya | A |
@@ -156,9 +158,32 @@ Se comprueban al empezar la pasada y otra vez antes de cada sujeto. Pausar a mit
 | D-F11-06 | Release y prioridad | Release nueva (p. ej. R1.5 «seguimiento») / `release:later` / dentro de R3 | Tras cerrar F7b-14 (#1093); antes de R4 |
 | D-F11-07 | Retención del historial | 90 / 180 / 365 días | 180 |
 
+## Registro de decisiones del propietario (2026-11-26)
+
+El propietario aceptó este ADR como **automatizaciones internas de seguimiento** el 2026-11-26 y pidió no volver a preguntar estas decisiones. Queda registrado en [#1166](https://github.com/PapiCuche/crm-gooddoggy/issues/1166).
+
+| # | Decisión del propietario |
+| --- | --- |
+| D-F11-01 | (A) Primero reglas fijas configurables; el motor genérico, después. |
+| D-F11-02 | (A) Crear tareas en «Mis tareas». El correo interno, después, cuando SES esté autorizado y funcionando. |
+| D-F11-03 | 15 min sin respuesta. Escalado 45 min después. Seguimiento de la cotización a las 48 h y 24 h antes de vencer. Lunes a sábado de 09:00 a 19:00 en la zona horaria de la organización. Todos los valores, configurables. |
+| D-F11-04 | Avisar a los supervisores del equipo. Si no aplica ninguno, a quienes tienen `conversations.assign`, como mucho 3. |
+| D-F11-05 | Owner y Administrador administran. Supervisor puede leer y pausar. |
+| D-F11-06 | Una release propia, después de las dependencias del Inbox y antes de R4 (etiqueta `release:seguimiento`). |
+| D-F11-07 | Historial de 180 días, con una purga segura y auditada. |
+
+**Modos:** `OFF` → `SIMULATE` → `ON`. El propietario quiere una semana de `SIMULATE` y una revisión antes de autorizar `ON`.
+
+**Límites:** nunca se envían mensajes a clientes. Nunca se cambian cotizaciones, ventas ni estados de conversación fuera del alcance aprobado (§1).
+
+### Enmiendas al texto propuesto
+
+- **E1 (§5, paso 1 y escalado).** Si no aplica ningún supervisor (sin equipo, o un equipo sin supervisores activos), el aviso va para quienes tienen `conversations.assign`, como mucho 3 (D-F11-04). El texto propuesto no decía qué pasaba con un equipo sin supervisores.
+- **E2 (§6, simulación).** `SIMULATE` durante al menos una semana y la revisión del propietario son obligatorios antes de `ON`, no una recomendación. En este corte lo impone el proceso (runbook de F11-08b y la decisión del propietario), no el código.
+
 ## Anexo: plan de work items
 
-Orientativo: no se crea ningún issue de implementación hasta que el propietario acepte este ADR (D-F11-01). Al crearlos se aplica la plantilla `.github/ISSUE_TEMPLATE/work-item.yml`, con las etiquetas `work-item`, `phase:f11` (nueva), la release que decida D-F11-06 y `status:blocked` hasta que se acepte. El tamaño es una estimación en líneas relevantes (tope de `.github/scripts/pr_governance.py`: 800). F11-01 es este mismo ADR, que publica #1106.
+Orientativo: no se crea ningún issue de implementación hasta que el propietario acepte este ADR (D-F11-01). **Creados el 2026-11-26** tras la aceptación, con los números de «Work items» (arriba) y la etiqueta `release:seguimiento`. F11-08 se dividió en F11-08a (pantalla) y F11-08b (marca «Automática», runbook y E2E), como preveía su fila; F11-10 (retención de 180 días) se añadió por D-F11-07. Las dependencias del Inbox (#1093) ya están cerradas. Al crearlos se aplica la plantilla `.github/ISSUE_TEMPLATE/work-item.yml`, con las etiquetas `work-item`, `phase:f11` (nueva), la release que decida D-F11-06 y `status:blocked` hasta que se acepte. El tamaño es una estimación en líneas relevantes (tope de `.github/scripts/pr_governance.py`: 800). F11-01 es este mismo ADR, que publica #1106.
 
 | ID | Objetivo en una línea | Depende de | Tamaño estimado |
 | --- | --- | --- | --- |
