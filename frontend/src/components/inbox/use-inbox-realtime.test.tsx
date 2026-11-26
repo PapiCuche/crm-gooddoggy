@@ -1,4 +1,12 @@
-import { act, cleanup, configure, fireEvent, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  configure,
+  fireEvent,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -472,5 +480,39 @@ describe("ráfagas y estado de la conexión (UX-INBOX-06)", () => {
     before = reads();
     await reconnect();
     await waitFor(() => expect(reads()).toBe(before + 3));
+  });
+
+  it("con una red elegida, la ráfaga relee esa lista y su número, y «Todas» lo trae al volver", async () => {
+    const state = { preview: "Hola" };
+    const whatsapp = () => {
+      const row = conversation(state.preview);
+      return { ...row, channel: { ...row.channel, platform: "WHATSAPP" } };
+    };
+    const api = mockApi({
+      [`GET ${BASE}/`]: () => ({ status: 200, body: { results: [whatsapp()], next: null } }),
+      [`GET ${BASE}/?platform=WHATSAPP`]: () => ({
+        ...{ status: 200, body: { results: [whatsapp()], next: null } },
+      }),
+      [`GET ${BASE}/unanswered/?platform=WHATSAPP`]: { status: 200, body: { count: 1 } },
+    });
+    const reads = (query: string) =>
+      api.mock.calls.filter(([url]) => String(url) === `${BASE}/${query}`).length;
+    show();
+    await screen.findByRole("button", { name: /Rosa Díaz/ });
+    act(() => socket().onopen?.({}));
+    fireEvent.click(
+      within(screen.getByRole("group", { name: "Red" })).getByRole("button", { name: "WhatsApp" }),
+    );
+    await waitFor(() => expect(reads("?platform=WHATSAPP")).toBe(1));
+    await waitFor(() => expect(reads("unanswered/?platform=WHATSAPP")).toBe(1));
+    state.preview = "Llegó por WhatsApp";
+    await say({ type: "message.received", conversation_id: "1", message_id: "m2" });
+    await waitFor(() => expect(reads("?platform=WHATSAPP")).toBe(2));
+    expect(reads("unanswered/?platform=WHATSAPP")).toBe(2);
+    expect(await screen.findByText("Llegó por WhatsApp")).toBeVisible();
+    const all = reads("");
+    fireEvent.click(screen.getByRole("button", { name: "Todas las redes" }));
+    await waitFor(() => expect(reads("")).toBe(all + 1));
+    expect(await screen.findByText("Llegó por WhatsApp")).toBeVisible();
   });
 });

@@ -3425,8 +3425,8 @@ paths:
       operationId: conversations_list
       description: 'Las conversaciones dentro del alcance de `conversations.view`,
         la de mensaje más reciente primero (`last_message_at`, `id`; cursor de dos
-        valores). `box`, `status` y `unanswered` se combinan y la página siguiente
-        se pide con los mismos. 400: un filtro repetido o no válido.'
+        valores). `box`, `status`, `unanswered` y `platform` se combinan y la página
+        siguiente se pide con los mismos. 400: un filtro repetido o no válido.'
       parameters:
       - in: query
         name: box
@@ -3463,6 +3463,23 @@ paths:
         schema:
           type: string
         required: true
+      - in: query
+        name: platform
+        schema:
+          enum:
+          - SANDBOX
+          - WHATSAPP
+          - MESSENGER
+          - INSTAGRAM
+          type: string
+          minLength: 1
+        description: |-
+          UX-INBOX-02: solo las de cuentas de esa red (`channel.platform`).
+
+          * `SANDBOX` - Sandbox
+          * `WHATSAPP` - Whatsapp
+          * `MESSENGER` - Messenger
+          * `INSTAGRAM` - Instagram
       - in: query
         name: status
         schema:
@@ -4604,7 +4621,8 @@ paths:
     get:
       operationId: conversations_unanswered_count
       description: Cuántas conversaciones sin responder (`unanswered=true` de la lista)
-        hay dentro del alcance de `conversations.view` y de `box`. Solo el número.
+        hay dentro del alcance de `conversations.view`, de `box` y de `platform`.
+        Solo el número.
       parameters:
       - in: query
         name: box
@@ -4626,6 +4644,23 @@ paths:
         schema:
           type: string
         required: true
+      - in: query
+        name: platform
+        schema:
+          enum:
+          - SANDBOX
+          - WHATSAPP
+          - MESSENGER
+          - INSTAGRAM
+          type: string
+          minLength: 1
+        description: |-
+          UX-INBOX-02: solo las de cuentas de esa red (`channel.platform`).
+
+          * `SANDBOX` - Sandbox
+          * `WHATSAPP` - Whatsapp
+          * `MESSENGER` - Messenger
+          * `INSTAGRAM` - Instagram
       tags:
       - conversations
       security:
