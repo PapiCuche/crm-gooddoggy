@@ -19,7 +19,7 @@ import {
   Video,
 } from "lucide-react";
 import { useFormatter, useTranslations } from "next-intl";
-import { type ReactNode, type Ref, useLayoutEffect, useRef, useState } from "react";
+import { type ReactNode, type Ref, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { useTenant } from "@/components/app-shell/tenant-context";
 import { ChannelSource, channelOf, useChannelName } from "@/components/channels/channel-identity";
@@ -69,14 +69,26 @@ const LABELS: Record<string, ReactNode> = {
 const END = 8; // px: a menos de esto del final, se lee lo último
 const still = () =>
   typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
-// La última fila a la vista (y la siguiente) y su altura en la región: al releer no se mueve.
-const lastSeen = (box: HTMLElement) => {
+const PILL = 52; // px: el botón «N mensajes nuevos» (44) y su margen (8) tapan el pie de la región
+// La última fila a la vista (y la siguiente) y su altura en la región: al releer no se mueve. Con
+// `hidden`, a la vista por encima de esos px del pie (lo que asoma bajo el botón no se ha leído).
+const lastSeen = (box: HTMLElement, hidden = 0) => {
   const view = box.getBoundingClientRect();
   const rows = [...box.querySelectorAll<HTMLElement>("li[data-id]")];
-  const last = rows.findLastIndex((li) => li.getBoundingClientRect().top < view.bottom);
+  const last = rows.findLastIndex((li) => li.getBoundingClientRect().top < view.bottom - hidden);
   return rows
     .slice(Math.max(last, 0), last + 2)
     .map((li) => ({ id: li.dataset.id!, top: li.getBoundingClientRect().top - view.top }));
+};
+// Al final (o yendo a él) se sigue lo último; si no, la fila leída vuelve a su altura en la región.
+// Solo cambia `scrollTop`, nunca un alto: el `ResizeObserver` que la llama no se realimenta.
+const place = (box: HTMLElement, follow: boolean, anchor: ReturnType<typeof lastSeen>) => {
+  if (follow) return void (box.scrollTop = box.scrollHeight);
+  const view = box.getBoundingClientRect().top;
+  const [row, was] = anchor
+    .map(({ id, top }) => [box.querySelector(`li[data-id="${CSS.escape(id)}"]`), top] as const)
+    .find(([found]) => found) ?? [null, 0];
+  if (row) box.scrollTop += row.getBoundingClientRect().top - view - was;
 };
 
 // El chat de una conversación (F6-03): los mensajes de `GET …/conversations/{id}/messages/`
@@ -124,6 +136,8 @@ export function ChatPanel({
   });
   const exclusion = useAiExclusion(conversation); // excluirla de la IA (F8-13b)
   const scroller = useRef<HTMLDivElement>(null);
+  const content = useRef<HTMLDivElement>(null); // lo que se desplaza: su alto lo vigila un observador
+  const height = useRef(0); // `scrollHeight` tras la última colocación
   const panel = useRef<HTMLDivElement>(null);
   useKeyboardHeight(panel, scroller);
   const [composing, release] = useComposing(panel); // UX-INBOX-03b: lo compacto existe solo entonces
@@ -170,15 +184,11 @@ export function ChatPanel({
     if (!box || list.isFetchingNextPage) return;
     if (kept.current && pages > kept.current.pages)
       box.scrollTop = box.scrollHeight - kept.current.rest;
-    else if (toBottom.current || pinned.current || chase.current.on || !placed.current) {
-      box.scrollTop = box.scrollHeight;
-    } else {
-      const view = box.getBoundingClientRect().top;
-      const [row, was] = anchor.current
-        .map(({ id, top }) => [box.querySelector(`li[data-id="${CSS.escape(id)}"]`), top] as const)
-        .find(([found]) => found) ?? [null, 0];
-      if (row) box.scrollTop += row.getBoundingClientRect().top - view - was;
+    else {
+      const follow = toBottom.current || pinned.current || chase.current.on || !placed.current;
+      place(box, follow, anchor.current);
     }
+    height.current = box.scrollHeight;
     toBottom.current = false;
     placed.current = placed.current || rows.length > 0;
     kept.current = null;
@@ -188,6 +198,21 @@ export function ChatPanel({
     const box = scroller.current;
     if (visible && atBottom.current && box) box.scrollTop = box.scrollHeight;
   }, [visible]);
+
+  // Un alto que cambia sin filas nuevas (el aviso de error, un adjunto que pasa a «Descargar», un
+  // estado de entrega): con `overflow-anchor: none` nadie lo compensa. Lo ya colocado (mismo alto
+  // que tras el efecto de arriba) no se vuelve a tocar.
+  useEffect(() => {
+    const [box, inner] = [scroller.current, content.current];
+    if (!box || !inner || !window.ResizeObserver) return; // jsdom no lo trae
+    const observer = new ResizeObserver(() => {
+      if (box.scrollHeight === height.current) return;
+      place(box, pinned.current || chase.current.on, anchor.current);
+      height.current = box.scrollHeight;
+    });
+    observer.observe(inner);
+    return () => observer.disconnect();
+  }, []);
   const name = conversation.contact.display_name;
   let body;
   if (!list.data && problem) {
@@ -334,56 +359,17 @@ export function ChatPanel({
           </p>
         ) : null}
       </header>
-      {/* Una región que se desplaza debe poder enfocarse para recorrerla con el teclado. */}
-      <div
-        ref={scroller}
-        role="region"
-        tabIndex={0}
-        aria-label={t("chat.scroll")}
-        className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3 contain-size [overflow-anchor:none]"
-        onWheel={() => void (chase.current.on = false)} // quien lee toma el control: no se persigue
-        onTouchStart={() => void (chase.current.on = false)}
-        onPointerDown={() => void (chase.current.on = false)} // la barra; el botón lo vuelve a poner
-        onScroll={({ currentTarget: box }) => {
-          // `seen`, al dejar el final (seguir lo nuevo no siempre da `scroll`); `chase`, hasta el final.
-          const was = pinned.current;
-          pinned.current = box.scrollHeight - box.scrollTop - box.clientHeight < END;
-          if (pinned.current || box.scrollTop < chase.current.top) chase.current.on = false;
-          chase.current.top = box.scrollTop;
-          anchor.current = lastSeen(box);
-          setAtEnd(pinned.current);
-          if (was) setSeen(newest);
-        }}
-      >
-        {list.hasNextPage ? (
-          <Button
-            variant="ghost"
-            className="border-border min-h-11 self-center border lg:min-h-9"
-            aria-disabled={list.isFetchingNextPage}
-            onClick={() => {
-              if (list.isFetchingNextPage) return;
-              const box = scroller.current;
-              kept.current = box && { rest: box.scrollHeight - box.scrollTop, pages };
-              void list.fetchNextPage();
-            }}
-          >
-            {list.isFetchingNextPage ? t("loadingMore") : t("chat.older")}
-          </Button>
-        ) : null}
-        {list.data && problem ? (
-          <p role="alert" className="text-danger text-sm">
-            {problem}
-          </p>
-        ) : null}
-        {body}
+      {/* El aviso de «N mensajes nuevos» va antes que la región en el DOM, por encima de su pie: con
+          teclado se llega a él sin pasar por cada «Guardar» o «Reintentar» del chat. */}
+      <div className="relative flex min-h-0 flex-1 flex-col">
         <div
           role="status"
-          className="pointer-events-none sticky bottom-0 -mt-3 flex h-0 shrink-0 justify-center"
+          className="pointer-events-none absolute inset-x-0 bottom-2 z-10 flex justify-center"
         >
           {unseen > 0 ? (
             <Button
               variant="primary"
-              className="pointer-events-auto absolute bottom-0 h-11 rounded-full px-4 shadow-md transition-[opacity,translate,scale] duration-200 starting:translate-y-2 starting:opacity-0 motion-reduce:starting:translate-y-0"
+              className="pointer-events-auto h-11 rounded-full px-4 shadow-md transition-[opacity,translate,scale] duration-200 starting:translate-y-2 starting:opacity-0 motion-reduce:starting:translate-y-0"
               onClick={() => {
                 const box = scroller.current;
                 if (!box) return;
@@ -399,6 +385,62 @@ export function ChatPanel({
               {unseen === Infinity ? t("chat.unseenMany") : t("chat.unseen", { count: unseen })}
             </Button>
           ) : null}
+        </div>
+        {/* Una región que se desplaza debe poder enfocarse para recorrerla con el teclado. Con el
+            botón a la vista, un control enfocado no queda debajo de él (`scroll-padding`). */}
+        <div
+          ref={scroller}
+          role="region"
+          tabIndex={0}
+          aria-label={t("chat.scroll")}
+          className={cn(
+            "flex min-h-0 flex-1 flex-col overflow-y-auto p-3 contain-size [overflow-anchor:none]",
+            unseen > 0 && "scroll-pb-16",
+          )}
+          onWheel={() => void (chase.current.on = false)} // quien lee toma el control: no se persigue
+          onTouchStart={() => void (chase.current.on = false)}
+          onPointerDown={() => void (chase.current.on = false)} // la barra
+          onScroll={({ currentTarget: box }) => {
+            // `seen`, al dejar el final (seguir lo nuevo no siempre da `scroll`) y luego hasta la
+            // última fila a la vista (sin la burbuja pendiente): solo cuenta lo que queda debajo.
+            const was = pinned.current;
+            pinned.current = box.scrollHeight - box.scrollTop - box.clientHeight < END;
+            if (pinned.current || box.scrollTop < chase.current.top) chase.current.on = false;
+            chase.current.top = box.scrollTop;
+            anchor.current = lastSeen(box);
+            const read = lastSeen(box, PILL)[0]?.id;
+            const shown = rows.findIndex(({ id }) => id === read);
+            const upto = rows.findLastIndex(
+              (row, i) => i <= shown && !row.id.startsWith("pending-"),
+            );
+            setAtEnd(pinned.current);
+            if (was) setSeen(newest);
+            else if (upto > after) setSeen(rows[upto]!.id);
+          }}
+        >
+          <div ref={content} className="flex flex-col gap-3">
+            {list.hasNextPage ? (
+              <Button
+                variant="ghost"
+                className="border-border min-h-11 self-center border lg:min-h-9"
+                aria-disabled={list.isFetchingNextPage}
+                onClick={() => {
+                  if (list.isFetchingNextPage) return;
+                  const box = scroller.current;
+                  kept.current = box && { rest: box.scrollHeight - box.scrollTop, pages };
+                  void list.fetchNextPage();
+                }}
+              >
+                {list.isFetchingNextPage ? t("loadingMore") : t("chat.older")}
+              </Button>
+            ) : null}
+            {list.data && problem ? (
+              <p role="alert" className="text-danger text-sm">
+                {problem}
+              </p>
+            ) : null}
+            {body}
+          </div>
         </div>
       </div>
       {offered ? copilot.panel : null}
