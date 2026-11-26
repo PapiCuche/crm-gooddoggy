@@ -881,10 +881,13 @@ describe("envío retenido sin conexión: 5 minutos o «Cancelar» (UX-INBOX-06f)
   });
   afterEach(() => onlineManager.setOnline(true));
   const online = (on: boolean) => act(() => onlineManager.setOnline(on));
-  const cancel = () => screen.queryByRole("button", { name: "Cancelar" });
-  const hold = async (text = "Hola Rosa") => {
+  const cancel = () => screen.queryByRole("button", { name: "Cancelar envío" });
+  const picker = () => document.querySelector<HTMLInputElement>('input[type="file"]')!;
+  const png = new File(["x"], "foto.png", { type: "image/png" });
+  const hold = async (text = "Hola Rosa", file?: File) => {
     online(false);
     await type(text);
+    if (file) fireEvent.change(picker(), { target: { files: [file] } });
     fireEvent.click(sendButton());
     await waitFor(() => expect(cancel()).toBeVisible());
   };
@@ -959,9 +962,11 @@ describe("envío retenido sin conexión: 5 minutos o «Cancelar» (UX-INBOX-06f)
     const { client } = show();
     await openChat();
     await hold();
+    act(() => cancel()!.focus());
     clock += HOLD;
     expect(await screen.findByText(/^No se envió: pasaron 5 minutos/)).toBeVisible();
     expect(cancel()).toBeNull();
+    expect(await box()).toHaveFocus(); // el foco no queda en <body>
     await back();
     for (const on of [true, false, true, false, true]) online(on);
     await settle();
@@ -1038,7 +1043,7 @@ describe("envío retenido sin conexión: 5 minutos o «Cancelar» (UX-INBOX-06f)
     const s = server();
     show();
     await openChat();
-    await hold();
+    await hold("Hola Rosa", png); // el archivo es del cuadro: al volver ya no está ni se promete
     await openChat(/Juan Pérez/);
     await type("Hola Juan");
     clock += HOLD;
@@ -1047,23 +1052,52 @@ describe("envío retenido sin conexión: 5 minutos o «Cancelar» (UX-INBOX-06f)
     expect(await box()).toHaveValue("Hola Juan");
     await openChat();
     await back();
+    const why = "No se envió: pasaron 5 minutos sin conexión. El texto sigue en el cuadro.";
+    expect(await screen.findByText(why)).toBeVisible(); // caducó sin el cuadro: el aviso se guardó
     await openChat(/Juan Pérez/);
     expect(await box()).toHaveValue("Hola Juan");
-    expect(s.posts()).toEqual([]);
+    expect(screen.queryByText(why)).toBeNull();
+    expect(s.api.mock.calls.filter(([, init]) => init?.method === "POST")).toEqual([]);
+  });
+
+  it("un reintento de algo que ya salió no dice «no se envió nada» al cancelar ni al caducar", async () => {
+    const s = server();
+    const inner = s.api.getMockImplementation()!;
+    s.api.mockImplementation(async (input, init) => {
+      if (init?.method !== "POST") return inner(input, init);
+      s.stored.push(saved("s1", "Hola Rosa")); // se guardó y la respuesta se perdió
+      throw new TypeError("Failed to fetch");
+    });
+    show();
+    await openChat();
+    await type("Hola Rosa");
+    fireEvent.click(sendButton());
+    expect(await screen.findByRole("alert")).toHaveTextContent("No hay conexión con el servidor");
+    online(false);
+    fireEvent.click(sendButton("Reintentar"));
+    await waitFor(() => expect(cancel()).toBeVisible());
+    expect(
+      screen.getByText(/este reintento aún no salió \(el anterior pudo llegar\)/, {
+        ignore: ".sr-only",
+      }),
+    ).toBeVisible();
+    fireEvent.click(cancel()!);
+    const retried =
+      /este reintento no salió\. Revisa la conversación: el intento anterior pudo llegar\./;
+    expect(await screen.findByText(retried)).toBeVisible();
+    expect(screen.queryByText(/no se envió nada|^No se envió/)).toBeNull();
+    fireEvent.click(sendButton()); // sigue sin red: caduca
+    await waitFor(() => expect(cancel()).toBeVisible());
+    clock += HOLD;
+    expect(await screen.findByText(/^Este reintento no salió: pasaron 5 minutos/)).toBeVisible();
+    expect(s.posts()).toHaveLength(1);
   });
 
   it("con archivo: cancelar deja texto y archivo, sin «dudoso», y el siguiente toque usa su id", async () => {
     const s = server();
     const { client } = show();
     await openChat();
-    online(false);
-    await type("Mira");
-    const file = new File(["x"], "foto.png", { type: "image/png" });
-    fireEvent.change(document.querySelector<HTMLInputElement>('input[type="file"]')!, {
-      target: { files: [file] },
-    });
-    fireEvent.click(sendButton());
-    await waitFor(() => expect(cancel()).toBeVisible());
+    await hold("Mira", png);
     fireEvent.click(cancel()!);
     expect(await screen.findByText(/El texto y el archivo siguen en el cuadro\.$/)).toBeVisible();
     expect(screen.getByText("foto.png")).toBeVisible();

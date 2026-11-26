@@ -12,16 +12,19 @@ import {
 import type { Mode } from "./composer";
 
 // El intento (id, primer texto y si llevaba archivo, que no se guarda) y si hay un envío en curso.
-// `unsure`: su archivo venció sin respuesta y pudo llegar (UX-INBOX-04c).
-type Attempt = { id: string; first: string; media: boolean; unsure?: boolean };
+// `unsure`: su archivo venció sin respuesta y pudo llegar (UX-INBOX-04c). `sent`: una petición de
+// este intento ya salió (UX-INBOX-06f).
+type Attempt = { id: string; first: string; media: boolean; unsure?: boolean; sent?: boolean };
 // El toque de «Enviar» en curso (UX-INBOX-06f): `since`, su hora de reloj (`Date.now()`); `started`,
-// la petición ya salió y desde ahí no se cancela ni caduca.
-export type Press = { id: string; since: number; started?: boolean };
+// la petición ya salió y desde ahí no se cancela ni caduca; `retry`, repite un intento que ya salió.
+// `notice`: por qué se soltó el último (caducado o cancelado), aunque el cuadro no estuviera abierto.
+export type Press = { id: string; since: number; started?: boolean; retry?: boolean };
 export type Draft = {
   text: string;
   attempt: Attempt | null;
   sending: boolean;
   press?: Press | null;
+  notice?: string | null;
 };
 const EMPTY: Draft = { text: "", attempt: null, sending: false };
 const MODES: readonly Mode[] = ["reply", "note"];

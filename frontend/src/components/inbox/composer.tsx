@@ -260,6 +260,7 @@ function ComposeBox({
   const text = useDraftsValue((all) => all.get(draft).text);
   const busy = useDraftsValue((all) => all.get(draft).sending);
   const unsure = useDraftsValue((all) => !!all.get(draft).attempt?.unsure);
+  const notice = useDraftsValue((all) => all.get(draft).notice ?? null);
   const press = useDraftsValue((all) => all.get(draft).press ?? null);
   const attemptId = useDraftsValue((all) => all.get(draft).attempt?.id ?? null);
   // Retenido: pulsado, sin conexión (TanStack lo tiene en pausa) y su petición aún no salió.
@@ -267,7 +268,10 @@ function ComposeBox({
   const held = press && !press.started && attemptId && paused.includes(attemptId) ? press : null;
   const [now, setNow] = useState(() => Date.now());
   const setText = (next: string | ((current: string) => string)) =>
-    drafts.update(draft, ({ text }) => ({ text: typeof next === "string" ? next : next(text) }));
+    drafts.update(draft, ({ text }) => ({
+      text: typeof next === "string" ? next : next(text),
+      notice: null,
+    }));
   const forget = (sent: Outgoing) =>
     drafts.update(sent.draft, ({ attempt }) =>
       attempt?.id === sent.client_message_id ? { attempt: null } : {},
@@ -340,19 +344,30 @@ function ComposeBox({
 
   // Devuelve un toque que no salió (caducado o cancelado): el texto y el archivo siguen en el cuadro y
   // el intento conserva su id; no es «dudoso», no hubo petición. Solo el toque vigente y sin salir.
+  // Un reintento de algo que ya salió no dice «no se envió nada»: lo anterior pudo llegar. El aviso
+  // queda en el borrador (se ve al volver); el archivo solo sigue si el cuadro sigue montado.
   const release = (at: string, id: string, why: "expired" | "cancelled") => {
     const { press: current, attempt } = drafts.get(at);
     if (current?.id !== id || current.started) return;
-    drafts.update(at, () => ({ sending: false, press: null }));
+    const kept = String(file !== null && box.current !== null);
+    const notice = t(`held.${why}`, {
+      note: String(note),
+      file: kept,
+      retry: String(!!current.retry),
+    });
+    drafts.update(at, () => ({ sending: false, press: null, notice }));
     const mine = `pending-${attempt?.id}`;
     client.setQueryData<Pages>(key, (data) =>
       edit(data, (rows) => rows.filter((row) => row.id !== mine)),
     );
-    setSaved(t(`held.${why}`, { note: String(note), file: String(file !== null) }));
   };
   const expire = useEffectEvent((at: number) => {
     setNow(at);
-    if (held && !fresh(held.since, at)) release(draft, held.id, "expired");
+    if (!held || fresh(held.since, at)) return;
+    const focus = document.activeElement;
+    release(draft, held.id, "expired");
+    // Con el foco en «Cancelar» (que se va) o en ninguna parte, vuelve al cuadro, como al cancelar.
+    if (focus === document.body || box.current?.form?.contains(focus)) box.current?.focus();
   });
   useEffect(() => {
     if (!held) return;
@@ -369,7 +384,10 @@ function ComposeBox({
       if (current?.id !== press || current.started || !fresh(current.since)) {
         return Promise.reject(GONE);
       }
-      drafts.update(at, () => ({ press: { ...current, started: true } }));
+      drafts.update(at, ({ attempt }) => ({
+        press: { ...current, started: true },
+        attempt: attempt && { ...attempt, sent: true },
+      }));
       const request = { client_message_id, body }; // la clave del borrador no va a la API
       // Sin respuesta en el plazo es un error de red: libera el cuadro; el reintento lleva el id.
       const options = { signal: AbortSignal.timeout(attached ? 120_000 : 30_000) };
@@ -508,8 +526,8 @@ function ComposeBox({
       tried = { id: uuid(), first: text, media: file !== null };
     }
     sentFile.current = file;
-    const pressed = { id: uuid(), since: Date.now() };
-    drafts.update(draft, () => ({ attempt: tried, sending: true, press: pressed }));
+    const pressed = { id: uuid(), since: Date.now(), retry: !!tried.sent };
+    drafts.update(draft, () => ({ attempt: tried, sending: true, press: pressed, notice: null }));
     const request = { client_message_id: tried.id, body: text, draft, press: pressed.id };
     send.mutate({ ...request, file: file ?? undefined });
   };
@@ -537,6 +555,7 @@ function ComposeBox({
   };
   const idle = note ? t("save") : t("send");
   const left = held ? Math.max(0, Math.min(HOLD, held.since + HOLD - now)) : 0;
+  const retry = String(!!held?.retry);
   const clock = `${Math.floor(Math.ceil(left / 1000) / 60)}:${String(Math.ceil(left / 1000) % 60).padStart(2, "0")}`;
   // En menos de 640 px el formulario es una cuadrícula de dos columnas: la respuesta lleva el cuadro
   // y un botón de icono en la misma fila; la nota, el cuadro y debajo su aviso con «Guardar nota».
@@ -656,7 +675,7 @@ function ComposeBox({
       {/* Retenido: se anuncia al empezar y una vez por minuto, no cada segundo. */}
       <p role="status" className="sr-only">
         {held
-          ? t("held.status", { note: String(note), minutes: Math.ceil(left / 60_000) })
+          ? t("held.status", { note: String(note), retry, minutes: Math.ceil(left / 60_000) })
           : busy
             ? t(note ? "saving" : "sending")
             : ""}
@@ -751,12 +770,13 @@ function ComposeBox({
       {held ? (
         <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-sm max-sm:col-span-2">
           <p aria-hidden className="min-w-0 flex-1 font-medium">
-            {t("held.countdown", { note: String(note), time: clock })}
+            {t("held.countdown", { note: String(note), retry, time: clock })}
           </p>
           <Button
             type="button"
             variant="ghost"
             className="border-border h-11 border"
+            aria-label={t("held.cancelLabel", { note: String(note) })}
             onClick={() => {
               release(draft, held.id, "cancelled");
               box.current?.focus();
@@ -766,9 +786,9 @@ function ComposeBox({
           </Button>
         </div>
       ) : null}
-      {saved ? (
+      {saved || notice ? (
         <p role="status" className="text-sm max-sm:col-span-2">
-          {saved}
+          {saved ?? notice}
         </p>
       ) : null}
       {problem || refusal ? (

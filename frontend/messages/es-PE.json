@@ -2549,12 +2549,13 @@
       "idTakenMedia": "Ese id de mensaje ya se usó para otro envío. Vuelve a enviar el archivo.",
       "idTakenGrown": "Puede que la primera parte ya se haya enviado. Revisa el chat y quita del cuadro lo que ya salió antes de volver a enviar.",
       "held": {
-        "countdown": "{note, select, true {Sin conexión: la nota aún no se guardó. Se guardará solo si vuelve la conexión en {time}; si no, vuelve al cuadro.} other {Sin conexión: aún no se envió. Se enviará solo si vuelve la conexión en {time}; si no, vuelve al cuadro.}}",
-        "status": "{note, select, true {Sin conexión: la nota aún no se guardó. Se guardará solo si vuelve la conexión en menos de {minutes, plural, one {# minuto} other {# minutos}}.} other {Sin conexión: aún no se envió. Se enviará solo si vuelve la conexión en menos de {minutes, plural, one {# minuto} other {# minutos}}.}}",
+        "countdown": "{retry, select, true {Sin conexión: este reintento aún no salió (el anterior pudo {note, select, true {guardarse} other {llegar}}). Saldrá solo si vuelve la conexión en {time}; si no, vuelve al cuadro.} other {{note, select, true {Sin conexión: la nota aún no se guardó. Se guardará solo si vuelve la conexión en {time}; si no, vuelve al cuadro.} other {Sin conexión: aún no se envió. Se enviará solo si vuelve la conexión en {time}; si no, vuelve al cuadro.}}}}",
+        "status": "{retry, select, true {Sin conexión: este reintento aún no salió (el anterior pudo {note, select, true {guardarse} other {llegar}}). Saldrá solo si vuelve la conexión en menos de {minutes, plural, one {# minuto} other {# minutos}}.} other {{note, select, true {Sin conexión: la nota aún no se guardó. Se guardará solo si vuelve la conexión en menos de {minutes, plural, one {# minuto} other {# minutos}}.} other {Sin conexión: aún no se envió. Se enviará solo si vuelve la conexión en menos de {minutes, plural, one {# minuto} other {# minutos}}.}}}}",
         "button": "En espera",
         "cancel": "Cancelar",
-        "expired": "{note, select, true {No se guardó: pasaron 5 minutos sin conexión.} other {No se envió: pasaron 5 minutos sin conexión.}} {file, select, true {El texto y el archivo siguen en el cuadro.} other {El texto sigue en el cuadro.}}",
-        "cancelled": "{note, select, true {Cancelado: no se guardó nada.} other {Cancelado: no se envió nada.}} {file, select, true {El texto y el archivo siguen en el cuadro.} other {El texto sigue en el cuadro.}}"
+        "cancelLabel": "{note, select, true {Cancelar nota} other {Cancelar envío}}",
+        "expired": "{retry, select, true {Este reintento no salió: pasaron 5 minutos sin conexión. Revisa la conversación: el intento anterior pudo {note, select, true {guardarse} other {llegar}}.} other {{note, select, true {No se guardó: pasaron 5 minutos sin conexión.} other {No se envió: pasaron 5 minutos sin conexión.}}}} {file, select, true {El texto y el archivo siguen en el cuadro.} other {El texto sigue en el cuadro.}}",
+        "cancelled": "{retry, select, true {Cancelado: este reintento no salió. Revisa la conversación: el intento anterior pudo {note, select, true {guardarse} other {llegar}}.} other {{note, select, true {Cancelado: no se guardó nada.} other {Cancelado: no se envió nada.}}}} {file, select, true {El texto y el archivo siguen en el cuadro.} other {El texto sigue en el cuadro.}}"
       },
       "unsure": {
         "warning": "Puede que el archivo ya se haya enviado: revisa la conversación antes de reenviar.",
