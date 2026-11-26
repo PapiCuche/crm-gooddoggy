@@ -7100,7 +7100,7 @@ export const getConversationsListUrl = (orgSlug: string, params?: ConversationsL
 };
 
 /**
- * Las conversaciones dentro del alcance de `conversations.view`, la de mensaje más reciente primero (`last_message_at`, `id`; cursor de dos valores). `box`, `status` y `unanswered` se combinan y la página siguiente se pide con los mismos. 400: un filtro repetido o no válido.
+ * Las conversaciones dentro del alcance de `conversations.view`, la de mensaje más reciente primero (`last_message_at`, `id`; cursor de dos valores). `box`, `status`, `unanswered` y `platform` se combinan y la página siguiente se pide con los mismos. 400: un filtro repetido o no válido.
  */
 export const conversationsList = async (
   orgSlug: string,
@@ -9192,7 +9192,7 @@ export const getConversationsUnansweredCountUrl = (
 };
 
 /**
- * Cuántas conversaciones sin responder (`unanswered=true` de la lista) hay dentro del alcance de `conversations.view` y de `box`. Solo el número.
+ * Cuántas conversaciones sin responder (`unanswered=true` de la lista) hay dentro del alcance de `conversations.view`, de `box` y de `platform`. Solo el número.
  */
 export const conversationsUnansweredCount = async (
   orgSlug: string,

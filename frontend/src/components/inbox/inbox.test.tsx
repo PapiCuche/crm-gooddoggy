@@ -689,7 +689,9 @@ describe("Inbox, chat (F6-03)", () => {
     // mide; la medición real es en el navegador)
     const refresh = screen.getByRole("button", { name: "Actualizar mensajes" });
     expect(refresh.parentElement).toHaveClass("flex", "flex-wrap");
-    expect(screen.getByRole("button", { name: "Mías" }).parentElement).toHaveClass("flex-wrap");
+    // los filtros rápidos, en una fila que se desliza de lado bajo 1024 px (UX-INBOX-02)
+    const quick = screen.getByRole("button", { name: "Mías" }).parentElement!.parentElement;
+    expect(quick).toHaveClass("overflow-x-auto", "lg:flex-wrap");
     // encabezado de una fila: volver, nombre, ficha y actualizar; el número y el estado debajo
     const card = screen.getByRole("button", { name: "Cliente y oportunidades" });
     expect(card.parentElement).toBe(refresh.parentElement);
