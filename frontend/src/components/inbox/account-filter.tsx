@@ -34,9 +34,8 @@ export function useAccountOptions() {
   });
 }
 
-// El selector de cuenta: «Red · nombre» en texto (el color nunca va solo) y, al lado, el icono de
-// la red de la elegida. Con una sola cuenta no hay nada que elegir; sin opciones (aún o por un
-// fallo) no se muestra, salvo que ya haya una elegida, para poder quitarla.
+// El selector de cuenta: «Red · nombre» en texto (el color nunca va solo) y el icono de la red de
+// la elegida. Sin dos cuentas (o sin opciones por un fallo) no se muestra, salvo con una elegida.
 export function AccountFilter({
   value,
   onChange,
@@ -64,7 +63,8 @@ export function AccountFilter({
           className={`mb-3.5 size-4 shrink-0 ${TONES[tone].icon}`}
         />
       ) : null}
-      <div className="min-w-0 flex-1">
+      {/* WebKit: sin `overflow-hidden`, el texto largo de la elegida ensancha la página. */}
+      <div className="min-w-0 flex-1 [&_select]:overflow-hidden">
         <Choice
           label={t("account")}
           value={value}

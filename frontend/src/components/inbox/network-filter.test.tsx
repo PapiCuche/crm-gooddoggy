@@ -201,6 +201,7 @@ describe("filtro por cuenta del Inbox (UX-INBOX-02d)", () => {
       .map((one) => one.textContent);
     expect(texts).toEqual(["Todas las cuentas", "WhatsApp · Ventas Lima", "Instagram · Tienda IG"]);
     expect(select).toHaveClass("h-11");
+    expect(select.parentElement!.parentElement).toHaveClass("[&_select]:overflow-hidden"); // WebKit
     fireEvent.change(select, { target: { value: "ch-WHATSAPP" } });
     await waitFor(() => expect(screen.queryByRole("button", { name: /Inés Soto/ })).toBeNull());
     expect(
