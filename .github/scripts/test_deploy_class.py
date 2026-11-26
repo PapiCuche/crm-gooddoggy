@@ -96,6 +96,7 @@ class DeployClassTest(unittest.TestCase):
         cases = [
             ("models.IntegerField(null=True)", "A3"),
             ("models.IntegerField(db_default=0)", "A3"),
+            ("models.IntegerField(db_default=None)", "C"),
             ("models.IntegerField(null=True, default=1)", "A3"),
             ("models.IntegerField(default=0)", "C"),  # default= de Django en NOT NULL no es A3
             ("models.IntegerField()", "C"),
@@ -103,6 +104,7 @@ class DeployClassTest(unittest.TestCase):
             ("models.IntegerField(null=False, default=0)", "C"),
             ("models.IntegerField(null=True, unique=True)", "B"),
             ("models.IntegerField(null=True, db_index=True)", "B"),
+            ("models.SlugField(null=True)", "B"),
             ('models.ForeignKey(null=True, on_delete=models.CASCADE, to="shop.item")', "B"),
             ('models.ForeignKey(null=True, db_index=False, db_constraint=False, on_delete=models.CASCADE, to="x")', "A3"),
         ]
@@ -204,6 +206,8 @@ class DeployClassTest(unittest.TestCase):
         self.assertEqual(self.cls({".github/workflows/x.yml": "jobs:\n  a:\n    environment: production\n"}), "B")
         self.assertEqual(self.cls({".github/workflows/x.yml": "run: echo ${{ secrets.DEPLOY_KEY }}\n"}), "B")
         self.assertEqual(self.cls({".github/workflows/x.yml": "env:\n  T: ${{ secrets.GITHUB_TOKEN }}\n"}), "none")
+        for text in ("${{ secrets['DEPLOY_KEY'] }}", "    secrets: inherit", "permissions: write-all"):
+            self.assertTrue(DELIVERY_WORKFLOW.search(text), text)
         none = {p.name for p in (ROOT / ".github/workflows").glob("*.yml") if not DELIVERY_WORKFLOW.search(p.read_text())}
         # Lista revisada: ninguno construye, publica ni despliega imágenes ni usa más secreto que GITHUB_TOKEN.
         self.assertEqual(none, {"deploy-class.yml", "pr-governance.yml", "pr-governance-trusted.yml", "security.yml",
@@ -218,6 +222,15 @@ class DeployClassTest(unittest.TestCase):
         self.assertEqual([c["class"] for c in report["commits"]], ["C", "C", "A1"])
         self.assertEqual(report["class"], "C")
         self.assertEqual({d["path"] for d in report["decisive"]}, {"infra/prod/deploy.sh"})
+
+    def test_a_merge_that_brings_back_old_files_is_classified(self):
+        repo = Repo(self)  # padres (base, O antiguo); el árbol toma de O infra/prod y una migración ya enviada
+        old = repo.commit({"infra/prod/deploy.sh": "old"})
+        base = repo.commit({"infra/prod/deploy.sh": "new", "backend/apps/shop/migrations/0001_initial.py": INITIAL + "#"})
+        merge = repo.git("commit-tree", repo.git("rev-parse", f"{old}^{{tree}}"), "-p", base, "-p", old, "-m", "evil")
+        report = repo.report(base=base, head=merge)
+        self.assertEqual(report["class"], "C")
+        self.assertIn("backend/apps/shop/migrations/0001_initial.py", {d["path"] for d in report["decisive"]})
 
     def test_merges_classify_their_own_changes(self):
         repo = Repo(self)

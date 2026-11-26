@@ -13,9 +13,8 @@ Closes #
 
 ## Clase de despliegue
 
-<!-- ADR-048 §2: none, A1, A2, A3, B o C. La calculada está en el resumen del check «deploy class»
-     (solo informativa en la fase 1). Se puede declarar una mayor, nunca una menor: manda la mayor.
-     Declara C si el release exige cambiar un archivo de entorno (/etc/crm/*.env) o rotar una KEK. -->
+<!-- ADR-048 §2: none, A1, A2, A3, B o C (la calculada está en el resumen del check «deploy class»). Manda la
+     mayor: nunca se declara una menor. C si el release exige cambiar /etc/crm/*.env o rotar una KEK. -->
 
 Declarada:
 

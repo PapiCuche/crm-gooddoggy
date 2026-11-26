@@ -1,9 +1,8 @@
 name: deploy-class
 
-# F1-20a (ADR-048 §2): clase de despliegue del rango, SOLO INFORMATIVA en la fase 1. No es un check
-# requerido, no despliega ni aprueba nada y sale con 0 sea cual sea la clase (bloquear es fase 2, no
-# autorizada). Solo lee el repositorio: `contents: read`, sin secretos, sin red más allá del checkout.
-# Ejecuta código del PR: `pull_request` (nunca `pull_request_target`).
+# F1-20a (ADR-048 §2): clase de despliegue, SOLO INFORMATIVA en la fase 1: no es un check requerido, no
+# despliega ni aprueba nada y sale con 0 sea cual sea la clase (bloquear es fase 2, no autorizada). Solo
+# lee el repositorio (`contents: read`, sin secretos). Código del PR: `pull_request`, nunca `_target`.
 on:
   pull_request:
   push:

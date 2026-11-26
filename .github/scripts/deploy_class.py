@@ -3,8 +3,7 @@
 Classifies every commit of `(base, head]` with the path table `deploy_class_rules.json` and the
 expansion rules for new migrations, and reports the highest class with the reason of every file.
 It fails closed: whatever it cannot classify, and any error, is class C. It only reads the local
-git repository: no network, no token, no secrets. Phase 1: informative only, it deploys nothing.
-Standard library only.
+git repository: no network, no token, no secrets. Phase 1: informative only. Standard library only.
 """
 
 from __future__ import annotations
@@ -12,6 +11,7 @@ from __future__ import annotations
 import argparse
 import ast
 import contextlib
+import html
 import json
 import pathlib
 import re
@@ -23,16 +23,16 @@ RANK = {c: i for i, c in enumerate(ORDER)}
 RULES_FILE = pathlib.Path(__file__).resolve().parent / "deploy_class_rules.json"
 # Un workflow que construye, publica o despliega imágenes, o usa secretos o entornos, es B como mínimo.
 DELIVERY_WORKFLOW = re.compile(
-    r"environment:|packages:\s*write|deployments:\s*write|secrets\.(?!GITHUB_TOKEN\b)"
+    r"environment:|packages:\s*write|deployments:\s*write|write-all|secrets(?:\.(?!GITHUB_TOKEN\b)|\[|:\s*inherit)"
     r"|docker (?:buildx )?build|build-push-action|build-images\.sh"
 )
 EXPANSION_OPS = {"AddField", "AddIndex", "AddConstraint", "EnableRLS", "CompositeTenantFK"}
 OP_PREFIXES = {
-    "django.db.migrations.": None,
-    "django.contrib.postgres.operations.": {"AddIndexConcurrently"},
-    "core.db.operations.": {"EnableRLS", "CompositeTenantFK", "SecurityDefinerFunction"},
+    "django.db.migrations": None,
+    "django.contrib.postgres.operations": {"AddIndexConcurrently"},
+    "core.db.operations": {"EnableRLS", "CompositeTenantFK", "SecurityDefinerFunction"},
 }
-INDEXED_FIELDS = {"ForeignKey", "OneToOneField", "ForeignObject"}
+INDEXED_FIELDS = {"ForeignKey", "OneToOneField", "ForeignObject", "SlugField"}
 MIGRATION_ATTRS = {"dependencies", "operations", "atomic", "initial"}
 DECLARED_RE = re.compile(r"^##\s+Clase de despliegue\s*$(.*?)(?=^##\s|\Z)", re.M | re.S)
 
@@ -93,15 +93,13 @@ class Git:
         return self.run("cat-file", "blob", f"{sha}:{path}").decode("utf-8")
 
     def changes(self, sha: str) -> list[tuple[str, str, list[str]]]:
-        """(path, status letters, modes) per file; merges only list what differs from every parent."""
-        out = self.run("diff-tree", "-r", "-c", "--raw", "-z", "--no-renames", "--no-commit-id", "--root", sha)
-        items = out.decode("utf-8").split("\0")
-        result = []
+        """(path, status letters, modes) per file; a merge against EACH parent (-m: over-classifies, never hides)."""
+        out = self.run("diff-tree", "-r", "-m", "--raw", "-z", "--no-renames", "--no-commit-id", "--root", sha)
+        items, found = out.decode("utf-8").split("\0"), {}
         for meta, path in zip(items[0::2], items[1::2]):
-            parents = len(meta) - len(meta.lstrip(":"))
-            fields = meta.lstrip(":").split()
-            result.append((path, fields[-1], fields[: parents + 1]))
-        return result
+            fields, (status, modes) = meta.lstrip(":").split(), found.get(path, ("", []))
+            found[path] = (status + fields[-1], modes + fields[:2])
+        return [(path, status, modes) for path, (status, modes) in found.items()]
 
 
 def resolve(node: ast.AST, names: dict[str, str], bound: set[str]) -> str | None:
@@ -164,11 +162,9 @@ def parse_migration(source: str) -> tuple[list[tuple[str, ast.Call]], bool]:
         raise Unanalyzable("operations no es una lista literal de operaciones")
     result = []
     for call in ops.elts:
-        full = resolve(call.func, names, bound) or "?"
-        name = full.rsplit(".", 1)[-1]
-        prefix = full[: len(full) - len(name)]
-        known = prefix in OP_PREFIXES and (OP_PREFIXES[prefix] is None or name in OP_PREFIXES[prefix])
-        result.append((name if known else f"desconocida {full}", call))
+        prefix, _, name = (resolve(call.func, names, bound) or "?").rpartition(".")
+        allowed = OP_PREFIXES.get(prefix, set())  # None: cualquier operación de django.db.migrations
+        result.append((name if allowed is None or name in allowed else f"desconocida {prefix}.{name}", call))
     return result, atomic.value
 
 
@@ -222,7 +218,7 @@ def op_class(op: str, call: ast.Call, app: str, created: set, atomic: bool) -> t
     if not isinstance(field, ast.Call) or any(k.arg is None for k in field.keywords):
         raise Unanalyzable("AddField con un campo no literal")
     kw = {k.arg: k.value for k in field.keywords}
-    if literal(kw.get("null")) is not True and "db_default" not in kw:
+    if literal(kw.get("null")) is not True and literal(kw.get("db_default")) is None:
         return "C", f"AddField NOT NULL sin db_default en la tabla existente {model}: la imagen anterior no lo inserta (§2.2 regla 2)"
     kind = field.func.attr if isinstance(field.func, ast.Attribute) else getattr(field.func, "id", "?")
     plain_fk = literal(kw.get("db_index")) is False and literal(kw.get("db_constraint")) is False
@@ -325,7 +321,7 @@ def classify(repo: str, base: str, head: str, declared: str | None = None) -> di
 
 
 def markdown(report: dict) -> str:
-    cell = lambda s: str(s).replace("|", "\\|").replace("\n", " ")  # noqa: E731
+    cell = lambda s: html.escape(str(s)).replace("|", "\\|").replace("\n", " ")  # noqa: E731
     lines = [
         f"## Clase de despliegue: **{report['class']}**", "",
         f"Rango `({report['base'][:12]}, {report['head'][:12]}]`: {len(report['commits'])} commits. "
