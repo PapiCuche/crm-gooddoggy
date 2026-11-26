@@ -42,8 +42,9 @@ export type Filters = {
   unanswered: boolean; // solo las abiertas cuyo último mensaje es del cliente (F6-09)
   platform: (typeof PLATFORMS)[number]; // solo las de esa red (UX-INBOX-02)
 };
-// ≥44 px de alto bajo 1024 px (táctil); `shrink-0`: en la fila deslizable nada se aplasta.
-const CHIP = "border-border min-h-11 shrink-0 border lg:min-h-9";
+// ≥44 px de alto bajo 1024 px (táctil); `shrink-0`: en la fila deslizable nada se aplasta, y cada
+// chip es un punto de anclaje al deslizarla.
+const CHIP = "border-border min-h-11 shrink-0 snap-start border lg:min-h-9";
 
 // La lista de conversaciones (F6-03): las que devuelve `GET …/conversations/` (F6-02b), la de
 // mensaje más reciente primero, con la bandeja, la red y el estado como filtros (en el servidor).
@@ -134,8 +135,18 @@ export function ConversationList({
       <div role="group" aria-label={t("filters.landmark")} className="flex flex-col gap-3">
         {/* Bajo 1024 px, bandeja, «Sin responder» y red en una sola fila que se desliza de lado
             (sin barra ni desplazamiento de la página); en pantalla ancha, se reparten. `p-1`
-            deja ver entero el contorno del foco, que el desplazamiento recortaría. */}
-        <div className="-m-1 flex [scrollbar-width:none] gap-2 overflow-x-auto p-1 lg:flex-wrap lg:overflow-visible [&::-webkit-scrollbar]:hidden">
+            deja ver entero el contorno del foco, que el desplazamiento recortaría. UX-INBOX-02b:
+            el borde final se desvanece (hay más chips); el relleno final y `scroll-padding` del
+            mismo ancho dejan fuera del desvanecido el último chip y el enfocado (con el teclado,
+            el navegador no mueve uno que ya se ve en parte: `scrollIntoView`, sin animación). Si
+            no se pide menos movimiento, se detiene en un chip. `relative`: el `sr-only` (absoluto)
+            queda dentro de la fila y no ensancha la página a 320 px. */}
+        <div
+          className="max-lg:edge-fade relative -m-1 flex scroll-ps-1 [scrollbar-width:none] gap-2 overflow-x-auto p-1 motion-safe:snap-x motion-safe:snap-proximity max-lg:scroll-pe-8 max-lg:pe-8 lg:flex-wrap lg:overflow-visible [&::-webkit-scrollbar]:hidden"
+          onFocus={(event) =>
+            event.target.scrollIntoView?.({ block: "nearest", inline: "nearest" })
+          }
+        >
           <div
             role="group"
             aria-label={t("filters.box")}

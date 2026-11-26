@@ -140,3 +140,17 @@
     translate: 0 100%;
   }
 }
+
+/* UX-INBOX-02b: la fila de filtros que se desliza de lado (bajo 1024 px) se desvanece en su borde
+   final: el chip que queda cortado avisa que hay más. El relleno final de la fila (2rem, el mismo
+   ancho) deja ver entero el último chip al llegar al final. Con `dir="rtl"` (en la fila o más
+   arriba), el borde izquierdo: con el atributo y no `:dir()`, que la compilación pasa a `:lang()`.
+   El prefijo `-webkit-` lo pide Safari; va escrito aunque la compilación también lo añada. */
+@utility edge-fade {
+  --edge-fade: linear-gradient(to right, #000 calc(100% - 2rem), transparent);
+  -webkit-mask-image: var(--edge-fade);
+  mask-image: var(--edge-fade);
+  &:where([dir="rtl"], [dir="rtl"] *) {
+    --edge-fade: linear-gradient(to left, #000 calc(100% - 2rem), transparent);
+  }
+}
