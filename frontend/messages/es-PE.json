@@ -2447,6 +2447,8 @@
       "RETRYING": "Reintentando",
       "UNCONFIRMED": "Sin confirmar"
     },
+    "paused": "Sin conexión: se enviará al reconectar",
+    "pausedNote": "Sin conexión: se guardará al reconectar",
     "failure": {
       "CONVERSATION_CLOSED": "La conversación estaba cerrada.",
       "CHANNEL_UNAVAILABLE": "El canal no estaba conectado.",

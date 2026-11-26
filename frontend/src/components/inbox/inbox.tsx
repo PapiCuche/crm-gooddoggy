@@ -183,7 +183,8 @@ export function Inbox() {
 
 // UX-INBOX-06: el estado del tiempo real bajo el título, con icono y texto. Abierta o conectando,
 // nada: no se afirma que todo esté al día. Encendido, la región (cortés) existe siempre, sin ocupar
-// sitio; apagado, ni la región.
+// sitio; apagado, ni la región. La región tiene caja (UX-INBOX-06c): con `display: contents`
+// WebKit antiguo la saca del árbol de accesibilidad; vacía, fuera del flujo (sin hueco del `gap`).
 const SHOWN = {
   lost: <RefreshCw aria-hidden className="motion-safe:animate-spin" />,
   offline: <WifiOff aria-hidden />,
@@ -194,7 +195,7 @@ function Live({ status }: { status: LiveStatus }) {
   if (status === "off") return null;
   const shown = Object.hasOwn(SHOWN, status) ? (status as keyof typeof SHOWN) : null;
   return (
-    <div role="status" className="contents">
+    <div role="status" className="empty:absolute">
       {shown ? (
         <p className="border-border bg-surface text-foreground inline-flex w-fit items-center gap-1.5 rounded-full border px-3 py-1 text-sm font-medium [&_svg]:size-4">
           {SHOWN[shown]}

@@ -1,6 +1,12 @@
 "use client";
 
-import { type InfiniteData, useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  type InfiniteData,
+  type QueryClient,
+  type QueryKey,
+  useMutation,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { FileText, ImageIcon, Paperclip, RotateCw, Send, StickyNote, X } from "lucide-react";
 import { useFormatter, useTranslations } from "next-intl";
 import {
@@ -118,6 +124,28 @@ const edit = (data: Pages | undefined, change: (rows: Message[], newest: boolean
     ...data,
     pages: data.pages.map((page, i) => ({ ...page, results: change(page.results, i === 0) })),
   };
+const holds = (data: Pages | undefined, id: string | null) =>
+  !!data?.pages.some((page) => page.results.some((row) => row.client_message_id === id));
+
+// UX-INBOX-06c: releer la primera página conserva las respuestas `pending-…` de esta conversación
+// salvo la que ya trae el servidor (mismo `client_message_id`); una nota no: la API no da su id y
+// saldría dos veces. `onSuccess`/`onError` quitan la burbuja y releen: cancelan otra lectura.
+export function keepPending(client: QueryClient, key: QueryKey, page: PaginatedMessageList) {
+  const mine = client.getQueryData<Pages>(key)?.pages[0]?.results ?? [];
+  const kept = mine.filter(
+    (row) =>
+      row.direction === "OUTBOUND" &&
+      row.id === `pending-${row.client_message_id}` &&
+      !page.results.some(({ client_message_id }) => client_message_id === row.client_message_id),
+  );
+  return kept.length ? { ...page, results: [...kept, ...page.results] } : page;
+}
+// Un envío en pausa (sin conexión): la pantalla solo sabe su id, nunca el texto ni el archivo.
+type Sending = { state: { isPaused: boolean; status: string; variables?: unknown } }; // mutación
+export const pausedId = ({ state }: Sending) =>
+  state.isPaused && state.status === "pending"
+    ? ((state.variables as Partial<Outgoing> | undefined)?.client_message_id ?? null)
+    : null;
 
 // El cuadro de redacción (F6-04c y F6-05c): dos modos con su propio borrador, su propia ruta y su
 // propio identificador. «Responder al cliente» (`POST …/messages/`, `messages.send`) y «Nota
@@ -328,8 +356,11 @@ function ComposeBox({
         ...{ provider_error_code: null, provider_error_detail: null, attachment: null },
         dispatch_attempts: 0,
       };
+      // Un reintento de lo que el servidor ya guardó (la respuesta se perdió) no se dibuja dos veces.
       client.setQueryData<Pages>(key, (data) =>
-        edit(data, (rows, newest) => (newest ? [pending, ...rows] : rows)),
+        holds(data, request.client_message_id)
+          ? data
+          : edit(data, (rows, newest) => (newest ? [pending, ...rows] : rows)),
       );
       setProblem(null);
       setRefusal(null);
