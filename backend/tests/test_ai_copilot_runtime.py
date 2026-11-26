@@ -414,9 +414,10 @@ def kill() -> None:
     """La base corta la sesión de Django desde otra conexión del mismo rol: Django no lo ve hasta
     su próxima consulta (ningún error que lo diga). `pg_terminate_backend` espera (hasta 20 s) a que
     el proceso salga; si no, devuelve `false` y la aserción falla (quien llama cuenta que el corte
-    terminó). F8-TEST-02: sondear `pg_stat_activity` no sirve, es una foto por transacción."""
+    terminó). F8-TEST-02: sondear `pg_stat_activity` no sirve, es una foto por transacción; en
+    autocommit, cada consulta la mira de nuevo (F1-TEST-02)."""
     pid = connection.connection.info.backend_pid
-    with psycopg.connect(**connection.get_connection_params()) as other:
+    with psycopg.connect(**connection.get_connection_params(), autocommit=True) as other:
         assert other.execute("SELECT pg_terminate_backend(%s, 20000)", [pid]).fetchone() == (True,)
         gone = "SELECT count(*) FROM pg_stat_activity WHERE pid = %s"
         assert other.execute(gone, [pid]).fetchone() == (0,)

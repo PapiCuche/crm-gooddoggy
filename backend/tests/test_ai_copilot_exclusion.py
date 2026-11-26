@@ -15,6 +15,7 @@ from typing import Any
 from unittest.mock import Mock
 from uuid import UUID, uuid4
 
+import psycopg
 import pytest
 from django.conf import settings as settings_module
 from django.db import OperationalError, connection
@@ -473,20 +474,31 @@ def test_the_row_gets_only_what_is_left_of_the_wait_and_a_busy_row_is_a_retryabl
     1,5 s cuentan desde que la petición pide el candado, y la espera se mide de ahí al fin de la
     fila: con la máquina cargada, el resto de la petición tarda segundos que no son espera
     (F1-TEST-01). Cuenta también lo que pase entre las dos esperas. Con 3 s (no 2), quien retiene
-    la llamada tiene 1,5 s, no 0,5, para soltarla antes del `lock_timeout` (F8-TEST-02)."""
+    la llamada tiene 1,5 s, no 0,5, para soltarla antes del `lock_timeout` (F8-TEST-02). El plazo
+    se comprueba con el `lock_timeout` vigente al pedir la fila (leído en esa conexión justo antes),
+    no con el reloj de pared (F1-TEST-02): el código acota la espera al fijar el resto, y lo que
+    Python tarde después de fijarlo no lo acota por diseño (con la máquina muy cargada, más de 1 s).
+    El reloj de pared, holgado, solo detecta paradas groseras (≥ ~2 s); la guarda precisa de los
+    `lock_timeout` es la del presupuesto."""
     settings.AI_EXCLUSION_WAIT_SECONDS = 3
-    held, asked, waits = threading.Event(), threading.Event(), list[tuple[str, float, float]]()
+    held, asked, waits = threading.Event(), threading.Event(), list[tuple[str, float, float, Any]]()
+    kinds = {attention._WAIT: "timeout", attention._CALL_EXCLUSIVE: "call"}
+    in_effect = "SELECT setting FROM pg_settings WHERE name = 'lock_timeout'"  # en ms
 
     def timed(execute: Any, sql: str, params: Any, many: bool, context: Any) -> Any:
-        kind = "call" if sql == attention._CALL_EXCLUSIVE else "row" if "FOR NO KEY" in sql else ""
+        kind = kinds.get(sql, "row" if "FOR NO KEY" in sql else "")
         if kind == "call":
             asked.set()
+        seen = params
+        if kind == "row":  # el que de verdad tendrá la fila, lo haya fijado quien lo haya fijado
+            context["cursor"].execute(in_effect)
+            seen = context["cursor"].fetchone()
         began = time.monotonic()
         try:
             return execute(sql, params, many, context)
         finally:
             if kind:
-                waits.append((kind, began, time.monotonic()))
+                waits.append((kind, began, time.monotonic(), seen))
 
     def hold() -> None:
         with attention.ai_call(ctx(desk.a, desk.ana), desk.convo, 5):
@@ -503,10 +515,12 @@ def test_the_row_gets_only_what_is_left_of_the_wait_and_a_busy_row_is_a_retryabl
             answer = put(desk)
     holder.join(10)
     assert (answer.status_code, answer.json()["code"]) == (409, "CONVERSATION_BUSY")
-    assert [kind for kind, *_ in waits] == ["call", "row"]  # una vez cada una, en este orden
-    (_, call, called), (_, _, row_end) = waits
-    assert 1.4 < called - call  # la petición esperó a la llamada
-    assert row_end - call < 3.4  # una espera de 3 s, no 1,5 + 3
+    # una vez cada una, en este orden, cada espera con su `lock_timeout`
+    assert [kind for kind, *_ in waits] == ["timeout", "call", "timeout", "row"]
+    (_, first, _, whole), (_, call, called, _), (_, second, *_), (_, _, row_end, row) = waits
+    assert whole == ["3000ms"] and 1.4 < called - call  # la petición esperó a la llamada
+    assert second - first + int(row[0]) / 1000 < 3.1  # a la fila, lo que queda de los 3 s
+    assert row_end - first < 5.0  # solo una parada grosera entre fijarlo y esperar la fila
     assert excluded_at(migrator, desk) is None and migrator_version(desk) == version
     assert migrator.execute(AUDITED).fetchone() == (0,)
     assert put(desk).status_code == 200  # reintentar, ya libre
@@ -531,21 +545,48 @@ def test_a_stale_version_is_refused_before_waiting_and_takes_no_waiting_slot(
     assert outcome == ["OK"] and excluded_at(migrator, desk) is None
 
 
+def process() -> tuple[int, Any]:
+    """El proceso en la base de la conexión de Django de este hilo: su pid y `backend_start` (un pid
+    se reutiliza). Lo pregunta la propia sesión: otro rol no ve `backend_start`."""
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT pid, backend_start FROM pg_stat_activity WHERE pid = pg_backend_pid()"
+        )
+        pid, started = cursor.fetchone()
+    return pid, started
+
+
+def ended(session: tuple[int, Any]) -> None:
+    """F1-TEST-02: cerrar una conexión solo cierra el socket; su proceso en la base suelta los
+    candados de sesión al salir, un poco después. Espera (como mucho 10 s) a que salga ese proceso
+    (pid y `backend_start` de `process()`), y si no sale falla; nunca espera a que la cuenta de
+    candados llegue a 0. Mira con el mismo rol (ve `backend_start`) y en autocommit: cada consulta
+    ve `pg_stat_activity` de nuevo, no la foto de una transacción."""
+    alive = "SELECT count(*) FROM pg_stat_activity WHERE pid = %s AND backend_start = %s"
+    end = time.monotonic() + 10
+    with psycopg.connect(**connection.get_connection_params(), autocommit=True) as other:
+        while other.execute(alive, session).fetchone() != (0,):
+            assert time.monotonic() < end, "el proceso de la conexión cerrada sigue vivo"
+            threading.Event().wait(0.01)  # `desk` sustituye `time.sleep`
+
+
 def test_a_call_lock_whose_short_transaction_fails_after_taking_it_closes_the_connection(
     desk: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """F8-13d: el candado es de sesión; si su transacción corta falla después de tomarlo, la
     conexión se cierra (la base lo suelta) y no queda retenido."""
-    real = attention._locked
+    real, closed = attention._locked, list[tuple[int, Any]]()
 
     def broken(*args: Any) -> None:
         real(*args)
+        closed.append(process())
         raise OperationalError("tras tomarlo")
 
     monkeypatch.setattr(attention, "_locked", broken)
     with pytest.raises(OperationalError), attention.ai_call(ctx(desk.a, desk.ana), desk.convo, 5):
         pytest.fail("no entra")
     assert connection.connection is None
+    ended(*closed)
     assert migrator.execute(
         "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory'"
     ).fetchone() == (0,)
