@@ -413,8 +413,8 @@ def test_a_run_that_cannot_be_saved_is_logged_without_content_and_the_error_prop
 def kill() -> None:
     """La base corta la sesión de Django desde otra conexión del mismo rol: Django no lo ve hasta
     su próxima consulta (ningún error que lo diga). `pg_terminate_backend` espera (hasta 20 s) a que
-    el proceso salga: con la máquina cargada tarda segundos (F8-TEST-02). Si no sale a tiempo,
-    devuelve `false` y la aserción falla (quien llama cuenta que el corte terminó)."""
+    el proceso salga; si no, devuelve `false` y la aserción falla (quien llama cuenta que el corte
+    terminó). F8-TEST-02: sondear `pg_stat_activity` no sirve, es una foto por transacción."""
     pid = connection.connection.info.backend_pid
     with psycopg.connect(**connection.get_connection_params()) as other:
         assert other.execute("SELECT pg_terminate_backend(%s, 20000)", [pid]).fetchone() == (True,)
