@@ -586,11 +586,8 @@ def replayed_media(
         _uuid(conversation_id, "conversación"),
         _uuid(client_message_id, "id"),
     )
-    body = (  # el pie, o la etiqueta del tipo sin pie
-        Q(body=caption) if caption
-        else Q(*(Q(message_type=kind, body=label) for kind, label in outbound_media.LABELS.items()),
-               _connector=Q.OR)
-    )  # fmt: skip
+    pairs = (Q(message_type=k, body=v) for k, v in outbound_media.LABELS.items())  # sin pie
+    body = Q(body=caption) if caption else Q(*pairs, _connector=Q.OR)
     mine = Message.objects.using(alias).filter(
         body, conversation_id=conversation_id, client_message_id=client_id, direction="OUTBOUND",
         sender_type="USER", sender_user_id=ctx.user_id, message_type__in=outbound_media.LABELS,

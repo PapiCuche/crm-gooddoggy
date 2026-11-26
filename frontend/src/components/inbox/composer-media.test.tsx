@@ -1,12 +1,4 @@
-import {
-  act,
-  cleanup,
-  configure,
-  fireEvent,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
+import { cleanup, configure, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TenantProvider } from "@/components/app-shell/tenant-context";
@@ -99,8 +91,7 @@ const attach = async (file: File) => {
 };
 const caption = () => screen.findByRole("textbox", { name: "Pie de foto (opcional)" });
 const send = (name = "Enviar") => fireEvent.click(screen.getByRole("button", { name }));
-// Tras el primer toque, el segundo cuenta pasados 500 ms (`SETTLE`): un doble toque no confirma.
-const pause = () => act(() => new Promise((resolve) => setTimeout(resolve, 550)));
+const pause = () => new Promise((resolve) => setTimeout(resolve, 550)); // pasado `SETTLE`
 
 configure({ asyncUtilTimeout: 4000 });
 vi.setConfig({ testTimeout: 15_000 });
@@ -317,17 +308,15 @@ describe("adjuntar desde el cuadro de redacción (F7-09b3)", () => {
     net.answer();
     send("Reintentar"); // idéntico: el mismo id; si choca, sigue dudoso
     await waitFor(() => expect(s.forms()).toHaveLength(2));
-    const [first, again] = s.forms().map((form) => form.get("client_message_id"));
-    expect(again).toBe(first);
+    const first = s.forms()[0]!.get("client_message_id");
     expect(await screen.findByRole("alert")).toHaveTextContent(/primera parte ya se haya enviado/);
     expect(screen.getByText(/Puede que el archivo ya se haya enviado/)).toBeVisible();
     fireEvent.change(await caption(), { target: { value: "Su cotización, con delivery" } });
-    const button = screen.getByRole("button", { name: "Enviar" });
-    fireEvent.click(button);
-    fireEvent.click(button); // doble toque: el segundo no confirma
+    send();
+    send(); // doble toque: el segundo no confirma
     expect(await screen.findByText(/se enviará como mensaje nuevo/)).toBeVisible();
     await pause();
-    expect(s.forms()).toHaveLength(2);
+    expect(s.forms().map((form) => form.get("client_message_id"))).toEqual([first, first]);
     reply = { status: 202, body: outbound("s2", "DOCUMENT", "Su cotización, con delivery") };
     send(); // ahora sí: otro id, con su archivo
     await waitFor(() => expect(s.forms()).toHaveLength(3));

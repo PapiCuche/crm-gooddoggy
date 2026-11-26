@@ -41,11 +41,11 @@ from rest_framework.views import APIView
 
 from apps.access.permissions import rbac_errors, request_context
 from apps.access.selectors import can, scoped
-from apps.conversations import commands, limits, media, outbound_media, policy, selectors
+from apps.conversations import commands, limits, outbound_media, policy, selectors
 from apps.conversations.api import inputs
 from apps.conversations.api.messages import REASONS, MessageSerializer, queue, shows_body
 from apps.conversations.media import EXTENSIONS
-from apps.conversations.models import Conversation, Message
+from apps.conversations.models import Conversation
 from core import antivirus, storage
 from core.api.errors import ApiError
 from core.api.schema import errors
@@ -115,15 +115,6 @@ class AttachmentUrlView(APIView):
         return response
 
 
-def _again(tenant: context.TenantContext, found: Conversation, data: dict[str, Any],
-           sink: media.Sink) -> Message | None:  # fmt: skip
-    with rbac_errors():  # el comando vuelve a comprobar `messages.send` y su alcance
-        return commands.replayed_media(
-            tenant, conversation_id=found.pk, client_message_id=data["client_message_id"],
-            caption=data.get("caption"), sha256=sink.digest.hexdigest(),
-        )  # fmt: skip
-
-
 def _refuse(code: str) -> ApiError:
     return ApiError(code, *REFUSED[code])
 
@@ -190,7 +181,12 @@ class SendMediaView(APIView):
             wanted = inputs.SendMediaSerializer(data=_read(request, handler))
             wanted.is_valid(raise_exception=True)
             assert handler.sink is not None  # noqa: S101 — `_read` lo exige
-            again = _again(tenant, found, wanted.validated_data, handler.sink)
+            data = wanted.validated_data
+            with rbac_errors():  # el comando vuelve a comprobar `messages.send` y su alcance
+                again = commands.replayed_media(
+                    tenant, conversation_id=found.pk, client_message_id=data["client_message_id"],
+                    caption=data.get("caption"), sha256=handler.sink.digest.hexdigest(),
+                )  # fmt: skip
             if again is None and decision.reason is not None:  # antes de guardar; y el comando
                 raise ApiError(decision.reason, 409, REASONS[decision.reason])
             if again is None:

@@ -430,8 +430,7 @@ def test_an_identical_retry_after_the_policy_closes_is_the_saved_message_unscann
     mismo cuerpo) aunque la política ya no deje enviar; cualquier otra cosa recibe su 409."""
     ana, convo, key = signed(inbox.ana), whatsapp_convo(inbox, dt.timedelta(hours=1)), str(uuid4())
     first = upload(ana, convo.pk, form(caption="Su foto", client_message_id=key))
-    bare = str(uuid4())
-    plain = upload(ana, convo.pk, form(PDF, client_message_id=bare))  # sin pie
+    plain = upload(ana, convo.pk, form(PDF, client_message_id=(bare := str(uuid4()))))  # sin pie
     assert (first.status_code, plain.status_code) == (202, 202)
     _closed(inbox.a, convo, how)
     again = upload(ana, convo.pk, form(caption="Su foto", client_message_id=key))
@@ -456,7 +455,6 @@ def test_a_retry_is_only_the_senders_own_in_its_conversation_and_organization(
 ) -> None:
     ana, key, other = signed(inbox.ana), str(uuid4()), str(uuid4())
     first = upload(ana, inbox.convs["both"], form(client_message_id=key))
-    assert first.status_code == 202
     sam = upload(signed(inbox.sam), inbox.convs["both"], form(client_message_id=key))
     elsewhere = upload(ana, inbox.convs["nobody"], form(client_message_id=key))
     for refused in (sam, elsewhere):  # otra persona u otra conversación: nunca su mensaje
@@ -465,10 +463,10 @@ def test_a_retry_is_only_the_senders_own_in_its_conversation_and_organization(
                                  "messages.send": "ORGANIZATION"})  # fmt: skip
     luis, b = signed(inbox.luis), BASE.replace("org-a", "org-b")
     theirs = upload(luis, inbox.convs["b"], form(client_message_id=key), b)  # el id de A, en B
-    assert theirs.status_code == 202 and theirs.json()["id"] != first.json()["id"]
+    assert (first.status_code, theirs.status_code) == (202, 202)
+    assert theirs.json()["id"] != first.json()["id"]
     assert upload(luis, inbox.convs["b"], form(client_message_id=other), b).status_code == 202
-    mine = upload(ana, inbox.convs["both"], form(client_message_id=other))  # el de B, en A
-    assert mine.status_code == 202
+    assert upload(ana, inbox.convs["both"], form(client_message_id=other)).status_code == 202  # B→A
     again = upload(ana, inbox.convs["both"], form(client_message_id=key))
     assert (again.status_code, again.json()) == (200, first.json())
     assert len(blobs.objects) == 4 and migrator.execute(COUNT).fetchone() == (4, 4)
@@ -481,11 +479,13 @@ def test_the_replay_rechecks_the_permission_and_the_scope_under_the_lock(
     role = give(inbox.a, join(inbox.a, user).pk, {"conversations.view": "ORGANIZATION",
                                                   "messages.send": "ORGANIZATION"})  # fmt: skip
     convo, key, client = inbox.convs["sam"], str(uuid4()), signed(user)  # de otra persona
-    assert upload(client, convo, form(caption="Hola", client_message_id=key)).status_code == 202
+    first, again = (upload(client, convo, form(caption="Hi", client_message_id=key)) for _ in "12")
+    assert (first.status_code, again.status_code, again.json()) == (202, 200, first.json())
+    assert first.json()["body"] is None  # sin `contacts.view`, tampoco en el reintento
     digest = media.Sink()
     digest.write(JPEG)
     wanted: dict[str, Any] = {"conversation_id": convo, "client_message_id": key,
-                              "caption": "Hola", "sha256": digest.digest.hexdigest()}  # fmt: skip
+                              "caption": "Hi", "sha256": digest.digest.hexdigest()}  # fmt: skip
     me = ctx(inbox.a, user)
     with tenant_scope(me):
         assert commands.replayed_media(me, **wanted) is not None
@@ -494,7 +494,7 @@ def test_the_replay_rechecks_the_permission_and_the_scope_under_the_lock(
         with pytest.raises(Conversation.DoesNotExist):
             commands.replayed_media(me, **wanted)
     monkeypatch.setattr(route, "can", lambda *a: True)  # la ruta lo vio justo antes del cambio
-    late = upload(client, convo, form(caption="Hola", client_message_id=key))
+    late = upload(client, convo, form(caption="Hi", client_message_id=key))
     assert reply(late) == NOT_FOUND  # el mismo 404
     with tenant_scope(me):
         sends.delete()  # ni el permiso
@@ -502,20 +502,19 @@ def test_the_replay_rechecks_the_permission_and_the_scope_under_the_lock(
             commands.replayed_media(me, **wanted)
 
 
+NOWAIT = "SELECT 1 FROM conversations WHERE id = %s FOR NO KEY UPDATE NOWAIT"
+
+
 def test_a_near_retry_scans_without_holding_the_conversation_lock(
     inbox: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """El mismo id y el mismo archivo con otro pie (o sin él) no es un reintento: el antivirus y el
-    almacén corren sin el bloqueo de la conversación, y luego llega su 409."""
     ana, convo, key = signed(inbox.ana), inbox.convs["nobody"], str(uuid4())
     assert upload(ana, convo, form(caption="Su foto", client_message_id=key)).status_code == 202
-    free: list[bool] = []
-    real = outbound_media.prepare
+    free, real = list[bool](), outbound_media.prepare
 
     def prepare(*args: Any) -> Any:
         with migrator.transaction():  # otra conexión: falla si la vista tiene la fila
-            lock = "SELECT 1 FROM conversations WHERE id = %s FOR NO KEY UPDATE NOWAIT"
-            free.append(migrator.execute(lock, [convo]).fetchone() == (1,))
+            free.append(migrator.execute(NOWAIT, [convo]).fetchone() == (1,))
         return real(*args)
 
     monkeypatch.setattr(outbound_media, "prepare", prepare)
@@ -523,15 +522,3 @@ def test_a_near_retry_scans_without_holding_the_conversation_lock(
         taken = upload(ana, convo, other)
         assert (taken.status_code, taken.json()["code"]) == (409, "CLIENT_MESSAGE_ID_TAKEN")
     assert free == [True, True]
-
-
-def test_a_replay_shows_the_body_only_to_who_sees_the_contact(inbox: SimpleNamespace) -> None:
-    user = make_user(email="sin-contactos@example.com")
-    give(inbox.a, join(inbox.a, user).pk, {"conversations.view": "ORGANIZATION",
-                                           "messages.send": "ORGANIZATION"})  # fmt: skip
-    client, convo, key = signed(user), inbox.convs["nobody"], str(uuid4())
-    first = upload(client, convo, form(caption="Su foto", client_message_id=key))
-    set_state(inbox.a, convo, status="CLOSED", closed_at=timezone.now())
-    again = upload(client, convo, form(caption="Su foto", client_message_id=key))
-    assert (first.status_code, again.status_code) == (202, 200)
-    assert first.json()["body"] is None and again.json() == first.json()  # sin `contacts.view`

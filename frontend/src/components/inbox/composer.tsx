@@ -406,8 +406,7 @@ function ComposeBox({
       // fallo, lo primero pudo haber salido: se avisa en lugar de mandarlo otra vez.
       const tried = drafts.get(request.draft).attempt;
       const grown = tried?.id === request.client_message_id && tried.first !== request.body;
-      // Uno dudoso sigue dudoso: otro id podría repetir lo que ya llegó (UX-INBOX-04c).
-      if (error.code === "CLIENT_MESSAGE_ID_TAKEN" && !tried?.unsure) forget(request);
+      if (error.code === "CLIENT_MESSAGE_ID_TAKEN" && !tried?.unsure) forget(request); // sigue dudoso
       if (error.code === "NETWORK_ERROR" && request.file) {
         drafts.update(request.draft, ({ attempt }) =>
           attempt?.id === request.client_message_id
@@ -450,8 +449,7 @@ function ComposeBox({
     // Uno dudoso solo se repite idéntico: con otro texto, el mismo id chocaría y otro lo duplicaría.
     const same = tried?.unsure ? text === tried.first : text.startsWith(tried?.first ?? "");
     if (!tried || !same || !sameFile) {
-      // Su archivo pudo llegar sin respuesta: otro id repetiría el pie. El primer toque solo avisa
-      // (y un doble toque no confirma: espera `SETTLE`).
+      // Su archivo pudo llegar: el primer toque solo avisa (y un doble toque no confirma: `SETTLE`).
       if (tried?.unsure && !confirmed) {
         settleUntil.current = performance.now() + SETTLE;
         return setArmed({ text, file });
