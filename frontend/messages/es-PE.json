@@ -2606,6 +2606,9 @@
     "quickReplies": {
       "label": "Respuestas rápidas",
       "keys": "↑ ↓ para moverte, Enter para elegir, Esc para cerrar.",
+      "keysTouch": "Toca una respuesta para ponerla en el cuadro. No se envía sola.",
+      "search": "Buscar por atajo o texto",
+      "close": "Cerrar respuestas rápidas",
       "loading": "Buscando respuestas…",
       "empty": "No hay respuestas rápidas con ese atajo o texto.",
       "inserting": "Preparando el texto…",

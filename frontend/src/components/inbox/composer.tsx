@@ -148,7 +148,7 @@ export function Composer({
   const shown: Mode = modes[chosen] ? chosen : modes.reply ? "reply" : "note";
   const both = modes.reply && modes.note;
   return (
-    <div className="border-border flex min-w-0 shrink-0 flex-col gap-2 border-t p-2 lg:p-3">
+    <div className="border-border relative flex min-w-0 shrink-0 flex-col gap-2 border-t p-2 lg:p-3">
       {both || tools ? (
         <div className="flex min-w-0 gap-2">
           {both ? (
@@ -258,10 +258,12 @@ function ComposeBox({
   const over = count > max;
   const empty = text.trim() === "" && !file;
   const kind = (chosen: File) => FILES[chosen.type]?.kind ?? "IMAGE"; // solo se adjunta uno de `FILES`
-  // `/atajo` al inicio abre las respuestas rápidas (F6-08b): elegir solo cambia el texto del cuadro.
+  // `/atajo` al inicio o su botón abren las respuestas rápidas (F6-08b, UX-INBOX-05): elegir solo
+  // cambia el texto del cuadro.
   const quick = useQuickReplies({
     enabled: !note && !closed,
     conversationId: conversation.id,
+    box,
     text,
     insert: (value) => {
       setText(value);
@@ -462,7 +464,7 @@ function ComposeBox({
     </Button>
   );
 
-  return (
+  const form = (
     <form
       hidden={!active}
       className={cn(
@@ -607,6 +609,7 @@ function ComposeBox({
                 event.target.value = ""; // el mismo archivo otra vez también avisa
               }}
             />
+            {quick.trigger}
             {media ? (
               <Button
                 type="button"
@@ -642,5 +645,12 @@ function ComposeBox({
         </p>
       ) : null}
     </form>
+  );
+  // La hoja va fuera del formulario: Enter en su buscador no puede enviarlo.
+  return (
+    <>
+      {quick.sheet}
+      {form}
+    </>
   );
 }
