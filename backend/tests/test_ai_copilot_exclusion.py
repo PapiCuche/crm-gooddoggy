@@ -476,7 +476,10 @@ def test_the_row_gets_only_what_is_left_of_the_wait_and_a_busy_row_is_a_retryabl
     (F1-TEST-01). Cuenta también lo que pase entre las dos esperas. Con 3 s (no 2), quien retiene
     la llamada tiene 1,5 s, no 0,5, para soltarla antes del `lock_timeout` (F8-TEST-02). El plazo
     se comprueba con el `lock_timeout` vigente al pedir la fila (leído en esa conexión justo antes),
-    no con el reloj de pared, que con la máquina cargada solo se acota de lejos (F1-TEST-02)."""
+    no con el reloj de pared (F1-TEST-02): el código acota la espera al fijar el resto, y lo que
+    Python tarde después de fijarlo no lo acota por diseño (con la máquina muy cargada, más de 1 s).
+    El reloj de pared, holgado, solo detecta paradas groseras (≥ ~2 s); la guarda precisa de los
+    `lock_timeout` es la del presupuesto."""
     settings.AI_EXCLUSION_WAIT_SECONDS = 3
     held, asked, waits = threading.Event(), threading.Event(), list[tuple[str, float, float, Any]]()
     kinds = {attention._WAIT: "timeout", attention._CALL_EXCLUSIVE: "call"}
@@ -517,7 +520,7 @@ def test_the_row_gets_only_what_is_left_of_the_wait_and_a_busy_row_is_a_retryabl
     (_, first, _, whole), (_, call, called, _), (_, second, *_), (_, _, row_end, row) = waits
     assert whole == ["3000ms"] and 1.4 < called - call  # la petición esperó a la llamada
     assert second - first + int(row[0]) / 1000 < 3.1  # a la fila, lo que queda de los 3 s
-    assert row_end - first < 4.0  # y nada largo entre fijarlo y esperar la fila
+    assert row_end - first < 5.0  # solo una parada grosera entre fijarlo y esperar la fila
     assert excluded_at(migrator, desk) is None and migrator_version(desk) == version
     assert migrator.execute(AUDITED).fetchone() == (0,)
     assert put(desk).status_code == 200  # reintentar, ya libre
