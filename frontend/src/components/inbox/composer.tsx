@@ -258,14 +258,14 @@ function ComposeBox({
   const over = count > max;
   const empty = text.trim() === "" && !file;
   const kind = (chosen: File) => FILES[chosen.type]?.kind ?? "IMAGE"; // solo se adjunta uno de `FILES`
-  // `/atajo` al inicio o su botón abren las respuestas rápidas (F6-08b, UX-INBOX-05): elegir solo
-  // cambia el texto del cuadro.
+  // `/atajo` o su botón abren las respuestas rápidas (F6-08b): elegir solo cambia el cuadro.
   const quick = useQuickReplies({
     enabled: !note && !closed,
     conversationId: conversation.id,
     box,
     text,
     insert: (value) => {
+      settleUntil.current = performance.now() + SETTLE; // un segundo toque en «Enviar» no lo envía
       setText(value);
       setProblem(null);
       box.current?.focus();
@@ -398,6 +398,7 @@ function ComposeBox({
 
   const submit = () => {
     if (drafts.get(draft).sending || closed || over || empty) return;
+    if (performance.now() < settleUntil.current) return; // recién insertado y sin tocar: se revisa
     // Reintentar reutiliza el id mientras el texto empiece por el que falló (también con lo que se
     // insertó o escribió después) y el archivo sea el mismo: si el primero llegó al servidor sin
     // respuesta, el mismo id no deja que salga dos veces. Otro texto empieza un intento nuevo.
@@ -430,7 +431,6 @@ function ComposeBox({
     const composing = event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229;
     if (event.key !== "Enter" || event.shiftKey || composing || coarse()) return;
     event.preventDefault();
-    if (performance.now() < settleUntil.current) return; // recién insertado: se revisa antes de enviar
     submit();
   };
   const idle = note ? t("save") : t("send");

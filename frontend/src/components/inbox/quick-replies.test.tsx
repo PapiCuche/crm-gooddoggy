@@ -535,8 +535,12 @@ describe("respuestas rápidas con su botón (UX-INBOX-05)", () => {
       expect(box()).resolves.toHaveProperty("selectionStart", rendered.text.length),
     );
     await key("Enter"); // recién insertado: un Enter no envía
+    fireEvent.click(screen.getByRole("button", { name: "Enviar" })); // ni un segundo toque
     await settle();
     expect(s.sends()).toEqual([]);
+    await settle(500); // pasado el margen, «Enviar» envía
+    fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
+    await waitFor(() => expect(s.sends()).toHaveLength(1));
   });
 
   it("con un borrador lo conserva y añade al final; Enter en el buscador nunca envía", async () => {
@@ -586,6 +590,9 @@ describe("respuestas rápidas con su botón (UX-INBOX-05)", () => {
     expect(opened).toEqual(["modal"]);
     expect(document.body.style.position).toBe("fixed");
     expect(screen.getByText(/Toca una respuesta para ponerla en el cuadro/)).toBeInTheDocument();
+    fireEvent.click(await search()); // un toque dentro no es el fondo
+    fireEvent.blur(await search()); // «OK» del teclado de iOS: la hoja modal sigue
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
     fireEvent(screen.getByRole("dialog"), new Event("cancel", { cancelable: true })); // «atrás»
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(document.body.style.position).toBe("");

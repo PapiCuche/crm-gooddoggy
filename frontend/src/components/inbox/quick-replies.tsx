@@ -55,9 +55,8 @@ export function byCategory(replies: readonly QuickReplyUse[]): Group[] {
   return [...groups.values()].sort((a, b) => a.order - b.order || a.name.localeCompare(b.name));
 }
 
-// Con la hoja abierta la página no se desplaza detrás (iOS no lo impide con `inert`) y al cerrar
-// vuelve a su sitio. iOS no encoge el viewport con el teclado: la hoja se apoya sobre él y cabe en
-// lo que queda a la vista, con el buscador arriba (`--sheet-bottom` y `--sheet-max`).
+// La página no se desplaza detrás de la hoja (iOS ignora `inert`) y vuelve a su sitio. La hoja se
+// apoya sobre el teclado de iOS (`visualViewport`) y cabe en lo visible, con el buscador arriba.
 function holdPage(sheet: HTMLElement) {
   const [x, y, body, viewport] = [scrollX, scrollY, document.body.style, window.visualViewport];
   const saved = body.cssText;
@@ -68,10 +67,9 @@ function holdPage(sheet: HTMLElement) {
     sheet.style.setProperty("--sheet-bottom", `${Math.max(0, Math.round(covered))}px`);
     sheet.style.setProperty("--sheet-max", `${Math.round(viewport.height)}px`);
   };
-  const off = new AbortController();
+  const off = new AbortController(); // como opción, su `signal` quita los dos oyentes
   fit();
-  viewport?.addEventListener("resize", fit, { signal: off.signal });
-  viewport?.addEventListener("scroll", fit, { signal: off.signal });
+  for (const type of ["resize", "scroll"]) viewport?.addEventListener(type, fit, off);
   return () => {
     off.abort();
     body.cssText = saved;
@@ -84,9 +82,8 @@ function holdPage(sheet: HTMLElement) {
 // inserta el texto resuelto en el cuadro. Nunca envía: se envía con el botón de siempre. El cuadro
 // sigue siendo un `textbox` (un `textarea` no admite el rol `combobox`): lleva
 // `aria-autocomplete`, `aria-controls` y `aria-activedescendant` hacia la `listbox`.
-// UX-INBOX-05: el botón «Respuestas rápidas» abre la misma lista con su buscador, en un `<dialog>`
-// fuera del formulario (Enter en el buscador nunca lo envía): hoja inferior modal en `max-sm`,
-// desplegable en escritorio. Desde ahí, con un borrador escrito, la respuesta se añade al final.
+// UX-INBOX-05: su botón abre la lista con buscador en un `<dialog>` fuera del formulario (Enter no lo
+// envía): hoja modal en `max-sm`, desplegable en escritorio; un borrador se conserva y se añade.
 export function useQuickReplies({
   enabled,
   conversationId,
@@ -324,8 +321,7 @@ export function useQuickReplies({
     </>
   );
 
-  // Se muestra al montarse (modal en `max-sm`, con el buscador enfocado); al desmontarse con el
-  // foco dentro (la conversación se cerró o cambió), el foco va al cuadro si aún se puede escribir.
+  // Al montarse se abre con el buscador enfocado; si desaparece con el foco dentro, va al cuadro.
   useEffect(() => {
     const sheet = dialog.current;
     if (!browsing || !sheet) return;
@@ -348,7 +344,7 @@ export function useQuickReplies({
       className={cn(
         "quick-sheet bg-surface text-foreground border-border m-0 flex-col overflow-hidden p-0 shadow-lg open:flex",
         browse?.sheet
-          ? "inset-x-0 top-auto bottom-[var(--sheet-bottom,0px)] max-h-[min(85dvh,calc(var(--sheet-max,100dvh)-0.5rem))] w-full max-w-none rounded-t-[14px] border-t pb-[env(safe-area-inset-bottom)] backdrop:bg-black/40"
+          ? "inset-x-0 top-auto bottom-[var(--sheet-bottom,0px)] max-h-[min(85dvh,calc(var(--sheet-max,100dvh)-0.5rem))] w-full max-w-none rounded-t-[14px] border-t backdrop:bg-black/40"
           : "absolute inset-x-2 bottom-full z-20 mb-2 max-h-[min(24rem,60vh)] w-auto rounded-[10px] border",
       )}
       onCancel={(event) => {
@@ -361,7 +357,7 @@ export function useQuickReplies({
         if (!browse?.sheet && !event.currentTarget.contains(event.relatedTarget)) shut(false);
       }}
     >
-      <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex min-h-0 flex-1 flex-col pb-[env(safe-area-inset-bottom)]">
         <div className="flex items-center gap-2 p-2">
           <input
             type="search"
@@ -405,10 +401,7 @@ export function useQuickReplies({
       onClick={() => {
         setSearch("");
         setActiveId(null);
-        setBrowse({
-          id: conversationId,
-          sheet: typeof matchMedia === "function" && matchMedia(SHEET).matches,
-        });
+        setBrowse({ id: conversationId, sheet: window.matchMedia?.(SHEET).matches === true });
       }}
     >
       <Zap aria-hidden />
