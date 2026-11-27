@@ -30,6 +30,9 @@ from tests.test_pipelines_tables import as_migrator
 
 __all__ = ["world", "writer"]  # los fixtures, para pytest
 pytestmark = pytest.mark.usefixtures("tenant_db")
+# La base de pruebas se migra una vez por sesión y el test del relleno vuelve a aplicar la 0066.
+# Quien mute una de estas migraciones tiene que correr `migrate conversations 0065` y luego
+# `migrate` (como `crm_migrator`) antes de cada ejecución, o probará la versión anterior.
 DB = psycopg.Connection[Any]
 WAIT = import_module("apps.conversations.migrations.0066_conversation_awaiting_reply_since")
 INDEX = import_module("apps.conversations.migrations.0067_conversations_awaiting_reply_index")
@@ -273,12 +276,15 @@ def test_the_wait_query_uses_its_partial_index(world: SimpleNamespace) -> None:
         assert INDEX.INDEX in plan(sql, list(params))
 
 
-def episode_plan(world: SimpleNamespace, conversation_id: Any) -> str:
-    """El plan de la consulta del paso 4 del disparador, tal cual, para una conversación."""
-    step = WAIT.FUNCTION.split("coalesce((", 1)[1].rsplit("), NEW.last_message_at)", 1)[0]
-    step = step.replace("NEW.organization_id", "%s").replace("NEW.id", "%s")
+STEP3 = WAIT.FUNCTION.split("misma fuente que el paso 4\n", 1)[1].split("\n        );", 1)[0]
+STEP4 = WAIT.FUNCTION.split("coalesce((", 1)[1].rsplit("), NEW.last_message_at)", 1)[0]
+
+
+def episode_plan(world: SimpleNamespace, conversation_id: Any, step: str = STEP4) -> str:
+    """El plan de una consulta del disparador (paso 3 o 4), tal cual, para una conversación."""
+    sql = step.replace("NEW.organization_id", "%s").replace("NEW.id", "%s")
     with tenant_scope(ctx(world.a)), connection.cursor() as cursor:
-        cursor.execute("EXPLAIN " + step, [world.a, conversation_id] * 2)
+        cursor.execute("EXPLAIN " + sql, [world.a, conversation_id] * (sql.count("%s") // 2))
         return " ".join(row[0] for row in cursor.fetchall())
 
 
@@ -353,6 +359,9 @@ def test_the_migrations_backfill_in_batches_and_go_back_and_forth(
     some = migrator.execute("SELECT id FROM conversations WHERE number = 'CONV-10002'").fetchone()
     found = episode_plan(world, some[0] if some else None)
     assert found.count("messages_org_conversation_idx") == 2, found
+    opening = episode_plan(world, some[0] if some else None, STEP3)  # el paso 3, por organización
+    assert "Index Scan" in opening and "messages_org_conversation_idx" in opening, opening
+    assert f"organization_id = '{world.a}'" in opening, opening
     assert migrator.execute(INDEX.STATE, [INDEX.INDEX]).fetchall() == [(True, INDEX.DEFINITION)]
     rows = migrator.execute(
         "SELECT substr(c.number, 6)::int % 4, c.awaiting_reply_since, (SELECT min(m.created_at)"

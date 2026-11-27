@@ -15,7 +15,9 @@ después de `conversations_reply_guard`, de la `0061`, así que ve la marca ya c
    `created_at` del primer mensaje del cliente después de la última respuesta que cuenta (no
    `FAILED`, o `PROVIDER_UNKNOWN`: pudo salir; una nota interna no es respuesta).
 Los pasos 3 y 4 leen la misma columna del mismo mensaje, así que una respuesta que falla devuelve
-exactamente la hora del episodio (`episode_at` de ADR-049 forma parte de una clave única). Las dos
+exactamente la hora del episodio, **salvo en los casos a) y b) de abajo**: ahí la hora cambia dentro
+de un mismo episodio y, con la clave de ejecución de ADR-049 (`episode_at` forma parte de una clave
+única), F11-05 abriría una segunda ejecución o tarea si no lo trata (requisito de #1180). Las dos
 consultas usan `messages_org_conversation_idx`; si no ven ningún mensaje del cliente, la hora es
 `last_message_at`. Nunca rechaza una escritura, así que la imagen anterior (al migrar o tras volver
 atrás, ADR-033 §7) sigue escribiendo igual y la columna queda bien también con lo que ella escribe.
@@ -23,11 +25,12 @@ atrás, ADR-033 §7) sigue escribiendo igual y la columna queda bien también co
 Aproximaciones conocidas (solo afectan a avisos internos; también en `docs/phases/phase-11.md`, que
 el barrido de F11-05 debe tener en cuenta):
 - a) el paso 4 no ve una resolución: si se resolvió sin responder, el cliente volvió a escribir y
-  la respuesta siguiente falla, la hora es la del mensaje anterior a la resolución (dice más espera
-  de la real);
+  la respuesta siguiente falla, la hora pasa a la del mensaje anterior a la resolución (dice más
+  espera de la real y cambia la hora del episodio);
 - b) si el cliente escribe mientras una respuesta sigue en cola y luego esa respuesta falla (también
   si el fallo y el mensaje llegan a la vez), la conversación no se vuelve a escribir y la hora queda
-  en el mensaje más reciente (dice menos);
+  en el mensaje más reciente (dice menos); si después falla otra respuesta, el paso 4 la mueve al
+  mensaje anterior (M1, respuesta en cola, M2, falla, falla otra: M2, M2 y luego M1);
 - c) volver a «Sin responder» sin un mensaje nuevo (hoy ningún comando lo hace) toma la hora del
   último mensaje del cliente;
 - d) una respuesta enviada fuera del CRM (`FOREIGN_ECHO` de `delivery`: otra app o la bandeja
