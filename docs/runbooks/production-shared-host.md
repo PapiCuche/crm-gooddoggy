@@ -84,12 +84,16 @@ sudo infra/prod/compose.sh logs --since 2m proxy | grep -o '"client_ip":"[^"]*"'
 
 La tasa de `/webhooks/*` es por cliente: el laboratorio de ADR-046 lo comprobó. Con IPv6 a través de la CDN, un cliente puede rotar direcciones dentro de su /64; la regla de tasa de la CDN para `/webhooks/*` (ADR-046, decisión 6) lo cubre. En el servidor, `client_ip` del log tiene que ser la IP pública de quien prueba, nunca la del borde público (`172.31.250.2`).
 
+## 4.1 Lock común y vigilante de la otra aplicación (ADR-048 §7 y §8, F1-20f)
+
+Un despliegue del CRM y su backup nocturno toman `/var/lib/host-deploy/lock`, un `flock` que nadie borra. `neighbor-watch.sh` vigila la URL pública y los contenedores de la otra aplicación, solo en lectura, y pide la parada con `cd-halted` si sufre. Lo que vigila va en `/etc/crm/neighbor-watch`, que escribe el propietario. Cómo funcionan, y el contrato que la otra aplicación tendría que seguir para usar el mismo lock: `infra/prod/README.md`, «Lock común del servidor y vigilante de la otra aplicación». Ese contrato no se aplica en su repositorio sin una autorización aparte del propietario.
+
 ## 5. Volver atrás
 
 **Nunca** desplegar ni volver atrás en este servidor a una revisión anterior a ADR-046: su `deploy.sh` no lee `host-mode`, intentaría publicar 80/443 y vería las redes `data` y `egress` distintas.
 
 
-- **Solo el CRM:** `sudo infra/prod/deploy.sh --rollback`. No toca a la otra aplicación ni a su borde. Revertir imágenes no revierte migraciones (ADR-033 §7, expandir y contraer).
+- **Solo el CRM:** `sudo infra/prod/deploy.sh --rollback`. No toca a la otra aplicación ni a su borde. Revertir imágenes no revierte migraciones (ADR-033 §7, expandir y contraer). Toma el lock común del servidor: si la otra aplicación lo tiene, espera a que termine y repite. La marca `cd-halted` no lo impide.
 - **Sacar el CRM del servidor sin tocar la otra aplicación:** el operador del borde público vuelve a su compose sin override. Su Caddy queda como antes. Después, `sudo infra/prod/compose.sh stop`. Sin `down -v`.
 - **El borde público falla:** lo recupera su operador con su copia del `Caddyfile` anterior. El CRM no necesita cambios.
 

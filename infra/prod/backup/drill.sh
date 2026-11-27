@@ -27,7 +27,8 @@ stack() { # <src|dst> <comando de compose…>
   local p=$1
   shift
   CRM_COMPOSE_PROJECT="$id-$p" CRM_COMPOSE_OVERRIDE="$work/override.yaml" CRM_RELEASE_ENV="$work/$p/release.env" \
-    CRM_ENV_DIR="$work/$p" BACKUP_STATE_DIR="$work/state-$p" CRM_DEPLOY_DIR="$work/deploy-$p" "$@"
+    CRM_ENV_DIR="$work/$p" BACKUP_STATE_DIR="$work/state-$p" CRM_DEPLOY_DIR="$work/deploy-$p" \
+    CRM_HOST_LOCK_DIR="$work/host-$p" "$@"
 }
 cleanup() {
   set +e

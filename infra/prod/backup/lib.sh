@@ -125,6 +125,8 @@ configure() { # <evento del aviso si backup.env no es seguro>
 
 # shellcheck source=infra/prod/host-mode.sh
 . "$prod_dir/host-mode.sh"
+# shellcheck source=infra/prod/host-lock.sh
+. "$prod_dir/host-lock.sh"
 compose() {
   local files=(-f "$prod_dir/compose.yaml") override
   # CRM_COMPOSE_OVERRIDE (el simulacro) o, si no, el modo del servidor (ADR-046): host-mode.sh.
@@ -147,7 +149,8 @@ table_counts() { psql_su -d crm -c "$counts_sql"; }
 # El backup nocturno y deploy.sh no se pisan (F1-15b): los dos toman /var/lib/crm-deploy/lock, un
 # directorio (mkdir es atómico). Si está puesto, el nocturno espera hasta BACKUP_LOCK_WAIT s (3600)
 # a que el despliegue termine; si sigue (un despliegue cortado lo deja), falla y avisa. `predeploy`
-# no lo toma: lo lanza deploy.sh, que ya lo tiene.
+# no lo toma: lo lanza deploy.sh, que ya lo tiene. Deja en lock_wait_left lo que queda de la espera,
+# para el lock común (host-lock.sh): las dos esperas juntas no pasan de BACKUP_LOCK_WAIT.
 deploy_lock() {
   local dir=${CRM_DEPLOY_DIR:-/var/lib/crm-deploy} waited=0
   mkdir -p "$dir"
@@ -160,8 +163,8 @@ deploy_lock() {
     sleep 30
     waited=$((waited + 30))
   done
-  # shellcheck disable=SC2034 # lo suelta release_lock de backup.sh
-  held_lock=$dir/lock
+  # shellcheck disable=SC2034 # lo suelta release_lock de backup.sh; lock_wait_left, para host_lock
+  held_lock=$dir/lock lock_wait_left=$((${BACKUP_LOCK_WAIT:-3600} - waited))
 }
 
 need() { local c; for c in "$@"; do command -v "$c" > /dev/null || { echo "falta el comando $c" >&2; return 1; }; done; }

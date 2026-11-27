@@ -61,6 +61,12 @@ Previos transversales: [#3](https://github.com/PapiCuche/crm-gooddoggy/issues/3)
 | F1-20i | [#1175](https://github.com/PapiCuche/crm-gooddoggy/issues/1175) Verificación de punta a punta en entorno seguro | `chore/cd-phase-1-safe-rehearsal` | #1173, #1174 |
 
 - **Hecho en F1-20d ([#1169](https://github.com/PapiCuche/crm-gooddoggy/issues/1169)):** `infra/prod/cd-preflight.sh`, de solo lectura y cerrado ante lo que no puede comprobar: backup, disco, memoria y swap, carga, producción sana, lock, marca de parada, incidente abierto (API pública de GitHub, sin credenciales), ventana de la fase 1 en hora de Lima, feriados del Perú y `/etc/crm/deploy-freeze`. Prueba con un servidor simulado (`test-cd-preflight.sh`, en `infra-prod.yml`). Solo se usará cuando el propietario habilite la fase 1; no se ha ejecutado en producción.
+- **Hecho en F1-20f ([#1170](https://github.com/PapiCuche/crm-gooddoggy/issues/1170)), solo el lado del CRM:**
+  - Lock común del servidor: `infra/prod/host-lock.sh`, un `flock` sobre `/var/lib/host-deploy/lock` que nadie borra. Lo toman `deploy.sh` (sin esperar) y el backup nocturno (en la misma espera que el lock del CRM).
+  - Vigilante de la otra aplicación: `infra/prod/neighbor-watch.sh`, de solo lectura. Para con 3 fallos seguidos o con menos de 512 MiB en 3 muestras, poniendo la marca `cd-halted`.
+  - `cd-preflight.sh` comprueba también el lock común, `flock` y la otra aplicación.
+  - El contrato para la otra aplicación queda solo documentado (decisión 9).
+  - Nada arranca el vigilante todavía (F1-20e). Se prueba con servidores simulados (`test-neighbor-watch.sh`, `test-deploy.sh`, `test-cd-preflight.sh`).
 - **Hecho en F1-20c ([#1171](https://github.com/PapiCuche/crm-gooddoggy/issues/1171)):** `.github/workflows/release.yml`, a mano (`workflow_dispatch` con `sha` y `base`) e **inerte** hasta que el propietario ponga `CD_RELEASE_ENABLED=true`.
   - **prepare** (sin entorno ni secretos) comprueba lo siguiente con el código de `main` (`release_record.py`, el clasificador y el verificador de atestaciones):
     - el rango;

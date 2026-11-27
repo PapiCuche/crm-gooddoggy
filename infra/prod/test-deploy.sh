@@ -6,13 +6,16 @@
 # smoke.sh, la página de entrada), que migrate y el volcado no tocan el runtime al fallar, que una
 # señal deja el lock, y las negativas antes de tocar nada. F1-15b: REVISION frente al checkout, el
 # volcado previo con postgres parado, un fallo de `up postgres redis`, `--migrate` y el lock que
-# comparte con el backup nocturno. Uso: bash infra/prod/test-deploy.sh
+# comparte con el backup nocturno. F1-20f: el lock común del servidor (host-lock.sh, flock real): se crea
+# root 0755/0644, se tiene durante cada llamada a docker, bloquea sin esperar y falla cerrado.
+# Uso: bash infra/prod/test-deploy.sh
 set -euo pipefail
 src=$(cd "$(dirname "$0")" && pwd)
 work=$(mktemp -d)
-trap 'rm -rf "$work"' EXIT
+holder=""
+trap '[ -z "$holder" ] || kill "$holder" 2> /dev/null; rm -rf "$work"' EXIT
 mkdir -p "$work/infra/prod" "$work/bin" "$work/etc"
-cp "$src/deploy.sh" "$src/compose.yaml" "$src/host-mode.sh" "$work/infra/prod/"
+cp "$src/deploy.sh" "$src/compose.yaml" "$src/host-mode.sh" "$src/host-lock.sh" "$work/infra/prod/"
 
 # docker falso: anota «<letra del release> <argumentos>» (la letra sale del digest del backend).
 cat > "$work/bin/docker" <<'EOF'
@@ -29,6 +32,8 @@ while [ $# -gt 0 ]; do
   shift
 done
 echo "$release ${args[*]}" >> "$CALLS"
+# Cada llamada a docker, con el lock común tomado por quien la lanza (otro descriptor no lo consigue).
+if flock -n "$CRM_HOST_LOCK_DIR/lock" true 2> /dev/null; then echo "UNLOCKED ${args[*]}" >> "$CALLS"; fi
 fails() { [ -n "$release" ] && case $1 in *"$release"*) true ;; *) false ;; esac; }
 case "${args[*]}" in
   "up -d --no-recreate --wait --wait-timeout 5 postgres redis") if fails "$FAIL_STORES"; then exit 1; fi ;;
@@ -86,11 +91,13 @@ release b > "$work/b.env"
 release c > "$work/c.env"
 
 export CALLS="$work/calls" CRM_ENV_DIR="$work/etc" CRM_DEPLOY_DIR="$work/state" CRM_HEALTH_TIMEOUT=5
+export CRM_HOST_LOCK_DIR="$work/host" # no existe: el primer despliegue lo crea
 export PATH="$work/bin:$PATH" FAIL_RUN="" FAIL_READY="" FAIL_DUMP="" FAIL_SMOKE="" FAIL_ENTRY=0 KILL_ON_PULL="" KILL_ON_UP=""
 export FAIL_STORES=""
 deploy() {
   : > "$CALLS"
   if "$work/infra/prod/deploy.sh" "$@" > "$work/out" 2>&1; then rc=0; else rc=$?; fi
+  if grep -q "^UNLOCKED" "$CALLS"; then fail "docker sin el lock común: $(grep "^UNLOCKED" "$CALLS" | head -1)"; fi
 }
 fail() { echo "test-deploy FAIL: $*" >&2; cat "$work/out" >&2; exit 1; }
 letter() { sed -n 's/^BACKEND_IMAGE=.*@sha256:\(.\).*/\1/p' "$1"; }
@@ -182,6 +189,45 @@ events=$(grep -oE '^a (pull --quiet|up -d --no-recreate --wait --wait-timeout 5 
   sed 's/^curl .*/curl/' | tr '\n' '|')
 [ "$events" = "a pull --quiet|a up -d --no-recreate --wait --wait-timeout 5 postgres redis|a run --rm --no-deps migrate|a up -d --wait --wait-timeout|a exec -T backend|smoke|curl|" ] ||
   fail "orden: $events"
+
+# F1-20f: el primer despliegue creó el lock común: directorio 0755 y archivo 0644 vacío, que se quedan.
+mode() { stat -c %a "$1" 2> /dev/null || stat -f %Lp "$1"; }
+[ "$(mode "$CRM_HOST_LOCK_DIR")" = 755 ] && [ -f "$CRM_HOST_LOCK_DIR/lock" ] && [ ! -s "$CRM_HOST_LOCK_DIR/lock" ] &&
+  [ "$(mode "$CRM_HOST_LOCK_DIR/lock")" = 644 ] || fail "el lock común no es 0755/0644"
+hold() { # otro proceso (la otra aplicación) toma el lock común hasta unhold
+  rm -f "$work/held"
+  bash -c 'exec 8< "$1" && flock 8 && touch "$2" && exec sleep 60' _ "$CRM_HOST_LOCK_DIR/lock" "$work/held" &
+  holder=$!
+  for _ in $(seq 100); do [ ! -e "$work/held" ] || return 0; sleep 0.1; done
+  fail "el proceso de prueba no toma el lock común"
+}
+unhold() { kill "$holder" && wait "$holder" 2> /dev/null || true; holder=""; }
+hold
+refused "$work/b.env" "no se toma el lock común del servidor: no se ha tocado nada"
+expect "el lock común $CRM_HOST_LOCK_DIR/lock está tomado"
+[ ! -e "$work/state/lock" ] || fail "con el lock común tomado dejó el del CRM"
+refused --migrate "no se toma el lock común"
+refused --rollback "no se toma el lock común"
+unhold
+[ -f "$CRM_HOST_LOCK_DIR/lock" ] || fail "borró el lock común"
+# Falla cerrado: escritura de grupo u otros, un enlace o sin flock en el PATH.
+chmod 775 "$CRM_HOST_LOCK_DIR"
+refused "$work/b.env" "$CRM_HOST_LOCK_DIR no es de root, tiene escritura de grupo u otros o es un enlace"
+chmod 755 "$CRM_HOST_LOCK_DIR" && chmod 666 "$CRM_HOST_LOCK_DIR/lock"
+refused "$work/b.env" "$CRM_HOST_LOCK_DIR/lock no es de root, tiene escritura"
+chmod 644 "$CRM_HOST_LOCK_DIR/lock" && mv "$CRM_HOST_LOCK_DIR/lock" "$work/lock.real" && ln -s "$work/lock.real" "$CRM_HOST_LOCK_DIR/lock"
+refused "$work/b.env" "$CRM_HOST_LOCK_DIR/lock no es de root, tiene escritura de grupo u otros o es un enlace"
+rm "$CRM_HOST_LOCK_DIR/lock" && mv "$work/lock.real" "$CRM_HOST_LOCK_DIR/lock"
+mkdir "$work/no-flock"
+IFS=: read -ra dirs <<< "$PATH"
+for d in "${dirs[@]}"; do
+  for f in "$d"/*; do
+    [ -x "$f" ] && [ "${f##*/}" != flock ] && [ ! -e "$work/no-flock/${f##*/}" ] && ln -s "$f" "$work/no-flock/${f##*/}" || true
+  done
+done
+PATH="$work/no-flock" refused "$work/b.env" "falta flock (util-linux)"
+[ ! -e "$work/state/lock" ] || fail "sin flock dejó el lock del CRM"
+echo "ok   lock común: se crea, bloquea sin esperar y falla cerrado"
 
 # Segundo despliegue (postgres parado: el docker falso no lo da por arrancado): postgres y redis de a,
 # después backup.sh predeploy de a y después migrate. Siguen en a hasta `up`.
@@ -308,6 +354,7 @@ mkdir -p "$work/backup-bin" "$work/sleep-bin"
 cat > "$work/backup-bin/mktemp" <<'EOF'
 #!/bin/sh
 [ ! -d "$CRM_DEPLOY_DIR/lock" ] || echo "lock held" >> "$LOCK_PROBE"
+! flock -n "$CRM_HOST_LOCK_DIR/lock" true || echo "host lock free" >> "$LOCK_PROBE"
 exec /usr/bin/mktemp "$@"
 EOF
 cat > "$work/backup-bin/age" <<'EOF'
@@ -353,6 +400,35 @@ nightly predeploy 0
 if grep -q 'deploy_lock' "$work/out"; then fail "predeploy esperó al lock de deploy.sh"; fi
 grep -qx 'lock held' "$work/probe" || fail "predeploy no siguió hasta el volcado"
 rmdir "$work/state/lock"
+
+# F1-20f: el nocturno vuelca con el lock común (arriba no hubo «host lock free»). Si lo tiene otro,
+# falla (stage=host_lock) y suelta el del CRM; las dos esperas comparten BACKUP_LOCK_WAIT (con 31 s y
+# 30 esperando el del CRM, al común le queda 1 s), y con el del CRM cortado nunca toma el común.
+mkdir "$work/state/lock"
+nightly nightly 30 "$work/sleep-bin:"
+if grep -q 'host lock free' "$work/probe"; then fail "el nocturno vuelca sin el lock común"; fi
+hold
+nightly nightly 0
+[ "$rc" != 0 ] || fail "el nocturno corrió con el lock común tomado"
+expect '"event":"backup.failed","level":"error","reason":"kind=nightly stage=host_lock"'
+[ ! -s "$work/probe" ] && [ ! -e "$work/state/lock" ] || fail "con el lock común tomado volcó o dejó el del CRM"
+mkdir "$work/state/lock"
+start=$SECONDS
+nightly nightly 31 "$work/sleep-bin:"
+grep -qx 'sleep 30' "$CALLS" && [ $((SECONDS - start)) -lt 15 ] || fail "las esperas no comparten BACKUP_LOCK_WAIT"
+expect 'stage=host_lock'
+unhold
+mkdir -p "$work/probe-bin" "$work/state/lock"
+cat > "$work/probe-bin/sleep" <<'EOF'
+#!/bin/sh
+flock -n "$CRM_HOST_LOCK_DIR/lock" true || echo "host lock held" >> "$CALLS"
+EOF
+chmod +x "$work/probe-bin/sleep"
+nightly nightly 30 "$work/probe-bin:"
+expect 'stage=deploy_lock'
+if grep -q 'host lock held' "$CALLS"; then fail "el nocturno tomó el lock común con el del CRM cortado"; fi
+rmdir "$work/state/lock"
+echo "ok   el nocturno toma el lock común después del del CRM, en la misma espera"
 
 # backup/alert.sh (ExecStopPost de crm-migrate.service): el aviso va al journal y a Sentry.
 { cat "$work/etc/backup.env"; echo "SENTRY_DSN=https://k@sentry.example.invalid/7"; } > "$work/etc/alert.env"

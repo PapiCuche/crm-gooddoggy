@@ -2,8 +2,10 @@
 # Condiciones locales que bloquean un despliegue (F1-20d, ADR-048 §6, §7 y §9). De SOLO LECTURA:
 # no arranca, para, descarga, migra ni borra nada (tampoco los locks ni la marca de parada), no usa
 # `docker compose` (cargaría los env_file con secretos) y no abre ningún archivo de $CRM_ENV_DIR salvo
-# el calendario de congelación. Falla cerrado: lo que no puede comprobar, bloquea.
+# el calendario de congelación y la lista del vigilante (neighbor-watch). Falla cerrado: lo que no puede comprobar, bloquea.
 # Lo usa el operador a mano y, cuando el propietario habilite la fase 1, el agente del servidor.
+# F1-20f: también el lock común del servidor (host-lock.sh; lo prueba con un lock compartido de un
+# instante, sin escribir) y la otra aplicación (neighbor-watch.sh --once).
 # Comprueba todo y escribe una línea por condición: «ok <condición>» o «BLOQUEA <condición>: <motivo>».
 # Los motivos solo llevan rutas, fechas, números y umbrales: nunca contenidos de archivos ni del entorno.
 # Uso: sudo infra/prod/cd-preflight.sh   → 0: todo en verde; 1: alguna bloquea; 2: uso incorrecto.
@@ -40,7 +42,9 @@ try:
 except Exception:
     sys.exit(1)'
 
+here=$(cd "$(dirname "$0")" && pwd)
 env_dir=${CRM_ENV_DIR:-/etc/crm}
+host_lock_dir=${CRM_HOST_LOCK_DIR:-/var/lib/host-deploy} # el lock común (host-lock.sh)
 state=${CRM_DEPLOY_DIR:-/var/lib/crm-deploy}
 backup_state=${BACKUP_STATE_DIR:-/var/lib/crm-backup}
 proc=${CRM_PROC_DIR:-/proc}
@@ -186,6 +190,45 @@ check_halt() {
   fi
 }
 
+# El lock común del servidor (F1-20f, host-lock.sh). Que no exista no es un fallo (deploy.sh lo crea al
+# tomarlo). No se mira /proc/locks: oculta un flock cuyo proceso ya salió (el `flock` de un descriptor
+# heredado, como el de deploy.sh). Se prueba con un lock COMPARTIDO de un instante, en un subshell que
+# solo lee: no escribe nada y lo suelta al salir; si alguien tiene el exclusivo, falla y bloquea.
+check_host_lock() {
+  local path info uid mode
+  command -v flock > /dev/null || { block lock-comun "falta flock (util-linux): deploy.sh no podría tomar el lock común"; return; }
+  for path in "$host_lock_dir" "$host_lock_dir/lock"; do
+    if [ ! -e "$path" ] && [ ! -L "$path" ]; then
+      [ -r "${path%/*}" ] && [ -x "${path%/*}" ] || { block lock-comun "no se puede leer ${path%/*} (¿sin sudo?)"; return; }
+      ok lock-comun
+      return
+    fi
+    info=$(stat -c '%u %a' "$path" 2> /dev/null || stat -f '%u %Lp' "$path" 2> /dev/null) || info="x 777"
+    uid=${info% *} mode=${info#* }
+    [[ $mode =~ ^[0-7]{1,4}$ ]] || mode=777
+    if [ -L "$path" ] || { [ "$uid" != 0 ] && [ "$uid" != "$(id -u)" ]; } || (((8#$mode & 8#022) != 0)); then
+      block lock-comun "$path no es de root, tiene escritura de grupo u otros o es un enlace"
+      return
+    fi
+  done
+  [ -f "$host_lock_dir/lock" ] || { block lock-comun "$host_lock_dir/lock no es un archivo"; return; }
+  if (exec 9< "$host_lock_dir/lock" && flock -n -s 9) 2> /dev/null; then
+    ok lock-comun
+  else
+    block lock-comun "$host_lock_dir/lock está tomado (un despliegue o backup del CRM, o la otra aplicación) o no se puede abrir; nunca se borra"
+  fi
+}
+
+# La otra aplicación (§7 y §8): una comprobación ahora, con el vigilante (solo lectura, sin marca).
+check_neighbor() {
+  local out
+  if out=$("$here/neighbor-watch.sh" --once 2> /dev/null); then # curl y docker, con 4 s cada uno
+    ok vecina
+  else
+    block vecina "${out:-neighbor-watch.sh --once no responde}"
+  fi
+}
+
 # GitHub, sin credenciales: el repositorio es público. -q: sin ~/.curlrc, que podría añadir cabeceras.
 check_incident() {
   local label body fail=""
@@ -285,8 +328,10 @@ check_backup
 check_disk
 check_memory
 check_load
+check_neighbor
 check_production
 check_lock
+check_host_lock
 check_halt
 check_incident
 check_window
