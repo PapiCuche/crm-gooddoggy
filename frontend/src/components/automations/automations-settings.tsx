@@ -23,8 +23,8 @@ const OUTLINE = "border-border min-h-11 border sm:min-h-9";
 
 // «Automatizaciones» (F11-08a, ADR-049): el interruptor de la organización y cada regla; el
 // historial y el resumen de SIMULATE llegan con F11-08a2 (#1225). Solo lee y cambia la
-// configuración: nada de aquí envía mensajes ni toca conversaciones, cotizaciones o ventas. Lo que cada rol ve es comodidad; la API decide:
-// `automations.view` lee, `automations.kill_switch` o `.manage` pausan, `.manage` edita y reanuda.
+// configuración: nada de aquí envía mensajes ni toca conversaciones, cotizaciones o ventas. Los
+// roles son comodidad (la API decide): `view` lee, `kill_switch` o `manage` pausan, `manage` edita.
 export function AutomationsSettings() {
   const t = useTranslations("automations");
   const errors = useTranslations("errors");
@@ -39,6 +39,7 @@ export function AutomationsSettings() {
     queryKey: key,
     queryFn: ({ signal }) => automationsRetrieve(slug, { signal }),
     enabled: view,
+    refetchOnWindowFocus: false, // releer al volver a la pestaña borraría lo que se está editando
   });
   const [said, setSaid] = useState<Said>(null);
   const sending = useRef(false);
@@ -55,7 +56,7 @@ export function AutomationsSettings() {
       const value = await (pause ? automationsPause : automationsResume)(slug);
       await queryClient.cancelQueries({ queryKey: key });
       queryClient.setQueryData<Automations>(key, (old) => old && { ...old, ...value });
-      setSaid({ text: t(pause ? "pause.done" : "resume.done") });
+      setSaid({ text: t(pause ? "pauseDone" : "resumeDone") });
       setTimeout(() => heading.current?.focus()); // el botón pulsado ya no está
     } catch (error) {
       setSaid({ text: errors(`api.${apiErrorKey(error)}`), alert: true });
@@ -71,6 +72,10 @@ export function AutomationsSettings() {
     body = <p role="alert">{t("denied")}</p>;
   } else if (query.data) {
     const data = query.data;
+    const at = data.paused_changed_at;
+    const paused = data.paused
+      ? t("paused", { at: at ? format.dateTime(new Date(at), WHEN) : "—" })
+      : null;
     const switchButton = (pause: boolean) => (
       <Button
         variant={pause ? "primary" : "ghost"}
@@ -78,7 +83,7 @@ export function AutomationsSettings() {
         aria-disabled={busy}
         onClick={() => void toggle(pause)}
       >
-        {t(`${pause ? "pause" : "resume"}.${busy ? "busy" : "open"}`)}
+        {t(`${pause ? "pause" : "resume"}${busy ? "Busy" : "Open"}`)}
       </Button>
     );
     body = (
@@ -93,24 +98,12 @@ export function AutomationsSettings() {
             tabIndex={-1}
             className="font-medium focus-visible:outline-none"
           >
-            {data.paused
-              ? t("paused", {
-                  at: data.paused_changed_at
-                    ? format.dateTime(new Date(data.paused_changed_at), WHEN)
-                    : "—",
-                })
-              : t("running")}
+            {data.global_enabled ? (paused ?? t("running")) : t("off")}
           </h2>
           {data.global_enabled ? null : <p className="text-sm">{t("globalOff")}</p>}
-          {!data.paused ? (
-            manage || held.has(KILL) ? (
-              switchButton(true)
-            ) : null
-          ) : manage ? (
-            switchButton(false)
-          ) : (
-            <p className="text-muted text-sm">{t("resume.onlyManage")}</p>
-          )}
+          {data.global_enabled || !paused ? null : <p className="text-sm">{paused}</p>}
+          {(paused ? manage : manage || held.has(KILL)) ? switchButton(!paused) : null}
+          {paused && !manage ? <p className="text-muted text-sm">{t("resumeOnlyManage")}</p> : null}
           <Result said={said} />
         </section>
         {data.rules.map((rule) => (

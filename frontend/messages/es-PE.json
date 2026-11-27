@@ -3564,20 +3564,17 @@
     "intro": "Crean tareas internas en «Mis tareas» de {organization} para no olvidar un seguimiento. Nunca envían mensajes a los clientes.",
     "loading": "Cargando las automatizaciones…",
     "denied": "No tienes acceso a las automatizaciones.",
-    "globalOff": "Las automatizaciones están apagadas en todo el sistema: ninguna regla se ejecuta, esté como esté. Se encienden en el servidor, no desde esta pantalla.",
+    "off": "Apagadas en todo el sistema.",
+    "globalOff": "Ninguna regla se ejecuta, esté como esté. Encenderlas en producción (AUTOMATIONS_ENABLED) es una operación que solo hace el propietario, fuera de esta pantalla.",
     "paused": "Pausadas desde {at}: ninguna regla se ejecuta hasta que se reanuden.",
     "running": "Activas: las reglas en SIMULATE u ON se revisan cada minuto.",
-    "pause": {
-      "open": "Pausar todas",
-      "busy": "Pausando…",
-      "done": "Las automatizaciones quedaron pausadas."
-    },
-    "resume": {
-      "open": "Reanudar",
-      "busy": "Reanudando…",
-      "done": "Las automatizaciones se reanudaron.",
-      "onlyManage": "Reanudarlas pide el permiso de gestionar las automatizaciones."
-    },
+    "pauseOpen": "Pausar todas",
+    "pauseBusy": "Pausando…",
+    "pauseDone": "Las automatizaciones quedaron pausadas.",
+    "resumeOpen": "Reanudar",
+    "resumeBusy": "Reanudando…",
+    "resumeDone": "Las automatizaciones se reanudaron.",
+    "resumeOnlyManage": "Reanudarlas pide el permiso de gestionar las automatizaciones.",
     "rules": {
       "conversation": {
         "unanswered": {
@@ -3600,8 +3597,8 @@
     },
     "on": {
       "rule": "ON exige antes al menos 7 días seguidos en SIMULATE y la revisión de la simulación por el propietario.",
-      "needsSimulate": "Para poder elegir ON, pásala primero a SIMULATE: la cuenta de 7 días empieza entonces.",
-      "wait": "Podrás elegir ON {left} ({at}).",
+      "needsSimulate": "Antes de ON tiene que pasar a SIMULATE: la cuenta de 7 días empieza entonces.",
+      "wait": "Podrá pasar a ON {left} ({at}).",
       "ready": "Ya lleva 7 días en SIMULATE: puede pasar a ON cuando el propietario revise la simulación.",
       "reviewed": "El propietario revisó la simulación y autoriza pasar a ON.",
       "required": "Marca la revisión del propietario para pasar a ON."
@@ -3626,7 +3623,8 @@
     "errors": {
       "SIMULATION_TOO_SHORT": "La API rechazó ON: la regla todavía no lleva 7 días seguidos en SIMULATE. No cambió nada.",
       "STALE_VERSION": "Otra persona cambió esta regla. Cargamos la versión actual: revisa y repite el cambio.",
-      "VALIDATION_ERROR": "Algún parámetro está fuera de rango: revísalo."
+      "VALIDATION_ERROR": "Algún parámetro está fuera de rango: revísalo.",
+      "field": "Revisa «{field}»: falta o está fuera de rango."
     }
   }
 }

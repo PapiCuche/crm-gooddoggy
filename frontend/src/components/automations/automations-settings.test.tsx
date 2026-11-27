@@ -1,4 +1,13 @@
-import { cleanup, configure, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { focusManager } from "@tanstack/react-query";
+import {
+  act,
+  cleanup,
+  configure,
+  fireEvent,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import AutomationsPage from "@/app/o/[orgSlug]/automatizaciones/page";
@@ -54,6 +63,7 @@ const sent = (api: ReturnType<typeof mockApi>, route: string) =>
     .map(([, init]) => (init?.body ? JSON.parse(String(init.body)) : null));
 const card = (name: string) => screen.findByRole("region", { name });
 const RULE = "Conversación sin responder";
+const TOO_MANY = "max_recipients: un entero de 1 a 3";
 const save = (rule: HTMLElement) =>
   fireEvent.click(within(rule).getByRole("button", { name: "Guardar cambios" }));
 
@@ -75,7 +85,9 @@ describe("Automatizaciones (F11-08a)", () => {
     const rule = await card(RULE);
     expect(within(rule).getByRole("radio", { name: /^SIMULATE/ })).toBeChecked();
     expect(within(rule).getByLabelText(/Avisar tras/)).toHaveValue(15);
-    expect(screen.getByText(/apagadas en todo el sistema/)).toBeVisible();
+    const status = screen.getByRole("heading", { name: "Apagadas en todo el sistema." });
+    expect(status.nextSibling).toHaveTextContent(/AUTOMATIONS_ENABLED.*solo hace el propietario/);
+    expect(screen.queryByText(/^Activas/)).toBeNull();
     const quote = await card("Cotización sin respuesta");
     expect(within(quote).getByRole("radio", { name: /^OFF/ })).toBeChecked();
     expect(within(quote).getByRole("checkbox", { name: /lun/i })).toBeChecked();
@@ -84,7 +96,7 @@ describe("Automatizaciones (F11-08a)", () => {
     // Desde OFF, ON no se ofrece: primero SIMULATE.
     const on = within(quote).getByRole("radio", { name: /^ON/ });
     expect(on).toBeDisabled();
-    expect(on).toHaveAccessibleDescription(/pásala primero a SIMULATE/);
+    expect(on).toHaveAccessibleDescription(/tiene que pasar a SIMULATE/);
     expect(screen.getByRole("button", { name: "Pausar todas" })).toBeVisible();
     // La pantalla solo lee la configuración: ni historial ni otros módulos.
     expect(api.mock.calls.map(([to]) => String(to))).toEqual([`${BASE}/`]);
@@ -101,6 +113,20 @@ describe("Automatizaciones (F11-08a)", () => {
     save(rule);
     expect(await within(rule).findByText("No hay cambios que guardar.")).toBeInTheDocument();
     expect(sent(api, PATCH)).toEqual([]);
+  });
+
+  it("ON se habilita justo al pasar `on_allowed_at`, no antes", async () => {
+    for (const [offset, disabled] of [
+      [-60_000, false],
+      [60_000, true],
+    ] as const) {
+      const at = new Date(Date.now() + offset).toISOString();
+      mockApi({ [GET]: ok(state({ ...simulating(7), on_allowed_at: at })) });
+      show(ADMIN);
+      const on = within(await card(RULE)).getByRole("radio", { name: /^ON/ });
+      expect(on).toHaveProperty("disabled", disabled);
+      cleanup();
+    }
   });
 
   it("tras 7 días, ON pide la revisión del propietario y enseña el rechazo de la API", async () => {
@@ -135,7 +161,9 @@ describe("Automatizaciones (F11-08a)", () => {
     show(ADMIN);
     const rule = await card(RULE);
     fireEvent.change(within(rule).getByLabelText(/Avisar tras/), { target: { value: "30" } });
-    save(rule);
+    const button = within(rule).getByRole("button", { name: "Guardar cambios" });
+    fireEvent.click(button);
+    fireEvent.click(button); // la segunda pulsación no es otra petición
     expect(
       await within(rule).findByText("«Conversación sin responder» quedó guardada."),
     ).toBeVisible();
@@ -152,15 +180,21 @@ describe("Automatizaciones (F11-08a)", () => {
   it("un parámetro fuera de rango: la API lo rechaza y se dice sin repetir su texto", async () => {
     const api = mockApi({
       [GET]: ok(state(simulating(2))),
-      [PATCH]: { status: 400, body: { code: "VALIDATION_ERROR", fields: { params: ["x"] } } },
+      [PATCH]: { status: 400, body: { code: "VALIDATION_ERROR", fields: { params: [TOO_MANY] } } },
     });
     show(ADMIN);
     const rule = await card(RULE);
-    fireEvent.change(within(rule).getByLabelText(/Personas por aviso/), { target: { value: "9" } });
+    const field = within(rule).getByLabelText(/Personas por aviso/);
+    const said = "Revisa «Personas por aviso, como máximo»: falta o está fuera de rango.";
+    fireEvent.change(field, { target: { value: "" } }); // vacío: no se envía
     save(rule);
-    expect(await within(rule).findByRole("alert")).toHaveTextContent(
-      "Algún parámetro está fuera de rango: revísalo.",
-    );
+    expect(await within(rule).findByRole("alert")).toHaveTextContent(said);
+    expect(sent(api, PATCH)).toEqual([]);
+    fireEvent.change(field, { target: { value: "9" } });
+    save(rule);
+    await waitFor(() => expect(sent(api, PATCH)).toHaveLength(1));
+    expect(await within(rule).findByRole("alert")).toHaveTextContent(said);
+    expect(rule).not.toHaveTextContent("un entero");
     expect(sent(api, PATCH)).toEqual([{ version: 3, params: { max_recipients: 9 } }]);
   });
 
@@ -177,7 +211,7 @@ describe("Automatizaciones (F11-08a)", () => {
     expect(
       within(rule).getByText("Avisar tras (minutos sin respuesta)").nextSibling,
     ).toHaveTextContent("15");
-    expect(within(rule).getByText(/dentro de 5 días/)).toBeVisible();
+    expect(within(rule).getByText(/^Podrá pasar a ON dentro de 5 días/)).toBeVisible();
     expect(within(rule).getByText(/^Solo lectura/)).toBeVisible();
     const quote = await card("Cotización sin respuesta");
     expect(within(quote).getByText("Días de atención").nextSibling).toHaveTextContent(
@@ -223,6 +257,27 @@ describe("Automatizaciones (F11-08a)", () => {
     show(["automations.view"]);
     expect(await screen.findByRole("alert")).toHaveTextContent("No tienes acceso");
     expect(screen.queryByRole("button")).toBeNull();
+  });
+
+  it("solo `automations.view`: lee, sin pausar ni editar", async () => {
+    mockApi({ [GET]: ok(state(simulating(2))) });
+    show(["automations.view"]);
+    expect(await card(RULE)).toBeVisible();
+    expect(screen.queryByRole("button")).toBeNull();
+    expect(screen.queryByRole("radio")).toBeNull();
+  });
+
+  it("volver a la pestaña no relee la regla ni borra lo que se está editando", async () => {
+    let version = 3;
+    const api = mockApi({ [GET]: () => ok(state({ ...simulating(2), version: version++ })) });
+    show(ADMIN);
+    const field = within(await card(RULE)).getByLabelText(/Avisar tras/);
+    fireEvent.change(field, { target: { value: "30" } });
+    act(() => [false, true].forEach((focused) => focusManager.setFocused(focused)));
+    await new Promise((done) => setTimeout(done, 50));
+    focusManager.setFocused(undefined);
+    expect(sent(api, GET)).toHaveLength(1);
+    expect(field).toHaveValue(30);
   });
 
   it("si la lectura falla, se dice y se puede reintentar", async () => {

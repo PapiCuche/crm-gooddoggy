@@ -16,7 +16,8 @@ import messages from "../../../messages/es-PE.json";
 
 const MODES: readonly AutomationModeEnum[] = ["OFF", "SIMULATE", "ON"];
 const WEEK = [1, 2, 3, 4, 5, 6, 7];
-// Los rangos de `apps.automations.params`: el navegador avisa antes; la API valida de nuevo.
+// Los rangos de `apps.automations.params` (`min`/`max` orientan; el formulario no los valida:
+// solo un número vacío se detiene aquí). La API es la que valida.
 const NUMBERS: Record<string, readonly [number, number]> = {
   ...{ first_after_minutes: [1, 1440], escalate_after_minutes: [1, 1440], max_recipients: [1, 3] },
   ...{ max_open_per_user: [1, 100], after_hours: [1, 720], before_expiry_hours: [0, 720] },
@@ -28,9 +29,9 @@ export const WHEN = { dateStyle: "medium", timeStyle: "short" } as const;
 const dayOf = (day: number) => new Date(Date.UTC(2024, 0, day));
 export type Said = { text: string; alert?: boolean } | null;
 
-// Una regla (F11-08a, ADR-049 §2, E2): su modo y sus parámetros. Con `automations.manage` se edita; sin él, se lee. `ON` solo
-// se ofrece tras 7 días en SIMULATE (`on_allowed_at`, reloj de la base) y con la revisión del
-// propietario marcada; es comodidad: la API rechaza `ON` antes de tiempo y aquí se enseña.
+// Una regla (F11-08a, ADR-049 §2, E2): su modo y sus parámetros; con `automations.manage` se
+// edita y sin él se lee. `ON` solo tras 7 días en SIMULATE (`on_allowed_at`) y con la revisión
+// del propietario marcada; es comodidad: la API rechaza `ON` antes de tiempo y aquí se enseña.
 export function AutomationRuleCard({ rule, manage }: { rule: AutomationRule; manage: boolean }) {
   const t = useTranslations("automations");
   const errors = useTranslations("errors");
@@ -40,7 +41,8 @@ export function AutomationRuleCard({ rule, manage }: { rule: AutomationRule; man
   const key = getAutomationsRetrieveQueryKey(organization.slug);
   const name = text(messages.automations.rules, `${rule.key}.name`) ?? rule.key;
   const id = useId();
-  // Lo que se edita; vuelve a lo guardado cuando la regla cambia de versión (al guardar o releer).
+  // Lo que se edita; vuelve a lo guardado cuando cambia la versión: al guardar o al releer tras
+  // `STALE_VERSION` (la pantalla no relee al volver a la pestaña).
   const [draft, setDraft] = useState({ mode: rule.mode, params: rule.params, reviewed: false });
   const [base, setBase] = useState(rule.version);
   if (base !== rule.version) {
@@ -68,6 +70,8 @@ export function AutomationRuleCard({ rule, manage }: { rule: AutomationRule; man
     );
     const mode = draft.mode === rule.mode ? undefined : draft.mode;
     if (!mode && Object.keys(params).length === 0) return setSaid({ text: t("unchanged") });
+    const empty = Object.keys(NUMBERS).find((param) => draft.params[param] === "");
+    if (empty) return setSaid({ alert: true, text: t("errors.field", { field: label(empty) }) });
     if (toOn && !draft.reviewed) {
       setMissing(true);
       return review.current?.focus();
@@ -87,11 +91,11 @@ export function AutomationRuleCard({ rule, manage }: { rule: AutomationRule; man
     } catch (error) {
       const code = (error as ApiError).code;
       if (code === "STALE_VERSION") void queryClient.invalidateQueries({ queryKey: key });
-      const own = OWN.includes(code);
-      setSaid({
-        alert: true,
-        text: own ? t(`errors.${code}`) : errors(`api.${apiErrorKey(error)}`),
-      });
+      // De un 400, solo el nombre del parámetro (antes de «:»), con su etiqueta; nunca su texto.
+      const bad = String((error as ApiError).fields?.params ?? "").split(":")[0] ?? "";
+      const why = OWN.includes(code) ? t(`errors.${code}`) : errors(`api.${apiErrorKey(error)}`);
+      const named = Object.hasOwn(rule.params, bad) && t("errors.field", { field: label(bad) });
+      setSaid({ alert: true, text: named || why });
     } finally {
       sending.current = false;
       setBusy(false);
@@ -107,22 +111,13 @@ export function AutomationRuleCard({ rule, manage }: { rule: AutomationRule; man
   const shown = (param: string, value: unknown) =>
     param === "days" && Array.isArray(value) ? value.map(weekday).join(", ") : String(value);
 
+  const left = allowedAt ? format.relativeTime(new Date(allowedAt), now) : "";
+  const wait = allowedAt && t("on.wait", { left, at: when(allowedAt) });
   const explain =
     rule.mode === "ON" ? null : (
       <div id={`${id}-on`} className="text-muted flex flex-col gap-1 text-sm">
         <p>{t("on.rule")}</p>
-        <p>
-          {rule.mode === "OFF"
-            ? t("on.needsSimulate")
-            : onAllowed
-              ? t("on.ready")
-              : allowedAt
-                ? t("on.wait", {
-                    left: format.relativeTime(new Date(allowedAt), now),
-                    at: when(allowedAt),
-                  })
-                : null}
-        </p>
+        <p>{rule.mode === "OFF" ? t("on.needsSimulate") : onAllowed ? t("on.ready") : wait}</p>
       </div>
     );
 
