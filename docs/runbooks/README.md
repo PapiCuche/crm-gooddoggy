@@ -10,6 +10,7 @@ Procedimientos operativos. Se escriben a partir de la Fase 1, conforme exista lo
 - [Primer arranque de producción](production-first-boot.md) (F1-17).
 - [Alta de un miembro en producción](add-member.md) (F2-127).
 - [Activación del copiloto de IA: lista de producción y guía del propietario](ai-copilot-activation.md) (#1050), con el kill switch de IA.
+- [Entrega continua (ADR-048): fase 1a, release aprobado en GitHub y ejecutado a mano](continuous-delivery.md) (F1-20h). Rige el GO por SHA hasta que el propietario la habilite.
 
 - Rotación de secretos (roles de BD, KEK de credenciales, `DJANGO_SECRET_KEY`, secretos de proveedores).
 - Recuperación de acceso MFA.
