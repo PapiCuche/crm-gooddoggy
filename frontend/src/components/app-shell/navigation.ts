@@ -49,6 +49,7 @@ export const NAVIGATION: readonly NavigationItem[] = [
     ),
   },
   { key: "ai", path: "/ia", section: "/ia", anyOf: ["ai.manage", "ai.kill_switch"] }, // el Supervisor solo apaga
+  { key: "automations", path: "/automatizaciones", permission: "automations.view" },
   { key: "audit", path: "/auditoria", permission: "audit.view" },
 ];
 
