@@ -339,10 +339,10 @@ def test_history_shows_the_subject_only_within_the_viewers_scope(
     give(inbox.a, join(inbox.a, reader).pk,
          {"automations.view": None, "conversations.view": "ORGANIZATION"})  # fmt: skip
     assert sees(reader) == of(*every)  # sin `quotes.view`: ninguna cotización
-    seller = make_user(email="quinn@example.com")  # `quotes.view` de la organización, sin chats
-    give(inbox.a, join(inbox.a, seller).pk, {"automations.view": None, "quotes.view":
+    quinn = make_user(email="quinn@example.com")  # `quotes.view` de la organización, sin chats
+    give(inbox.a, join(inbox.a, quinn).pk, {"automations.view": None, "quotes.view":
          "ORGANIZATION", "quotes.update": "OWN"})  # fmt: skip
-    assert sees(seller) == of(mine, quotes["ana"])  # el alcance de `quotes.view`, no el de update
+    assert sees(quinn) == of(mine, quotes["ana"])  # el alcance de `quotes.view`, no el de update
     with tenant_scope(ctx(inbox.a)):  # sin `conversations.view` ni `quotes.view`
         seller = MembershipRole.objects.filter(membership_id=inbox.m["vera"], role__code="seller")
         assert seller.delete()[0] == 1
