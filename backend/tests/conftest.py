@@ -83,6 +83,8 @@ TENANT_TABLES = (
 # F5-09a: delante de contactos, oportunidades, listas, variantes y membresías
 # F5-09b: las aprobaciones y las políticas, antes de las cotizaciones y de los roles
 TENANT_TABLES = ("quote_approvals", "discount_policies", "quote_items", "quotes", *TENANT_TABLES)
+# F11-03: las tareas referencian las cotizaciones (y las conversaciones): delante de ellas
+TENANT_TABLES = ("tasks", *(table for table in TENANT_TABLES if table != "tasks"))
 # F8-03a: las claves, delante de sus cuentas; las cuentas, delante de las membresías
 TENANT_TABLES = ("ai_provider_keys", "ai_provider_accounts", *TENANT_TABLES)
 TENANT_TABLES = ("ai_budget_usage", "ai_budgets", *TENANT_TABLES)  # F8-05
