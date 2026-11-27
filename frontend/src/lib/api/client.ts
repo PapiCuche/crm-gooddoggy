@@ -61,6 +61,7 @@ import type {
   ConversationDetail,
   ConversationMessagesListParams,
   ConversationQuickRepliesListParams,
+  ConversationsAccountOptionsParams,
   ConversationsListParams,
   ConversationsUnansweredCountParams,
   CopilotInsert,
@@ -126,6 +127,7 @@ import type {
   OpportunityMoveRequest,
   OpportunityWinRequest,
   OrganizationSummary,
+  PaginatedAccountOptionList,
   PaginatedAuditEntryList,
   PaginatedBatchLineList,
   PaginatedBranchList,
@@ -7100,7 +7102,7 @@ export const getConversationsListUrl = (orgSlug: string, params?: ConversationsL
 };
 
 /**
- * Las conversaciones dentro del alcance de `conversations.view`, la de mensaje más reciente primero (`last_message_at`, `id`; cursor de dos valores). `box`, `status`, `unanswered` y `platform` se combinan y la página siguiente se pide con los mismos. 400: un filtro repetido o no válido.
+ * Las conversaciones dentro del alcance de `conversations.view`, la de mensaje más reciente primero (`last_message_at`, `id`; cursor de dos valores). `box`, `status`, `unanswered`, `platform` y `account` se combinan y la página siguiente se pide con los mismos. 400: un filtro repetido o no válido.
  */
 export const conversationsList = async (
   orgSlug: string,
@@ -9172,6 +9174,165 @@ export const useConversationQuickRepliesRender = <TError = ErrorType<Error>, TCo
   return useMutation(getConversationQuickRepliesRenderMutationOptions(options), queryClient);
 };
 
+export const getConversationsAccountOptionsUrl = (
+  orgSlug: string,
+  params?: ConversationsAccountOptionsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : String(value));
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/v1/o/${orgSlug}/conversations/accounts/?${stringifiedParams}`
+    : `/api/v1/o/${orgSlug}/conversations/accounts/`;
+};
+
+/**
+ * UX-INBOX-02d: las cuentas de canal con al menos una conversación dentro del alcance de `conversations.view`, para filtrar la lista (`account`). Solo `id`, `platform` y `name`; no pide `channels.manage`. Por creación (ADR-016).
+ */
+export const conversationsAccountOptions = async (
+  orgSlug: string,
+  params?: ConversationsAccountOptionsParams,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<PaginatedAccountOptionList> => {
+  return apiFetch<PaginatedAccountOptionList>(getConversationsAccountOptionsUrl(orgSlug, params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getConversationsAccountOptionsQueryKey = (
+  orgSlug: string,
+  params?: ConversationsAccountOptionsParams,
+) => {
+  return [`/api/v1/o/${orgSlug}/conversations/accounts/`, ...(params ? [params] : [])] as const;
+};
+
+export const getConversationsAccountOptionsQueryOptions = <
+  TData = Awaited<ReturnType<typeof conversationsAccountOptions>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: ConversationsAccountOptionsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof conversationsAccountOptions>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getConversationsAccountOptionsQueryKey(orgSlug, params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof conversationsAccountOptions>>> = ({
+    signal,
+  }) => conversationsAccountOptions(orgSlug, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: orgSlug !== null && orgSlug !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof conversationsAccountOptions>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type ConversationsAccountOptionsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof conversationsAccountOptions>>
+>;
+export type ConversationsAccountOptionsQueryError = ErrorType<Error>;
+
+export function useConversationsAccountOptions<
+  TData = Awaited<ReturnType<typeof conversationsAccountOptions>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params: undefined | ConversationsAccountOptionsParams,
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof conversationsAccountOptions>>, TError, TData>
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof conversationsAccountOptions>>,
+          TError,
+          Awaited<ReturnType<typeof conversationsAccountOptions>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useConversationsAccountOptions<
+  TData = Awaited<ReturnType<typeof conversationsAccountOptions>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: ConversationsAccountOptionsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof conversationsAccountOptions>>, TError, TData>
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof conversationsAccountOptions>>,
+          TError,
+          Awaited<ReturnType<typeof conversationsAccountOptions>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useConversationsAccountOptions<
+  TData = Awaited<ReturnType<typeof conversationsAccountOptions>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: ConversationsAccountOptionsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof conversationsAccountOptions>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function useConversationsAccountOptions<
+  TData = Awaited<ReturnType<typeof conversationsAccountOptions>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: ConversationsAccountOptionsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof conversationsAccountOptions>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getConversationsAccountOptionsQueryOptions(orgSlug, params, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
 export const getConversationsUnansweredCountUrl = (
   orgSlug: string,
   params?: ConversationsUnansweredCountParams,
@@ -9192,7 +9353,7 @@ export const getConversationsUnansweredCountUrl = (
 };
 
 /**
- * Cuántas conversaciones sin responder (`unanswered=true` de la lista) hay dentro del alcance de `conversations.view`, de `box` y de `platform`. Solo el número.
+ * Cuántas conversaciones sin responder (`unanswered=true` de la lista) hay dentro del alcance de `conversations.view`, de `box`, de `platform` y de `account`. Solo el número.
  */
 export const conversationsUnansweredCount = async (
   orgSlug: string,

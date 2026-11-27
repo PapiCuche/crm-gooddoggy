@@ -2415,7 +2415,10 @@
       "status": "Estado",
       "anyStatus": "Todos los estados",
       "network": "Red",
-      "allNetworks": "Todas las redes"
+      "allNetworks": "Todas las redes",
+      "account": "Cuenta",
+      "allAccounts": "Todas las cuentas",
+      "otherAccount": "Otra cuenta"
     },
     "status": {
       "OPEN": "Abierta",
@@ -2497,6 +2500,7 @@
       "label": "Mensajes",
       "choose": "Elige una conversación para ver sus mensajes.",
       "loading": "Cargando mensajes…",
+      "opening": "Cargando la conversación…",
       "empty": "Todavía no hay mensajes en esta conversación.",
       "older": "Cargar mensajes anteriores",
       "refresh": "Actualizar mensajes",
