@@ -60,6 +60,8 @@ Previos transversales: [#3](https://github.com/PapiCuche/crm-gooddoggy/issues/3)
 | F1-20h | [#1174](https://github.com/PapiCuche/crm-gooddoggy/issues/1174) Fase 1a: runbook del operador | `docs/cd-phase-1a-runbook` | #1171, #1169 |
 | F1-20i | [#1175](https://github.com/PapiCuche/crm-gooddoggy/issues/1175) Verificación de punta a punta en entorno seguro | `chore/cd-phase-1-safe-rehearsal` | #1173, #1174 |
 
+- **Hecho en F1-20d ([#1169](https://github.com/PapiCuche/crm-gooddoggy/issues/1169)):** `infra/prod/cd-preflight.sh`, de solo lectura y cerrado ante lo que no puede comprobar: backup, disco, memoria y swap, carga, producción sana, lock, marca de parada, incidente abierto (API pública de GitHub, sin credenciales), ventana de la fase 1 en hora de Lima, feriados del Perú y `/etc/crm/deploy-freeze`. Prueba con un servidor simulado (`test-cd-preflight.sh`, en `infra-prod.yml`). Solo se usará cuando el propietario habilite la fase 1; no se ha ejecutado en producción.
+
 La parte del propietario (identidades, entorno `production`, token, avisos y la habilitación expresa) es el checklist F1-20g ([#1198](https://github.com/PapiCuche/crm-gooddoggy/issues/1198)).
 
 ## Definition of Done de la fase
