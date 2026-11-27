@@ -8,6 +8,7 @@ permiso de la ruta se comprueba antes de leer nada, y el cuerpo antes que el 404
 El contacto sale con `id` y `display_name`, y el nombre solo si quien consulta puede ver ese
 contacto (`contacts.view` y su alcance); si no, `null`. Los mensajes y el simulador, en
 `messages.py`.
+`…/accounts/` (UX-INBOX-02d): solo `id`, `platform` y `name` de las cuentas de las que se ven.
 """
 
 from typing import Any
@@ -30,7 +31,7 @@ from core.api.schema import errors
 from core.tenancy import context
 
 BOXES = (("all", "all"), ("mine", "mine"), ("unassigned", "unassigned"))
-FILTERS = ("box", "status", "unanswered", "platform")
+FILTERS = ("box", "status", "unanswered", "platform", "account")
 
 
 class ConversationContactSerializer(serializers.Serializer[Any]):
@@ -126,6 +127,12 @@ class BoxFilterSerializer(serializers.Serializer[Any]):
         error_messages={"invalid_choice": "No válido."},
         help_text="UX-INBOX-02: solo las de cuentas de esa red (`channel.platform`).",
     )
+    account = serializers.UUIDField(
+        required=False,
+        error_messages={"invalid": "No válido."},
+        help_text="UX-INBOX-02d: solo las de esa cuenta (`channel.id`). Una que no se ve deja la "
+        "lista vacía, igual que una que no existe.",
+    )
 
 
 class ConversationFilterSerializer(BoxFilterSerializer):
@@ -143,10 +150,17 @@ class UnansweredCountSerializer(serializers.Serializer[Any]):
     count = serializers.IntegerField()
 
 
+class AccountOptionSerializer(serializers.Serializer[Any]):
+    id = serializers.UUIDField()
+    platform = serializers.ChoiceField(choices=Platform.choices)
+    name = serializers.CharField()
+
+
 class ConversationFilters(BaseFilterBackend):
-    """`?box=`, `?status=`, `?unanswered=` y `?platform=`, detrás de `ScopeFilter`: recortan lo
-    que el alcance ya dejó. Cada uno, una sola vez; vacío es lo mismo que no pedirlo. La red sale
-    de la cuenta de canal, con un JOIN dentro del mismo `tenant_scope` (RLS en las dos tablas)."""
+    """`?box=`, `?status=`, `?unanswered=`, `?platform=` y `?account=`, detrás de `ScopeFilter`:
+    recortan lo que el alcance ya dejó. Cada uno, una sola vez; vacío es lo mismo que no pedirlo.
+    La red sale de la cuenta de canal, con un JOIN dentro del mismo `tenant_scope` (RLS en las dos
+    tablas)."""
 
     def filter_queryset(self, request: Any, queryset: Any, view: Any) -> QuerySet[Conversation]:
         params, names = request.query_params, getattr(view, "filters", FILTERS)
@@ -160,6 +174,8 @@ class ConversationFilters(BaseFilterBackend):
             found = found.filter(status=status)
         if (platform := wanted.validated_data.get("platform")) is not None:
             found = found.filter(channel_account__platform=platform)
+        if (account := wanted.validated_data.get("account")) is not None:
+            found = found.filter(channel_account_id=account)
         if wanted.validated_data.get("unanswered"):
             found = found.filter(selectors.UNANSWERED)
         match wanted.validated_data.get("box", "all"):
@@ -199,8 +215,8 @@ class ConversationsQuery:
         responses={200: ConversationSerializer(many=True), **errors(400, 401, 403, 404)},
         description="Las conversaciones dentro del alcance de `conversations.view`, la de mensaje "
         "más reciente primero (`last_message_at`, `id`; cursor de dos valores). `box`, `status`, "
-        "`unanswered` y `platform` se combinan y la página siguiente se pide con los mismos. 400: "
-        "un filtro repetido o no válido.",
+        "`unanswered`, `platform` y `account` se combinan y la página siguiente se pide con los "
+        "mismos. 400: un filtro repetido o no válido.",
     ),
 )
 class ConversationsView(ConversationsQuery, generics.ListAPIView):
@@ -233,13 +249,14 @@ class ConversationView(ConversationsQuery, generics.RetrieveAPIView):
         parameters=[BoxFilterSerializer],
         responses={200: UnansweredCountSerializer, **errors(400, 401, 403, 404)},
         description="Cuántas conversaciones sin responder (`unanswered=true` de la lista) hay "
-        "dentro del alcance de `conversations.view`, de `box` y de `platform`. Solo el número.",
+        "dentro del alcance de `conversations.view`, de `box`, de `platform` y de `account`. Solo "
+        "el número.",
     ),
 )
 class UnansweredCountView(generics.GenericAPIView[Conversation]):
     required_permissions = {"GET": "conversations.view"}
     filter_backends = [ScopeFilter, ConversationFilters]  # en este orden
-    filters = ("box", "platform")
+    filters = ("box", "platform", "account")
 
     def get_queryset(self) -> QuerySet[Conversation]:
         return Conversation.objects.all()
@@ -247,3 +264,31 @@ class UnansweredCountView(generics.GenericAPIView[Conversation]):
     def get(self, request: Request, **kwargs: Any) -> Response:
         found = self.filter_queryset(self.get_queryset()).filter(selectors.UNANSWERED)
         return Response({"count": found.count()})
+
+
+@extend_schema_view(
+    get=extend_schema(
+        operation_id="conversations_account_options",
+        tags=["conversations"],
+        responses={200: AccountOptionSerializer(many=True), **errors(400, 401, 403, 404)},
+        description="UX-INBOX-02d: las cuentas de canal con al menos una conversación dentro del "
+        "alcance de `conversations.view`, para filtrar la lista (`account`). Solo `id`, "
+        "`platform` y `name`; no pide `channels.manage`. Por creación (ADR-016).",
+    ),
+)
+class AccountOptionsView(generics.ListAPIView):
+    required_permissions = {"GET": "conversations.view"}
+    serializer_class = AccountOptionSerializer
+    filter_backends = [ScopeFilter]  # recorta las conversaciones; las cuentas salen de ellas
+
+    def get_queryset(self) -> QuerySet[Any]:
+        return Conversation.objects.all()
+
+    def list(self, request: Request, *args: Any, **kwargs: Any) -> Response:
+        tenant = context.current()
+        assert tenant is not None  # noqa: S101 — `HasPermission` ya lo comprobó
+        seen = self.filter_queryset(self.get_queryset())
+        used = Exists(seen.filter(channel_account_id=OuterRef("pk")))
+        found = ChannelAccount.objects.filter(used, organization_id=tenant.organization_id)
+        page = self.paginate_queryset(found.only("id", "platform", "name"))
+        return self.get_paginated_response(self.get_serializer(page, many=True).data)

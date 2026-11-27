@@ -3425,9 +3425,17 @@ paths:
       operationId: conversations_list
       description: 'Las conversaciones dentro del alcance de `conversations.view`,
         la de mensaje más reciente primero (`last_message_at`, `id`; cursor de dos
-        valores). `box`, `status`, `unanswered` y `platform` se combinan y la página
-        siguiente se pide con los mismos. 400: un filtro repetido o no válido.'
+        valores). `box`, `status`, `unanswered`, `platform` y `account` se combinan
+        y la página siguiente se pide con los mismos. 400: un filtro repetido o no
+        válido.'
       parameters:
+      - in: query
+        name: account
+        schema:
+          type: string
+          format: uuid
+        description: 'UX-INBOX-02d: solo las de esa cuenta (`channel.id`). Una que
+          no se ve deja la lista vacía, igual que una que no existe.'
       - in: query
         name: box
         schema:
@@ -4617,13 +4625,82 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/conversations/accounts/:
+    get:
+      operationId: conversations_account_options
+      description: 'UX-INBOX-02d: las cuentas de canal con al menos una conversación
+        dentro del alcance de `conversations.view`, para filtrar la lista (`account`).
+        Solo `id`, `platform` y `name`; no pide `channels.manage`. Por creación (ADR-016).'
+      parameters:
+      - name: cursor
+        in: query
+        required: false
+        description: El `next` de la página anterior. Sin él, la primera página.
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        description: Filas por página.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+          default: 50
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - conversations
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedAccountOptionList'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/conversations/unanswered/:
     get:
       operationId: conversations_unanswered_count
       description: Cuántas conversaciones sin responder (`unanswered=true` de la lista)
-        hay dentro del alcance de `conversations.view`, de `box` y de `platform`.
-        Solo el número.
+        hay dentro del alcance de `conversations.view`, de `box`, de `platform` y
+        de `account`. Solo el número.
       parameters:
+      - in: query
+        name: account
+        schema:
+          type: string
+          format: uuid
+        description: 'UX-INBOX-02d: solo las de esa cuenta (`channel.id`). Una que
+          no se ve deja la lista vacía, igual que una que no existe.'
       - in: query
         name: box
         schema:
@@ -12622,6 +12699,20 @@ paths:
           description: ''
 components:
   schemas:
+    AccountOption:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        platform:
+          $ref: '#/components/schemas/PlatformEnum'
+        name:
+          type: string
+      required:
+      - id
+      - name
+      - platform
     ActiveOrSuspendedEnum:
       enum:
       - ACTIVE
@@ -16363,6 +16454,20 @@ components:
         * `SUBSCRIBED` - SUBSCRIBED
         * `NOT_SUBSCRIBED` - NOT_SUBSCRIBED
         * `UNKNOWN` - UNKNOWN
+    PaginatedAccountOptionList:
+      type: object
+      required:
+      - results
+      - next
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/AccountOption'
+        next:
+          type: string
+          nullable: true
+          description: Cursor de la página siguiente; `null` en la última.
     PaginatedAuditEntryList:
       type: object
       required:

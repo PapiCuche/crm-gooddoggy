@@ -52,6 +52,10 @@ const show = () =>
   );
 const asked = (api: ReturnType<typeof mockApi>) => api.mock.calls.map(([url]) => String(url));
 const chips = () => within(screen.getByRole("group", { name: "Red" }));
+const OPTIONS = `${LIST}accounts/?limit=200`;
+const LIMA = { id: "ch-WHATSAPP", platform: "WHATSAPP", name: "Ventas Lima" };
+const IG = { id: "ch-INSTAGRAM", platform: "INSTAGRAM", name: "Tienda IG" };
+const picker = () => screen.findByRole("combobox", { name: "Cuenta" });
 
 configure({ asyncUtilTimeout: 4000 });
 vi.setConfig({ testTimeout: 15_000 });
@@ -174,5 +178,77 @@ describe("filtro por red del Inbox (UX-INBOX-02)", () => {
     expect(screen.getByRole("button", { name: /Rosa Díaz/ })).toBeVisible();
     expect(asked(api)).toContain("/api/v1/o/acme/conversations/?platform=WHATSAPP&cursor=c1");
     expect(asked(api).some((url) => url.endsWith("?cursor=c1"))).toBe(false);
+  });
+});
+
+describe("filtro por cuenta del Inbox (UX-INBOX-02d)", () => {
+  it("cada cuenta con su red en texto; elegirla filtra la lista y su número en el servidor", async () => {
+    const api = mockApi({
+      [LIST]: page([rosa, ines]),
+      [COUNT]: ok({ count: 5 }),
+      [OPTIONS]: page([LIMA], "p2"),
+      [`${OPTIONS}&cursor=p2`]: page([IG]),
+      [`${LIST}?account=ch-WHATSAPP`]: page([rosa]),
+      [`${COUNT}?account=ch-WHATSAPP`]: ok({ count: 1 }),
+      [`${LIST}?platform=INSTAGRAM&account=ch-WHATSAPP`]: page([]),
+      [`${COUNT}?platform=INSTAGRAM&account=ch-WHATSAPP`]: ok({ count: 0 }),
+    });
+    show();
+    const select = await picker();
+    await within(select).findByRole("option", { name: "Instagram · Tienda IG" }); // y la 2.ª página
+    const texts = within(select)
+      .getAllByRole("option")
+      .map((one) => one.textContent);
+    expect(texts).toEqual(["Todas las cuentas", "WhatsApp · Ventas Lima", "Instagram · Tienda IG"]);
+    expect(select).toHaveClass("h-11");
+    expect(select.parentElement!.parentElement).toHaveClass("[&_select]:overflow-hidden"); // WebKit
+    fireEvent.change(select, { target: { value: "ch-WHATSAPP" } });
+    await waitFor(() => expect(screen.queryByRole("button", { name: /Inés Soto/ })).toBeNull());
+    expect(
+      await screen.findByRole("button", { name: "Sin responder, 1 conversación sin responder" }),
+    ).toBeVisible();
+    const icon = document.querySelector("[data-account-icon]"); // la red de la elegida, y en texto
+    expect(icon).toHaveClass("text-channel-whatsapp");
+    fireEvent.click(chips().getByRole("button", { name: "Instagram" }));
+    expect(
+      await screen.findByText("Ninguna conversación de Instagram coincide con los filtros."),
+    ).toBeVisible();
+    expect(asked(api)).toEqual(
+      expect.arrayContaining([
+        "/api/v1/o/acme/conversations/?account=ch-WHATSAPP",
+        "/api/v1/o/acme/conversations/unanswered/?account=ch-WHATSAPP",
+        "/api/v1/o/acme/conversations/?platform=INSTAGRAM&account=ch-WHATSAPP",
+        "/api/v1/o/acme/conversations/unanswered/?platform=INSTAGRAM&account=ch-WHATSAPP",
+      ]),
+    );
+  });
+
+  it("«Cargar más» conserva la cuenta", async () => {
+    const api = mockApi({
+      [LIST]: page([rosa, ines]),
+      [OPTIONS]: page([LIMA, IG]),
+      [`${LIST}?account=ch-WHATSAPP`]: page([rosa], "c1"),
+      [`${LIST}?account=ch-WHATSAPP&cursor=c1`]: page([row("3", "Marta Paz", "WHATSAPP")]),
+    });
+    show();
+    fireEvent.change(await picker(), { target: { value: "ch-WHATSAPP" } });
+    await waitFor(() => expect(screen.queryByRole("button", { name: /Inés Soto/ })).toBeNull());
+    fireEvent.click(await screen.findByRole("button", { name: "Cargar más" }));
+    expect(await screen.findByRole("button", { name: /Marta Paz/ })).toBeVisible();
+    expect(asked(api)).toContain("/api/v1/o/acme/conversations/?account=ch-WHATSAPP&cursor=c1");
+    expect(asked(api).some((url) => url.endsWith("?cursor=c1"))).toBe(false);
+  });
+
+  it("con una sola cuenta, o si sus opciones no cargan, no hay selector", async () => {
+    mockApi({ [LIST]: page([rosa]), [OPTIONS]: page([LIMA]) });
+    show();
+    await screen.findByRole("button", { name: /Rosa Díaz/ });
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Estado" })).toBeVisible());
+    expect(screen.queryByRole("combobox", { name: "Cuenta" })).toBeNull();
+    cleanup();
+    mockApi({ [LIST]: page([rosa]) }); // 404: la lista sigue
+    show();
+    expect(await screen.findByRole("button", { name: /Rosa Díaz/ })).toBeVisible();
+    expect(screen.queryByRole("combobox", { name: "Cuenta" })).toBeNull();
   });
 });
