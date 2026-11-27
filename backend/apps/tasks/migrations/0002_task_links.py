@@ -34,10 +34,12 @@ DROP = (
 
 
 class Migration(migrations.Migration):
+    # Las primeras migraciones de conversaciones y cotizaciones (crean sus `(organization_id, id)`
+    # únicos): volver atrás otras posteriores de esas apps no deshace esta.
     dependencies = [
         ("tasks", "0001_tasks"),
-        ("conversations", "0068_backfill_awaiting_reply_since"),
-        ("quotes", "0007_revision"),
+        ("conversations", "0001_inbox_tables"),
+        ("quotes", "0001_quotes"),
     ]
 
     operations = [
