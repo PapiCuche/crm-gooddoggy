@@ -45,8 +45,9 @@ Todos tienen que cumplirse **antes de cada release**, no solo el primer día. Si
 | P8 | **Las comprobaciones en vivo de #1175** hechas: con `deployment: false` el entorno sigue exigiendo el revisor, y `GET /runs/{id}/approvals` trae la aprobación | Resultado registrado en [#1175](https://github.com/PapiCuche/crm-gooddoggy/issues/1175) |
 | P9 | `release.yml` activo: variables `CD_RELEASE_ENABLED=true` y `CD_APPROVERS` con los logins que fijó el propietario | `gh variable get` (necesita permiso de lectura de variables). Las cambia solo el propietario |
 | P10 | `gh` **2.103.3** exacto, verificado por su sha256, en la máquina Linux amd64 donde se ejecuta `verify_attestations.py` | `gh --version`; instalación en [infra/prod/README.md](../../infra/prod/README.md), «Atestaciones de procedencia». A esa máquina se copia el `<DIR>` de V8, con el mismo `sha256sum`; nunca se baja el artefacto otra vez |
+| P11 | Las etiquetas `incident` y `stop-the-line` existen en el repositorio | `gh label list` (V13). Hoy no existen: hasta que el propietario las cree, no hay fase 1a |
 
-Órdenes de solo lectura para P2 a P9, desde un clon del repositorio en tu equipo:
+Órdenes de solo lectura para P2 a P9, desde un clon del repositorio en tu equipo (la de P11 está en V13):
 
 ```bash
 # P2 a P4: revisores, «Prevent self-review» y bypass de administradores del entorno production
@@ -85,6 +86,7 @@ No se ejecuta, aunque el propietario haya aprobado en GitHub, si se da **cualqui
 - **CI no está verde en el SHA exacto y en el rango** (ADR-048 §7, primera fila): para cada workflow que corrió por push en un commit de `(<BASE>, <SHA>]`, su última ejecución en el rango no terminó en `success`, o falta `images publish` en `success` en el SHA (V12 y V8).
 - **La aprobación caducó:** pasaron más de 24 h desde el inicio del job `release approve` (V3). Hay que preparar y aprobar de nuevo. Se vuelve a mirar justo antes de `deploy.sh` (paso 5 de §4).
 - **Se abrió un incidente después de aprobar:** un issue con la etiqueta `incident` o `stop-the-line` creado después del `started_at` del job `release approve` anula la aprobación, **esté abierto o cerrado** (V13). Hay que preparar y aprobar de nuevo cuando el propietario lo indique.
+- **Falta la etiqueta `incident` o `stop-the-line` en el repositorio** (P11). Sin ella, las búsquedas de incidentes devuelven `[]` y no prueban nada.
 - **Cualquier elemento de la tupla no coincide** (V1 a V13). Ver el ejemplo de §6.
 - **Un commit de `main` posterior al SHA revierte un commit del rango** (V6).
 - **El `release.env` que vas a desplegar no es byte a byte el que se comprobó** (paso 5 de §4).
@@ -118,11 +120,12 @@ No se ejecuta, aunque el propietario haya aprobado en GitHub, si se da **cualqui
    t = d.datetime.strptime(sys.argv[1], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=d.timezone.utc)
    age = d.datetime.now(d.timezone.utc) - t
    print("aprobación vigente" if d.timedelta(0) <= age < d.timedelta(hours=24) else "FALLA")' <APPROVED_AT>
+   # y V13 otra vez (etiquetas e incidentes desde <APPROVED_AT>), desde tu equipo
    sudo infra/prod/cd-preflight.sh                         # V11, justo antes: PREFLIGHT OK
    sudo infra/prod/deploy.sh /root/release-<SHA>.env
    ```
 
-   `<APPROVED_AT>` es el `started_at` del job `release approve` (V3). Con un solo `FALLA`, no se lanza `deploy.sh`.
+   `<APPROVED_AT>` es el `started_at` del job `release approve` (V3). Con un solo `FALLA`, o con un incidente nuevo en V13, no se lanza `deploy.sh`.
 
    Nunca con `--allow-revision-mismatch`. Si `deploy.sh` termina en `DESPLIEGUE FALLIDO`, `ROLLBACK` o `INTERRUMPIDO`, se sigue [infra/prod/README.md](../../infra/prod/README.md), «Volver atrás», y se avisa al propietario. ADR-048 §9 lo trata como una parada de la línea: no se prepara ni se despliega nada más hasta que el propietario lo indique. Hoy `deploy.sh` todavía no deja la marca `cd-halted`; llega con F1-20e2.
 6. **Observar y avisar.** Después de `DESPLIEGUE OK`, el operador hace a mano la ventana de observación de ADR-048 §9: durante 30 min mira `/health/ready`, los reinicios de contenedores y la otra aplicación. Si algo falla, avisa al propietario y sigue «Volver atrás» del README. Al terminar, avisa al propietario con el SHA corto, la clase, la duración y el enlace al run. Nunca manda secretos, valores de entorno, logs de la aplicación ni datos de clientes (ADR-048 §10).
@@ -315,24 +318,55 @@ ADR-048 §7, primera fila. Para cada workflow que corrió por push en un commit 
 
 ```bash
 for c in $(git rev-list <BASE>..<SHA>); do
-  gh api "repos/{owner}/{repo}/actions/runs?head_sha=$c&event=push&per_page=100" \
-    --jq ".workflow_runs[] | [\"$c\", .path, .status, .conclusion] | @tsv"
-done | awk -F'\t' '!seen[$2]++ && ($3 != "completed" || $4 != "success") { print "FALLA", $0; bad = 1 }
-  END { if (!bad) print "CI verde en el rango" }'
+  out=$(gh api "repos/{owner}/{repo}/actions/runs?head_sha=$c&event=push&per_page=100" \
+    --jq ".workflow_runs[] | [\"$c\", .path, .status, .conclusion] | @tsv") || out="FALLA api $c"
+  [ -n "$out" ] || out="FALLA sin runs $c"
+  printf '%s\n' "$out"
+done | awk -F'\t' '/^FALLA/ { print; bad = 1; next }
+  !seen[$2]++ && ($3 != "completed" || $4 != "success") { print "FALLA", $0; bad = 1 }
+  END { if (NR == 0) print "FALLA rango vacío"; else if (!bad) print "CI verde en el rango" }'
 ```
 
-Cualquier `FALLA` bloquea, también un run sin terminar. `images publish` en `success` en el SHA lo comprueba V8.
+Cualquier `FALLA` bloquea:
+
+- un run sin terminar o que no terminó en `success`;
+- un error de la API, también uno de red sin respuesta;
+- **un commit del rango sin runs de push**, por ejemplo porque alguien borró el run que fallaba;
+- un rango vacío.
+
+`images publish` en `success` en el SHA lo comprueba V8.
+
+**Límite conocido (FIX LATER):** V12 no comprueba que cada workflow que corrió en el commit más nuevo del rango tenga también un run en cada commit donde cambiaron sus rutas. Si alguien borra el run de un solo workflow en un commit y ese commit conserva otros runs, V12 sigue pasando. Mientras no exista esa comprobación, el operador mira en la página de Actions que ningún run del rango aparezca borrado ni falte frente a sus vecinos, y en la duda no ejecuta.
 
 ### V13. Ningún incidente desde la aprobación
 
 Un issue con la etiqueta `incident` o `stop-the-line` creado después de `<APPROVED_AT>` anula la aprobación, **esté abierto o cerrado**:
+
+**Primero, las etiquetas existen.** Con una etiqueta que no existe, o mal escrita, GitHub responde `[]`, que parece «ningún incidente». `cd-preflight.sh` tiene el mismo punto ciego:
+
+```bash
+gh label list --limit 200 --json name --jq '.[].name' | grep -xE 'incident|stop-the-line'
+```
+
+Tiene que imprimir las dos, `incident` y `stop-the-line`. Si falta alguna, bloquea. Es P11.
+
+Después, los issues creados desde la aprobación:
 
 ```bash
 gh issue list --state all --label incident --search 'created:>=<APPROVED_AT>' --json number,state,createdAt
 gh issue list --state all --label stop-the-line --search 'created:>=<APPROVED_AT>' --json number,state,createdAt
 ```
 
-Las dos tienen que devolver `[]`. Un issue abierto con esas etiquetas, sea de cuando sea, ya lo bloquea `cd-preflight.sh`.
+Las dos tienen que devolver `[]`. La búsqueda usa un índice que va con retraso. Por eso, o se espera al menos 5 min desde la última actividad en un issue de incidente, o se cruza con el listado directo, sin índice, ordenado por actualización:
+
+```bash
+for l in incident stop-the-line; do
+  gh api "repos/{owner}/{repo}/issues?labels=$l&state=all&sort=updated&direction=desc&per_page=20" \
+    --jq '.[] | [.number, .state, .created_at, .updated_at] | @tsv'
+done
+```
+
+Ninguna línea puede tener `created_at` posterior a `<APPROVED_AT>`. Un issue abierto con esas etiquetas, sea de cuando sea, ya lo bloquea `cd-preflight.sh`.
 
 ## 6. Ejemplo: rechazar un release cuya tupla no coincide
 
