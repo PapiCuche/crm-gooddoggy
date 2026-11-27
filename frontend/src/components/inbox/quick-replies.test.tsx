@@ -655,3 +655,220 @@ describe("respuestas rápidas con su botón (UX-INBOX-05)", () => {
     expect(document.activeElement?.isConnected).toBe(true);
   });
 });
+
+describe("remates de las respuestas rápidas (UX-INBOX-05b)", () => {
+  beforeEach(() => void (opened.length = 0));
+  const notice = /El cuadro cambió mientras se preparaba \/delivery-lima y no se insertó/;
+
+  it("si el envío vacía el cuadro antes de que vuelva `render`, avisa en la hoja y se reintenta", async () => {
+    const s = server(undefined, { hold: true, holdSend: true });
+    show();
+    await openChat();
+    await type("hola");
+    fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
+    await waitFor(() => expect(s.held).toHaveLength(1));
+    fireEvent.click(await browse("lima"));
+    await waitFor(() => expect(s.held).toHaveLength(2));
+    await s.release(); // sale el envío: el cuadro queda vacío
+    await waitFor(() => expect(box()).resolves.toHaveValue(""));
+    await s.release(); // vuelve `render`, tarde
+    expect(await screen.findByRole("alert")).toHaveTextContent(notice);
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(await box()).toHaveValue("");
+    await type("x"); // el aviso es de ese texto: se va si cambia
+    expect(screen.queryByText(notice)).toBeNull();
+    await type("");
+    expect(screen.getByText(notice)).toBeInTheDocument();
+    fireEvent.keyDown(await search(), { key: "Enter" }); // la misma, otra vez
+    await waitFor(() => expect(s.held).toHaveLength(1));
+    expect(screen.queryByText(notice)).toBeNull();
+    await s.release();
+    await waitFor(() => expect(box()).resolves.toHaveValue(rendered.text));
+    await settle();
+    expect(s.renders()).toBe(2);
+    expect(s.sends()).toEqual([expect.objectContaining({ body: "hola" })]);
+  });
+
+  it("sin aviso si se siguió escribiendo (`/`) o si la lista ya se cerró", async () => {
+    const s = server(undefined, { hold: true });
+    show();
+    await openChat();
+    await type("/delivery-l");
+    await waitFor(() => expect(options()).toHaveLength(1));
+    await key("Enter");
+    await waitFor(() => expect(s.held).toHaveLength(1));
+    await type("/deli"); // la lista de `/` sigue abierta con otro texto
+    await s.release();
+    await waitFor(() => expect(options()).toHaveLength(2));
+    expect(screen.queryByText(notice)).toBeNull();
+    await key("Enter"); // pedida con `/`, se escribe otra cosa y se abre la lista antes de que vuelva
+    await waitFor(() => expect(s.held).toHaveLength(1));
+    await type("otra cosa");
+    fireEvent.click(await button());
+    await s.release();
+    await settle();
+    expect(screen.queryByText(/El cuadro cambió/)).toBeNull();
+    fireEvent.keyDown(await search(), { key: "Escape" });
+    await type("hola");
+    fireEvent.click(await browse("lima"));
+    await waitFor(() => expect(s.held).toHaveLength(1));
+    fireEvent.keyDown(await search(), { key: "Escape" });
+    await type("hola de nuevo");
+    await s.release();
+    fireEvent.click(await button());
+    await settle();
+    expect(screen.queryByText(notice)).toBeNull();
+    expect(await box()).toHaveValue("hola de nuevo");
+  });
+
+  it("un `render` tardío de otra conversación se descarta sin aviso", async () => {
+    const s = server(undefined, { hold: true });
+    show();
+    await openChat();
+    await type("hola");
+    fireEvent.click(await browse("lima"));
+    await waitFor(() => expect(s.held).toHaveLength(1));
+    await openChat(/Juan Pérez/);
+    fireEvent.click(await button()); // la hoja de Juan, abierta cuando vuelve
+    await s.release();
+    await settle();
+    expect(screen.queryByText(notice)).toBeNull();
+    expect(await box()).toHaveValue("");
+    expect(s.sends()).toEqual([]);
+  });
+
+  it("en el desplegable, pulsar una cabecera no quita el foco; el buscador sí recibe el ratón", async () => {
+    vi.stubGlobal("visualViewport", undefined);
+    server();
+    show();
+    await openChat();
+    await browse("deli");
+    await waitFor(() => expect(options()).toHaveLength(2));
+    expect(opened).toEqual(["show"]);
+    expect(document.body.style.position).toBe(""); // la página solo se sujeta tras la hoja modal
+    expect(fireEvent.mouseDown(screen.getByText("Delivery"))).toBe(false);
+    expect(
+      fireEvent.mouseDown(within(screen.getByRole("dialog")).getByText(/Enter para elegir/)),
+    ).toBe(false);
+    expect(fireEvent.mouseDown(await search())).toBe(true); // el cursor y la selección
+    expect(fireEvent.mouseDown(screen.getByRole("listbox"))).toBe(true); // su barra
+    fireEvent.keyDown(await search(), { key: "Escape", isComposing: true }); // del IME
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    const close = screen.getByRole("button", { name: "Cerrar respuestas rápidas" });
+    close.focus();
+    fireEvent.keyDown(close, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(await button()).toHaveFocus();
+  });
+
+  it("la hoja modal deja pasar el ratón y suelta `visualViewport` al cerrarse", async () => {
+    vi.stubGlobal("scrollTo", vi.fn());
+    const viewport = Object.assign(new EventTarget(), { height: 500, offsetTop: 0 });
+    vi.stubGlobal("visualViewport", viewport);
+    vi.stubGlobal("matchMedia", (query: string) => ({ matches: query === "(max-width: 639px)" }));
+    server();
+    show();
+    await openChat();
+    fireEvent.click(await button());
+    const sheet = screen.getByRole("dialog");
+    expect(opened).toEqual(["modal"]);
+    await waitFor(() => expect(options()).toHaveLength(3));
+    expect(fireEvent.mouseDown(screen.getByText("Delivery"))).toBe(true);
+    viewport.height = 300;
+    viewport.dispatchEvent(new Event("resize"));
+    expect(sheet.style.getPropertyValue("--sheet-max")).toBe("300px");
+    fireEvent.click(screen.getByRole("button", { name: "Cerrar respuestas rápidas" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    viewport.height = 200;
+    viewport.dispatchEvent(new Event("resize"));
+    viewport.dispatchEvent(new Event("scroll"));
+    expect(sheet.style.getPropertyValue("--sheet-max")).toBe("300px");
+  });
+});
+
+describe("el botón en la fila de los modos por debajo de 640 px (UX-INBOX-05b)", () => {
+  beforeEach(() => void (opened.length = 0));
+  // Un `matchMedia` con ancho: `resize(n)` lo cambia y avisa como al girar el teléfono.
+  const at = (start: number) => {
+    let width = start;
+    const heard = new Set<() => void>();
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      get matches() {
+        return query === "(max-width: 639px)" && width < 640;
+      },
+      addEventListener: (_: string, fn: () => void) => heard.add(fn),
+      removeEventListener: (_: string, fn: () => void) => heard.delete(fn),
+    }));
+    return (next: number) => act(() => ((width = next), heard.forEach((fn) => fn())));
+  };
+  const before = (a: Element, b: Element) =>
+    !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+
+  it("sube a la fila de los modos con el orden de Tab: modos, rápidas, copiloto, cuadro, clip, enviar", async () => {
+    at(320);
+    server();
+    show(grants("conversations.view", "messages.send", "messages.note", "ai.use"));
+    await openChat();
+    const zap = await button();
+    const order = [
+      screen.getByRole("button", { name: "Responder al cliente" }),
+      screen.getByRole("button", { name: "Nota interna" }),
+      zap,
+      screen.getByRole("button", { name: "Resumir" }),
+      screen.getByRole("button", { name: "Sugerir respuesta" }),
+      await box(),
+      screen.getByRole("button", { name: "Adjuntar imagen o PDF" }),
+      screen.getByRole("button", { name: "Enviar" }),
+    ];
+    order.slice(1).forEach((next, i) => expect(before(order[i]!, next)).toBe(true));
+    expect(zap.closest("form")).toBeNull();
+    expect(zap.parentElement).toBe(
+      screen.getByRole("group", { name: "Tipo de mensaje" }).nextElementSibling,
+    );
+    zap.focus(); // se va con el foco dentro (el clic de jsdom no lo mueve) y no lo roba al volver
+    fireEvent.click(screen.getByRole("button", { name: "Nota interna" }));
+    expect(screen.queryByRole("button", { name: "Respuestas rápidas" })).toBeNull(); // la nota no
+    screen.getByRole("button", { name: "Responder al cliente" }).focus();
+    fireEvent.click(screen.getByRole("button", { name: "Responder al cliente" }));
+    expect(await button()).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Responder al cliente" })).toHaveFocus();
+  });
+
+  it("desde 640 px, o sin fila de modos, se queda junto al clip", async () => {
+    at(640);
+    server();
+    const first = show();
+    await openChat();
+    expect((await button()).closest("form")).not.toBeNull();
+    first.unmount();
+    at(320);
+    show(grants("conversations.view", "messages.send"));
+    await openChat();
+    expect((await button()).closest("form")).not.toBeNull();
+  });
+
+  it("al cruzar 640 px conserva el foco, el borrador y la hoja abierta", async () => {
+    const resize = at(639);
+    server();
+    show();
+    await openChat();
+    await type("hola");
+    (await button()).focus();
+    resize(640);
+    expect((await button()).closest("form")).not.toBeNull();
+    expect(await button()).toHaveFocus();
+    resize(639);
+    expect((await button()).closest("form")).toBeNull();
+    expect(await button()).toHaveFocus();
+    fireEvent.click(await button());
+    expect(await search()).toHaveFocus();
+    resize(640);
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(await search()).toHaveFocus();
+    fireEvent.keyDown(await search(), { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(await button()).toHaveFocus();
+    expect((await button()).closest("form")).not.toBeNull();
+    expect(await box()).toHaveValue("hola");
+  });
+});
