@@ -47,6 +47,7 @@
     ["B", ".github/workflows/images.yml", "cadena de entrega (§2.1)"],
     ["B", ".github/workflows/release.yml", "cadena de entrega (§2.1)"],
     ["B", ".github/scripts/deploy_class.py", "código del clasificador (§2.1)"],
+    ["B", ".github/scripts/release_record.py", "cadena de entrega: prepara y comprueba la aprobación (§2.1, F1-20c)"],
     ["B", "backend/pyproject.toml", "dependencias (§2, B)"],
     ["B", "backend/uv.lock", "dependencias (§2, B)"],
     ["B", "backend/.python-version", "versión de Python de la imagen (§2, B; conservador)"],

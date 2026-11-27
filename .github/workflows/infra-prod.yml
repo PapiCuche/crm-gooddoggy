@@ -10,6 +10,7 @@ name: infra-prod
 # F1-15b: también cuando cambia un Dockerfile: validate.sh exige sus bases por digest.
 # F1-20b: el verificador de atestaciones con una web y un gh falsos (sin red ni credenciales).
 # F1-20d: cd-preflight.sh (condiciones que bloquean un despliegue) con un servidor simulado.
+# F1-20c: release.yml (frontera) y release_record.py con un repositorio git temporal, sin red.
 # Ejecuta código del PR: `pull_request` (nunca `pull_request_target`), solo lectura, acciones por SHA.
 on:
   pull_request:
@@ -18,6 +19,9 @@ on:
       - ".github/workflows/infra-prod.yml"
       - ".github/workflows/images.yml"
       - ".github/workflows/images-pr.yml"
+      - ".github/workflows/release.yml"
+      - ".github/scripts/release_record.py"
+      - ".github/scripts/test_release_record.py"
       - "**/Dockerfile*"
       - ".github/scripts/test_workflow_security.py"
       - ".github/scripts/test_backup_retention.py"
@@ -57,6 +61,9 @@ jobs:
       - name: Verificador de atestaciones (verify_attestations.py, sin red, F1-20b)
         working-directory: .github/scripts
         run: python3 -m unittest -q test_verify_attestations
+      - name: Preparar y registrar un release (release_record.py, sin red, F1-20c)
+        working-directory: .github/scripts
+        run: python3 -m unittest -q test_release_record
       - name: Retención de los backups (lifecycle.json y prefijos)
         working-directory: .github/scripts
         run: python3 -m unittest -q test_backup_retention

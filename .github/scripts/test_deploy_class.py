@@ -189,6 +189,7 @@ class DeployClassTest(unittest.TestCase):
             "backend/apps/ai_agents/x.py", "backend/apps/pricing/x.py", "backend/core/money.py",
             "backend/apps/quotes/approvals.py", "backend/apps/inventory/reservations.py",
             ".github/workflows/images.yml", ".github/workflows/release.yml", ".github/scripts/deploy_class.py",
+            ".github/scripts/release_record.py",
             "backend/pyproject.toml", "backend/uv.lock", "frontend/package.json", "frontend/pnpm-lock.yaml",
             "backend/Dockerfile", "frontend/Dockerfile",
         ] + [f"backend/apps/conversations/{f}.py" for f in (

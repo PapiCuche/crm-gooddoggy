@@ -3,8 +3,10 @@ name: images
 # F1-15 (ADR-033 §7): cada push a main construye las imágenes del backend, del frontend y del proxy
 # (Caddy con caddy-ratelimit), las prueba, revisa que su configuración y su historial no lleven
 # secretos y las publica en GHCR con la etiqueta del SHA, la procedencia y el SBOM. El resumen del
-# job deja los digests como un release.env para infra/prod/deploy.sh. El despliegue lo lanza una
-# persona (ADR-033 §6.2: CI no tiene secretos de producción ni acceso al servidor).
+# job deja los digests como un release.env para infra/prod/deploy.sh. Hoy rige el GO exacto por SHA
+# (ADR-048, fase 0): una persona despliega por SSH (ADR-033 §6.2: CI no tiene secretos de producción
+# ni acceso al servidor). release.yml (F1-20c, inerte hasta que el propietario lo habilite) solo
+# prepara el release y registra su aprobación; lee el release.env del artefacto `release-env` de este run.
 # Por qué en main y no en una etiqueta de versión: cada SHA de main ya pasó los checks requeridos
 # del PR, y así cualquier commit fusionado se puede desplegar o servir de vuelta atrás.
 # Frontera (test_workflow_security.py): solo `push` a main, nunca PRs (ni de forks); `packages:
@@ -111,6 +113,13 @@ jobs:
           done
           { echo "## release.env de $GITHUB_SHA"; echo; echo '```'; cat "$release"; echo '```'
             echo; echo "Despliegue: \`sudo infra/prod/deploy.sh <este release.env>\` (infra/prod/README.md)."; } >> "$GITHUB_STEP_SUMMARY"
+      - name: release.env como artefacto (solo digests y REVISION; release.yml lo lee por el id de este run)
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-env
+          path: ${{ runner.temp }}/release.env
+          if-no-files-found: error
+          retention-days: 30
 
   attest:
     name: images attest
