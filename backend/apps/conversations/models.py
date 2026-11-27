@@ -522,6 +522,9 @@ class Conversation(TenantModel):
     # F7b-14: lo último es nuestro, pero ninguna respuesta desde el último mensaje del cliente pudo
     # llegar (todas `FAILED`, salvo `PROVIDER_UNKNOWN`): sigue «Sin responder».
     last_reply_failed = models.BooleanField(default=False, db_default=False)
+    # F11-04: desde cuándo espera respuesta («Sin responder»); solo la escribe la base (disparador
+    # `conversations_reply_wait`, migración 0066, con sus aproximaciones): lo de aquí se ignora.
+    awaiting_reply_since = models.DateTimeField(null=True, blank=True, editable=False)
     # F8-13: excluida de la IA (cuándo y quién): el copiloto no la lee ni la manda a un proveedor.
     ai_excluded_at = models.DateTimeField(null=True, blank=True)
     ai_excluded_by_user_id = models.UUIDField(null=True, blank=True)
@@ -564,6 +567,11 @@ class Conversation(TenantModel):
                 )
                 & ~models.Q(status__in=["RESOLVED", "CLOSED"]),
                 name="conversations_unreplied_idx",
+            ),
+            models.Index(  # F11-04: las que esperan respuesta, por antigüedad; CONCURRENTLY, 0067
+                fields=["organization_id", "awaiting_reply_since"],
+                condition=models.Q(awaiting_reply_since__isnull=False),
+                name="conversations_awaiting_idx",
             ),
             models.Index(  # las cuentas con hilos en `standby` (F7b-06b): CONCURRENTLY en la 0048
                 fields=["organization_id", "channel_account"],
