@@ -1,0 +1,145 @@
+name: release
+run-name: "release ${{ inputs.sha }} base ${{ inputs.base }}" # el agente del servidor lo exige igual
+
+# F1-20c (ADR-048 §4, §5 y §11): prepara un release de main y, tras la aprobación del propietario en el
+# entorno `production`, deja un registro de despliegue de GitHub con la tupla de §5. NO DESPLIEGA NADA: no
+# tiene secretos de producción ni acceso al servidor (ADR-033 §6.2); el registro solo lo usará el agente del
+# servidor (F1-20e) cuando el propietario habilite la fase 1. Hasta entonces rige el GO exacto por SHA.
+# INERTE hasta que el propietario lo habilite (enmienda E1):
+# - los dos jobs exigen la variable del repositorio CD_RELEASE_ENABLED == 'true' (sin ella se saltan y no se
+#   usa el entorno) y solo corren en refs/heads/main;
+# - el entorno va con `deployment: false`: GitHub no crea su registro automático (parecería aprobado);
+# - approve no escribe nada sin una aprobación de un login de CD_APPROVERS que no lanzó el run ni rechazos:
+#   con un entorno sin revisores (o creado solo) no hay aprobación y no hay registro;
+# - clase C, `none` o cualquier error: no se pide aprobación (C sigue en fase 0).
+# Sin autoaprobación: el propietario es el único revisor (con «Prevent self-review», sin bypass de
+# administradores), GITHUB_TOKEN no tiene `actions: write` ni es revisor, approve rechaza a quien lanzó el
+# run y el agente del servidor vuelve a comprobar CD_APPROVERS. Mientras los agentes usen el token del
+# propietario, un clic en GitHub no prueba nada: la fase 1 exige identidades separadas (decisión 3, #1198).
+# Frontera (test_workflow_security.py): solo workflow_dispatch; entradas solo por env, validadas en
+# release_record.py; clasificador y verificador del checkout de main; release.env solo del run de images
+# elegido, por su id; permisos solo contents/actions read y deployments write; acciones por SHA.
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "Commit de main a preparar (40 hex)"
+        required: true
+      base:
+        description: "REVISION en producción (40 hex)"
+        required: true
+
+permissions: {}
+
+concurrency:
+  group: release-production
+  cancel-in-progress: false # nadie cancela una aprobación pendiente para cambiar de run
+
+env:
+  GH_VERSION: "2.103.3" # el que exige infra/prod/verify_attestations.py
+  GH_SHA256: "4c806978ffce1cec70853302a56d70ac6da4f19bae7adca4e1a8ab00633dd91d"
+
+jobs:
+  prepare:
+    name: release prepare
+    if: vars.CD_RELEASE_ENABLED == 'true' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read # runs, jobs y el artefacto release-env del run de images
+    outputs:
+      class: ${{ steps.done.outputs.class }}
+      fingerprint: ${{ steps.done.outputs.fingerprint }}
+      images_run_id: ${{ steps.done.outputs.images_run_id }}
+      prepared_at: ${{ steps.done.outputs.prepared_at }}
+    env:
+      SHA: ${{ inputs.sha }}
+      BASE: ${{ inputs.base }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Run de images del SHA y su release.env (solo ese run, por su id)
+        run: |
+          set -euo pipefail
+          s=.github/scripts/release_record.py
+          python3 -c 'import os, re, sys; sys.exit(not re.fullmatch("[0-9a-f]{40}", os.environ["SHA"]))'
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/images.yml/runs?head_sha=$SHA&per_page=100" > "$RUNNER_TEMP/runs.json"
+          run_id=$(python3 "$s" images-run --sha "$SHA" --repository "$GITHUB_REPOSITORY" --runs "$RUNNER_TEMP/runs.json")
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/jobs?filter=latest" > "$RUNNER_TEMP/jobs.json"
+          python3 "$s" images-jobs --run-id "$run_id" --jobs "$RUNNER_TEMP/jobs.json"
+          gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name release-env --dir "$RUNNER_TEMP/images"
+          echo "$run_id" > "$RUNNER_TEMP/images_run_id"
+      - name: Preparar (rango, clase, migraciones, huella)
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/release_record.py prepare --sha "$SHA" --base "$BASE" \
+            --images-run-id "$(cat "$RUNNER_TEMP/images_run_id")" --release-env "$RUNNER_TEMP/images/release.env" \
+            --out "$RUNNER_TEMP/prepared" > "$RUNNER_TEMP/summary.md"
+      - name: gh fijado y verificado (lo exige verify_attestations.py)
+        run: |
+          set -euo pipefail
+          archive="gh_${GH_VERSION}_linux_amd64.tar.gz"
+          curl -sSfL -o "$RUNNER_TEMP/$archive" "https://github.com/cli/cli/releases/download/v${GH_VERSION}/${archive}"
+          echo "${GH_SHA256}  $RUNNER_TEMP/$archive" | sha256sum --check --strict
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP"
+      - name: Atestaciones de las tres imágenes (sin credenciales, F1-20b)
+        run: |
+          PATH="$RUNNER_TEMP/gh_${GH_VERSION}_linux_amd64/bin:$PATH" \
+            python3 infra/prod/verify_attestations.py --sha "$SHA" "$RUNNER_TEMP/images/release.env"
+      - name: Salidas (solo si todo pasó)
+        id: done
+        run: |
+          cat "$RUNNER_TEMP/summary.md" >> "$GITHUB_STEP_SUMMARY"
+          cat "$RUNNER_TEMP/prepared" >> "$GITHUB_OUTPUT"
+
+  approve:
+    name: release approve
+    needs: prepare
+    if: vars.CD_RELEASE_ENABLED == 'true' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: production
+      deployment: false
+    permissions:
+      contents: read
+      actions: read # aprobaciones del run y el artefacto release-env
+      deployments: write # solo aquí: el registro de despliegue, tras las comprobaciones
+    env:
+      SHA: ${{ inputs.sha }}
+      BASE: ${{ inputs.base }}
+      CLASS: ${{ needs.prepare.outputs.class }}
+      FINGERPRINT: ${{ needs.prepare.outputs.fingerprint }}
+      IMAGES_RUN_ID: ${{ needs.prepare.outputs.images_run_id }}
+      PREPARED_AT: ${{ needs.prepare.outputs.prepared_at }}
+      CD_APPROVERS: ${{ vars.CD_APPROVERS }}
+      ACTOR: ${{ github.actor }}
+      TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Comprobar de nuevo la tupla y la aprobación
+        run: |
+          set -euo pipefail
+          python3 -c 'import os, re, sys; sys.exit(not re.fullmatch("[1-9][0-9]*", os.environ["IMAGES_RUN_ID"]))'
+          gh run download "$IMAGES_RUN_ID" --repo "$GITHUB_REPOSITORY" --name release-env --dir "$RUNNER_TEMP/images"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/approvals" > "$RUNNER_TEMP/approvals.json"
+          python3 .github/scripts/release_record.py approve --sha "$SHA" --base "$BASE" \
+            --images-run-id "$IMAGES_RUN_ID" --release-env "$RUNNER_TEMP/images/release.env" \
+            --fingerprint "$FINGERPRINT" --class "$CLASS" --prepared-at "$PREPARED_AT" --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" --repository "$GITHUB_REPOSITORY" \
+            --approvals "$RUNNER_TEMP/approvals.json" --approvers "$CD_APPROVERS" --actor "$ACTOR" \
+            --triggering-actor "$TRIGGERING_ACTOR" --out "$RUNNER_TEMP/deployment.json"
+      - name: Registro de despliegue (datos; no despliega nada)
+        run: |
+          set -euo pipefail
+          gh api --method POST "repos/$GITHUB_REPOSITORY/deployments" --input "$RUNNER_TEMP/deployment.json" --jq '.id' > "$RUNNER_TEMP/id"
+          { echo "## Registro de despliegue $(cat "$RUNNER_TEMP/id") para \`$SHA\` (clase $CLASS)"; echo
+            echo "Aprobado; caduca a las 24 h. Rige el GO por SHA hasta que el propietario habilite la fase 1."; } >> "$GITHUB_STEP_SUMMARY"
