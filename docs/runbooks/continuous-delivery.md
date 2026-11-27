@@ -45,7 +45,7 @@ Todos tienen que cumplirse **antes de cada release**, no solo el primer día. Si
 | P8 | **Las comprobaciones en vivo de #1175** hechas: con `deployment: false` el entorno sigue exigiendo el revisor, y `GET /runs/{id}/approvals` trae la aprobación | Resultado registrado en [#1175](https://github.com/PapiCuche/crm-gooddoggy/issues/1175) |
 | P9 | `release.yml` activo: variables `CD_RELEASE_ENABLED=true` y `CD_APPROVERS` con los logins que fijó el propietario | `gh variable get` (necesita permiso de lectura de variables). Las cambia solo el propietario |
 | P10 | `gh` **2.103.3** exacto, verificado por su sha256, en la máquina Linux amd64 donde se ejecuta `verify_attestations.py` | `gh --version`; instalación en [infra/prod/README.md](../../infra/prod/README.md), «Atestaciones de procedencia». A esa máquina se copia el `<DIR>` de V8, con el mismo `sha256sum`; nunca se baja el artefacto otra vez |
-| P11 | Las etiquetas `incident` y `stop-the-line` existen en el repositorio | `gh label list` (V13). Hoy no existen: hasta que el propietario las cree, no hay fase 1a |
+| P11 | Las etiquetas `incident` y `stop-the-line` existen en el repositorio | `gh label list` (V13). Si falta alguna, o se renombró, no hay fase 1a |
 
 Órdenes de solo lectura para P2 a P9, desde un clon del repositorio en tu equipo (la de P11 está en V13):
 
