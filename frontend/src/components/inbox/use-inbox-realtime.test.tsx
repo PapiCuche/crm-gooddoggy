@@ -573,4 +573,31 @@ describe("ráfagas y estado de la conexión (UX-INBOX-06)", () => {
     await waitFor(() => expect(reads("")).toBe(all + 1));
     expect(await screen.findByText("Llegó por WhatsApp")).toBeVisible();
   });
+
+  it("con una cuenta elegida (UX-INBOX-02d), la ráfaga relee esa lista, su número y las cuentas", async () => {
+    const options = { results: [{ id: "ch1", platform: "SANDBOX", name: "Sandbox" }], next: null };
+    options.results.push({ id: "ch2", platform: "WHATSAPP", name: "Lima" });
+    const api = mockApi({
+      [`GET ${BASE}/`]: { status: 200, body: { results: [conversation("Hola")], next: null } },
+      [`GET ${BASE}/accounts/?limit=200`]: { status: 200, body: options },
+      [`GET ${BASE}/?account=ch1`]: () => ({
+        ...{ status: 200, body: { results: [conversation("Hola")], next: null } },
+      }),
+      [`GET ${BASE}/unanswered/?account=ch1`]: { status: 200, body: { count: 1 } },
+    });
+    const reads = (query: string) =>
+      api.mock.calls.filter(([url]) => String(url) === `${BASE}/${query}`).length;
+    show();
+    act(() => socket().onopen?.({}));
+    const select = await screen.findByRole("combobox", { name: "Cuenta" });
+    await within(select).findByRole("option", { name: "WhatsApp · Lima" });
+    fireEvent.change(select, { target: { value: "ch1" } });
+    await waitFor(() => expect(reads("?account=ch1")).toBe(1));
+    await waitFor(() => expect(reads("unanswered/?account=ch1")).toBe(1));
+    const before = reads("accounts/?limit=200");
+    await say({ type: "message.received", conversation_id: "1", message_id: "m2" });
+    await waitFor(() => expect(reads("?account=ch1")).toBe(2));
+    expect(reads("unanswered/?account=ch1")).toBe(2);
+    await waitFor(() => expect(reads("accounts/?limit=200")).toBe(before + 1));
+  });
 });

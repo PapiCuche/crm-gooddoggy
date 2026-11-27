@@ -24,6 +24,7 @@ import type {
 import type { ApiError } from "@/lib/http";
 import { cn } from "@/lib/utils";
 
+import { AccountFilter } from "./account-filter";
 import { Assignee } from "./assignment";
 import { useUnanswered } from "./attention";
 import { useDraftsValue } from "./drafts";
@@ -42,6 +43,7 @@ export type Filters = {
   status: (typeof STATUSES)[number];
   unanswered: boolean; // solo las abiertas cuyo último mensaje es del cliente (F6-09)
   platform: (typeof PLATFORMS)[number]; // solo las de esa red (UX-INBOX-02)
+  account: string; // solo las de esa cuenta (UX-INBOX-02d); "" es «Todas las cuentas»
 };
 // ≥44 px de alto bajo 1024 px (táctil); `shrink-0`: en la fila deslizable nada se aplasta, y cada
 // chip es un punto de anclaje al deslizarla.
@@ -71,8 +73,10 @@ export function ConversationList({
     ...(filters.status ? { status: filters.status } : {}),
     ...(filters.unanswered ? { unanswered: true } : {}),
     ...(filters.platform ? { platform: filters.platform } : {}),
+    ...(filters.account ? { account: filters.account } : {}),
   };
-  const waiting = useUnanswered({ box: filters.box, platform: filters.platform });
+  const { box, platform, account } = filters;
+  const waiting = useUnanswered({ box, platform, account });
   const network = useChannelName();
   // Cada filtro es su propia lista; los filtros viajan también con «Cargar más».
   const list = useInfiniteQuery<PaginatedConversationList, ApiError>({
@@ -109,7 +113,7 @@ export function ConversationList({
   } else if (rows.length === 0) {
     body = (
       <p className="text-muted">
-        {filters.box === "all" && !filters.status && !filters.unanswered && !filters.platform
+        {box === "all" && !filters.status && !filters.unanswered && !platform && !account
           ? t("empty")
           : filters.platform
             ? t("emptyNetwork", { network: network(filters.platform) })
@@ -199,6 +203,10 @@ export function ConversationList({
             ))}
           </div>
         </div>
+        <AccountFilter
+          value={account}
+          onChange={(one) => onFilters({ ...filters, account: one })}
+        />
         <div className="flex items-end gap-2">
           <div className="min-w-0 flex-1">
             <Choice
