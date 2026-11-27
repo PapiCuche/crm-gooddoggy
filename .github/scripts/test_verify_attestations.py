@@ -63,7 +63,8 @@ def certificate(sha: str = SHA) -> dict:
     return {"subjectAlternativeName": WORKFLOW, "buildSignerURI": WORKFLOW, "buildSignerDigest": sha,
             "issuer": "https://token.actions.githubusercontent.com", "githubWorkflowTrigger": "push",
             "runnerEnvironment": "github-hosted", "sourceRepositoryURI": "https://github.com/PapiCuche/crm-gooddoggy",
-            "sourceRepositoryDigest": sha, "sourceRepositoryRef": "refs/heads/main", "githubWorkflowSHA": sha}
+            "sourceRepositoryDigest": sha, "sourceRepositoryRef": "refs/heads/main", "githubWorkflowSHA": sha,
+            "sourceRepositoryIdentifier": "1393140901", "sourceRepositoryOwnerIdentifier": "116849344"}
 
 
 def result(image_digest: str, cert: dict | None = None, predicate_type: str = va.PREDICATE) -> dict:
@@ -213,6 +214,8 @@ class MismatchBlocksTest(VerifierCase):
             "issuer": "https://accounts.example.com",
             "runnerEnvironment": "self-hosted",
             "githubWorkflowTrigger": "workflow_dispatch",
+            "sourceRepositoryIdentifier": "1393140902",
+            "sourceRepositoryOwnerIdentifier": 116849344,  # entero, no la cadena del certificado
         }
         for field, value in changes.items():
             with self.subTest(field=field):
@@ -300,6 +303,7 @@ class MismatchBlocksTest(VerifierCase):
         amd64 = {"platform": {"os": "linux", "architecture": "amd64"}}
         cases = {
             "the image label org.opencontainers.image.revision is not the SHA": {"label": OTHER_SHA},
+            "the image label org.opencontainers.image.revision": {"label": SHA[:12]},  # un prefijo del SHA no vale
             "unexpected response format": {"label": None},
             "the index has no single linux/amd64 manifest": {"platform": ("linux", "arm64")},
             "blobs/sha256:": {"config_body": b'{"config": {"Labels": {}}}'},  # la config no es la de su hash

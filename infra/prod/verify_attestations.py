@@ -10,7 +10,8 @@ again here (AT LEAST ONE attestation must match all of them, in any order); and 
 GHCR anonymously, every hash checked, with org.opencontainers.image.revision equal to the SHA.
 Fails closed: exit 0 only if all three pass; any mismatch, missing attestation, network error or 403/429
 is exit 1. Read-only, stdlib only. Anonymous api.github.com allows 60 requests/hour per IP (shared with the
-other application of the server); this makes 3, so the agent (F1-20e1) runs it once per release.
+other application of the server); this makes 3 to 9 (up to 3 pages per image), so the agent (F1-20e1)
+runs it once per release.
 """
 
 from __future__ import annotations
@@ -30,6 +31,7 @@ from collections.abc import Callable
 from typing import Any
 
 REPO = "PapiCuche/crm-gooddoggy"
+REPO_ID, OWNER_ID = "1393140901", "116849344"  # GitHub ids (strings in the certificate)
 REGISTRY_REPO = "ghcr.io/papicuche/crm-gooddoggy"
 WORKFLOW = f"https://github.com/{REPO}/.github/workflows/images.yml@refs/heads/main"
 ISSUER = "https://token.actions.githubusercontent.com"
@@ -207,6 +209,8 @@ def matches(result: Any, digest: str, sha: str) -> bool:
         "sourceRepositoryURI": f"https://github.com/{REPO}", "sourceRepositoryRef": "refs/heads/main",
         "sourceRepositoryDigest": sha, "buildSignerDigest": sha, "githubWorkflowTrigger": "push",
         "runnerEnvironment": "github-hosted",
+        # Por id, no solo por nombre: un repositorio borrado y recreado con el mismo nombre no pasa.
+        "sourceRepositoryIdentifier": REPO_ID, "sourceRepositoryOwnerIdentifier": OWNER_ID,
     }
     try:
         verified = result["verificationResult"]
