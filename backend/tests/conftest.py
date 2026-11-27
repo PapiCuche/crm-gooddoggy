@@ -92,6 +92,8 @@ TENANT_TABLES = ("ai_switches", *TENANT_TABLES)  # F8-06: a la organización y l
 # F8-08b: el registro del copiloto, delante de las conversaciones y las membresías
 TENANT_TABLES = ("ai_suggestions", "ai_actions", "ai_runs", *TENANT_TABLES)
 TENANT_TABLES = ("ai_handoff_replies", *TENANT_TABLES)  # F8-08l: a la organización y membresías
+# F11-02: las ejecuciones, delante de sus reglas; todas, delante de las membresías
+TENANT_TABLES = ("automation_runs", "automation_rules", "automation_switches", *TENANT_TABLES)
 PLATFORM_AUDIT = "platform_audit_logs"  # F2-10: platform-owned, la limpia el migrador
 
 

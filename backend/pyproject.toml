@@ -114,8 +114,9 @@ forbidden_modules = ["config", "apps"]
 name = "Capas (module-dependencies §1): inventory | pricing > catalog | contacts (L3) > provisioning | members (L2+) > organizations | access | accounts (L2) > audit | files | imports (L1) > core (L0)"
 type = "layers"
 layers = [
-    # L4: el copiloto (ADR-034 §2, F8-07a): lee el negocio con sus selectores y servicios
-    "apps.ai_agents",
+    # L4: el copiloto (ADR-034 §2, F8-07a): lee el negocio con sus selectores y servicios.
+    # automations, las automatizaciones internas (ADR-049, F11-02): independientes del copiloto.
+    "apps.ai_agents | apps.automations",
     # L3: dominio de negocio (module-dependencies §1). inventory depende de catalog (§2): almacenes
     # y stock (Fase 3). catalog, el catálogo (Fase 3); contacts, los clientes (Fase 4):
     # independientes entre sí, no se importan. pricing, los precios (F3-40): sobre catalog, en la
@@ -148,6 +149,16 @@ ignore_imports = [
     "apps.quotes.answers -> apps.deals.models",  # F5-09c3: aceptar mueve la oportunidad
     "apps.quotes.answers -> apps.deals.opportunities",
     "apps.quotes.answers -> apps.deals.opportunity_stages",
+]
+
+[[tool.importlinter.contracts]]
+# ADR-049 §1 (F11-02): ni directa ni indirectamente llega a envíos, cambios de estado, consentimientos, correo ni IA.
+name = "automations no envía mensajes ni cambia conversaciones, cotizaciones o consentimientos (ADR-049 §1)"
+type = "forbidden"
+source_modules = ["apps.automations"]
+forbidden_modules = [
+    "apps.conversations.commands", "apps.conversations.delivery", "apps.conversations.api", "apps.conversations.tasks", "apps.conversations.whatsapp", "apps.conversations.meta_page", "apps.conversations.graph", "apps.conversations.outbound_media",
+    "apps.quotes.api", "apps.quotes.commands", "apps.quotes.answers", "apps.quotes.decisions", "apps.quotes.lifecycle", "apps.quotes.tasks", "apps.contacts.consents", "core.mail", "apps.ai_gateway",
 ]
 
 [[tool.importlinter.contracts]]
