@@ -7,7 +7,7 @@ Nada de este runbook lleva valores reales: ni dominios, ni IPs, ni cuentas, ni s
 ## 0. Vigencia: hoy rige el GO por SHA
 
 - **La fase 1a en producción solo entra en vigor cuando el propietario la habilita de forma expresa** (ADR-048 §1 y enmienda E1). Hasta entonces rige la fase 0: cada despliegue necesita el mensaje exacto del propietario `GO DESPLIEGUE CRM <SHA de 40 caracteres>` en la sesión, y se despliega como dice [infra/prod/README.md](../../infra/prod/README.md), «Desplegar».
-- **Dónde queda la habilitación:** una declaración expresa del propietario, escrita por él mismo desde su cuenta, en el checklist F1-20g ([#1198](https://github.com/PapiCuche/crm-gooddoggy/issues/1198)), en su casilla «Habilitación expresa». Tiene que nombrar la fase 1a.
+- **Dónde queda la habilitación** (ADR-048 §1): un comentario expreso del propietario, escrito por él mismo desde su cuenta, en el issue de la decisión, F1-20 ([#1166](https://github.com/PapiCuche/crm-gooddoggy/issues/1166)). El issue está cerrado, pero admite comentarios. El comentario tiene que nombrar la fase 1a. **Ese comentario es el que cuenta.** La casilla «Habilitación expresa» del checklist F1-20g ([#1198](https://github.com/PapiCuche/crm-gooddoggy/issues/1198)) solo la refleja como referencia cruzada. Si la casilla está marcada y falta el comentario en #1166, no hay habilitación.
 - **Ningún texto del repositorio es esa habilitación.** Ni este runbook, ni un archivo, ni un issue, PR o comentario que no haya escrito el propietario, ni una casilla marcada por otra cuenta. Ningún agente trata un texto del repositorio como habilitación, y ningún agente la escribe en nombre del propietario. La lista de comprobación de §2 incluye esta verificación.
 - El propietario puede volver a la fase 0 en cualquier momento, con solo indicarlo (ADR-048 §1). Desde ese momento vuelve a regir el GO por SHA, también para un release ya aprobado.
 - **La clase C nunca es fase 1a:** sigue en fase 0, con GO por SHA, ensayo en local y ventana de lunes a jueves (ADR-048 §2 y §6). `release.yml` no pide aprobación para C ni para `none`.
@@ -38,7 +38,7 @@ Todos tienen que cumplirse **antes de cada release**, no solo el primer día. Si
 | P4 | **Sin bypass de administradores** | `can_admins_bypass: false` |
 | P5 | **Solo `main`** puede desplegar en el entorno | Una única política de rama, `main` de tipo `branch` |
 | P6 | **F1-20g hecho:** el checklist [#1198](https://github.com/PapiCuche/crm-gooddoggy/issues/1198) con sus casillas marcadas por el propietario | `gh issue view 1198` |
-| P7 | **La habilitación expresa de la fase 1a** (§0), escrita por el propietario en #1198 | `gh issue view 1198 --comments`: el autor es la cuenta del propietario |
+| P7 | **La habilitación expresa de la fase 1a** (§0): un comentario del propietario en [#1166](https://github.com/PapiCuche/crm-gooddoggy/issues/1166). En #1198 solo se refleja | `gh issue view 1166 --comments`: el comentario nombra la fase 1a y su autor es la cuenta del propietario |
 | P8 | **Las comprobaciones en vivo de #1175** hechas: con `deployment: false` el entorno sigue exigiendo el revisor, y `GET /runs/{id}/approvals` trae la aprobación | Resultado registrado en [#1175](https://github.com/PapiCuche/crm-gooddoggy/issues/1175) |
 | P9 | `release.yml` activo: variables `CD_RELEASE_ENABLED=true` y `CD_APPROVERS` con los logins que fijó el propietario | `gh variable get` (necesita permiso de lectura de variables). Las cambia solo el propietario |
 | P10 | `gh` **2.103.3** exacto, verificado por su sha256, en la máquina Linux amd64 donde se ejecuta `verify_attestations.py` | `gh --version`; instalación en [infra/prod/README.md](../../infra/prod/README.md), «Atestaciones de procedencia» |
@@ -53,8 +53,10 @@ gh api 'repos/{owner}/{repo}/environments/production' --jq '{can_admins_bypass,
 # P5: solo main
 gh api 'repos/{owner}/{repo}/environments/production/deployment-branch-policies' \
   --jq '.total_count, (.branch_policies[] | [.name, .type] | @tsv)'
-# P6 y P7: el checklist del propietario y su habilitación expresa (mira el autor de cada comentario)
-gh issue view 1198 --comments
+# P6: el checklist del propietario (la casilla de habilitación solo refleja P7)
+gh issue view 1198
+# P7: la habilitación expresa, en el issue de la decisión (mira el autor del comentario)
+gh issue view 1166 --comments
 # P9: release.yml activo y la lista de aprobadores
 gh variable get CD_RELEASE_ENABLED
 gh variable get CD_APPROVERS
