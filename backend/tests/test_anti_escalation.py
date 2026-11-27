@@ -91,6 +91,9 @@ ADMIN_REST = (
     "channels.manage",
     "quick_replies.manage",  # F6-08a1
     "ai.kill_switch",  # F8-06 (ADR-034 §10): sensible, también en el Supervisor
+    "automations.view",  # F11-02 (ADR-049 §8, D-F11-05)
+    "automations.manage",
+    "automations.kill_switch",
 )
 SCOPED_REST = (
     "contacts.view",

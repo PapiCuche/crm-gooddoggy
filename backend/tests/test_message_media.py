@@ -992,6 +992,7 @@ DROPS = {
     "apps/conversations/migrations/0059_failure_settled_once.py",  # F7b-15: ídem
     "apps/conversations/migrations/0061_conversation_failed_reply.py",  # F7b-14: ídem
     "apps/conversations/migrations/0064_db_clock_stamps.py",  # F7b-21: ídem
+    "apps/conversations/migrations/0066_conversation_awaiting_reply_since.py",  # F11-04: ídem
 }
 
 

@@ -37,6 +37,7 @@ export function Inbox() {
     status: "",
     unanswered: false,
     platform: "",
+    account: "",
   });
   const wanted = useSearchParams()?.get("c") || null;
   const [picked, setPicked] = useState<{ slug: string; row: Conversation } | null>(null); // con su organización

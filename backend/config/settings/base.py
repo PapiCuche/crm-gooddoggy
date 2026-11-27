@@ -40,6 +40,7 @@ INSTALLED_APPS = [
     "apps.quotes",
     "apps.ai_gateway",  # F8-03a (ADR-034 §2): L1, no importa módulos de negocio
     "apps.ai_agents",  # F8-07a (ADR-034 §2): L4, el copiloto y su Tool Registry
+    "apps.automations",  # F11-02 (ADR-049): L4, automatizaciones internas de seguimiento
 ]
 
 MIDDLEWARE = [
@@ -467,6 +468,9 @@ AI_PROVIDER_HOSTS = {"ANTHROPIC": "api.anthropic.com"}
 # no arranca. La aplicación no lo cambia (pide reiniciar): con él apagado no se llama a ningún
 # modelo ni se prueba ninguna clave, aunque una organización tenga su interruptor encendido.
 AI_ENABLED = env.boolean("AI_ENABLED", False)
+# F11-02 (ADR-049 §7, E3): el interruptor global de las automatizaciones internas. Apagado por
+# omisión; encenderlo en producción es una operación del propietario, no un cambio de variable.
+AUTOMATIONS_ENABLED = env.boolean("AUTOMATIONS_ENABLED", False)
 HTTP_ALLOWED_HOSTS.extend(h for h in AI_PROVIDER_HOSTS.values() if h not in HTTP_ALLOWED_HOSTS)
 # F8-05 (ADR-034 §3, D-F8-03): los modelos permitidos y su precio en USD por millón de tokens, de la
 # página oficial de precios de Anthropic (consultada el día `since`). Sin precio no se llama.

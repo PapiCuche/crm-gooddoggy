@@ -182,6 +182,18 @@ class ImagesWorkflowTest(unittest.TestCase):
         self.assertIn('echo "REVISION=$GITHUB_SHA" >> "$release"', self.text)
 
 
+class DeployClassWorkflowTest(unittest.TestCase):
+    """F1-20a: la clase de despliegue solo informa; solo lee el repositorio, sin secretos ni entornos."""
+
+    text = (WORKFLOWS / "deploy-class.yml").read_text()
+
+    def test_read_only_without_secrets_or_environments(self):
+        self.assertEqual(triggers(self.text), {"pull_request", "push"})
+        self.assertEqual(permissions(self.text), {"contents": "read"})
+        self.assertEqual([job_permissions(b) for b in jobs(self.text).values()], [{}])
+        self.assertNotRegex(self.text, r"secrets\.|environment:|continue-on-error")
+
+
 class ImagesPullRequestTest(unittest.TestCase):
     """F1-15b: los PR construyen y prueban las imágenes como images.yml, sin credenciales ni publicar."""
 

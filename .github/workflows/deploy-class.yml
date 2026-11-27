@@ -1,0 +1,41 @@
+name: deploy-class
+
+# F1-20a (ADR-048 §2): clase de despliegue, SOLO INFORMATIVA en la fase 1: no es un check requerido, no
+# despliega ni aprueba nada y sale con 0 sea cual sea la clase (bloquear es fase 2, no autorizada). Solo
+# lee el repositorio (`contents: read`, sin secretos). Código del PR: `pull_request`, nunca `_target`.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-class-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  classify:
+    name: deploy class
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Tests del clasificador
+        working-directory: .github/scripts
+        run: python3 -m unittest -q test_deploy_class
+      - name: Clase del rango (informativa)
+        working-directory: .github/scripts
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          base="$(git merge-base "$BASE_SHA" "$HEAD_SHA" || echo "$BASE_SHA")"
+          event=()
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then event=(--event "$GITHUB_EVENT_PATH"); fi
+          python3 deploy_class.py --base "$base" --head "$HEAD_SHA" "${event[@]}" \
+            --markdown >> "$GITHUB_STEP_SUMMARY"

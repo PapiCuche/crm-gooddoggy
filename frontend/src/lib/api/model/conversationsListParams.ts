@@ -11,6 +11,10 @@ import type { ConversationsListStatus } from "./conversationsListStatus";
 
 export type ConversationsListParams = {
   /**
+   * UX-INBOX-02d: solo las de esa cuenta (`channel.id`). Una que no se ve deja la lista vacía, igual que una que no existe.
+   */
+  account?: string;
+  /**
    * `all` (por omisión), `mine` (asignadas a quien consulta) o `unassigned`.
    *
    * * `all` - all
