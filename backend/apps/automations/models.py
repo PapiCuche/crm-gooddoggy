@@ -99,6 +99,11 @@ class AutomationRun(TenantModel):
                 fields=["organization_id", "rule", "subject_id", "episode_at", "step", "mode"],
                 name="automation_runs_idempotency_uq",
             ),
+            models.UniqueConstraint(  # F11-05a: una sola ejecución abierta por sujeto, paso y modo
+                fields=["organization_id", "rule", "subject_id", "step", "mode"],
+                condition=~models.Q(status="CLOSED"),
+                name="automation_runs_open_uq",
+            ),
         ]
         indexes = [
             models.Index(fields=["organization_id", "created_at"], name="automation_runs_age_idx")
