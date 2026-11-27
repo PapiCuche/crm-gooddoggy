@@ -1486,6 +1486,195 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/automations/:
+    get:
+      operationId: automations_retrieve
+      description: 'Las reglas registradas (sin configurar: `OFF`, versión 0), el
+        interruptor de la organización y `global_enabled`, con `automations.view`.
+        Con `global_enabled = false` nada se ejecuta, esté la regla como esté.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - automations
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Automations'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/automations/pause/:
+    post:
+      operationId: automations_pause
+      description: Pausa todas las reglas de la organización sin tocar su configuración
+        (`automations.kill_switch` o `automations.manage`) y lo audita. Repetirlo
+        no cambia nada. No toca `global_enabled`.
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - automations
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutomationSwitch'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/automations/resume/:
+    post:
+      operationId: automations_resume
+      description: Reanuda la organización (`automations.manage`) y lo audita. Repetirlo
+        no cambia nada. No toca `global_enabled`.
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - automations
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutomationSwitch'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/automations/rules/{key}/:
+    patch:
+      operationId: automations_rule_update
+      description: 'Cambia el modo y los parámetros enviados de una regla si `version`
+        sigue vigente (0: sin configurar), con `automations.manage`, y lo audita.
+        400 en `params` con una clave fuera del esquema o un valor fuera de rango.
+        404: no es una regla registrada. 409: `STALE_VERSION`; `SIMULATION_TOO_SHORT`
+        si pide `ON` sin 7 días seguidos en `SIMULATE` (reloj de la base): no cambia
+        nada. Sin cambios no escribe. Responde como `GET …/automations/`. Con `global_enabled
+        = false` nada se ejecuta, esté la regla como esté.'
+      parameters:
+      - in: path
+        name: key
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - automations
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedAutomationRuleWriteRequest'
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Automations'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/branches/:
     get:
       operationId: branches_list
@@ -13189,6 +13378,104 @@ components:
         * `SUCCESS` - SUCCESS
         * `DENIED` - DENIED
         * `FAILED` - FAILED
+    AutomationModeEnum:
+      enum:
+      - 'OFF'
+      - SIMULATE
+      - 'ON'
+      type: string
+      description: |-
+        * `OFF` - Off
+        * `SIMULATE` - Simulate
+        * `ON` - On
+    AutomationRule:
+      type: object
+      properties:
+        key:
+          $ref: '#/components/schemas/AutomationRuleKeyEnum'
+        mode:
+          $ref: '#/components/schemas/AutomationModeEnum'
+        params:
+          type: object
+          additionalProperties: {}
+          description: Todos los parámetros, con los valores por omisión.
+        version:
+          type: integer
+          description: '0: todavía sin configurar. Sube con cada cambio.'
+        simulate_since:
+          type: string
+          format: date-time
+          nullable: true
+          description: Entró en `SIMULATE`.
+        on_allowed_at:
+          type: string
+          format: date-time
+          nullable: true
+          readOnly: true
+          description: Desde cuándo puede pasar a `ON` (7 días en `SIMULATE`); null
+            fuera de él.
+        updated_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: 'null: sin configurar.'
+      required:
+      - key
+      - mode
+      - on_allowed_at
+      - params
+      - simulate_since
+      - updated_at
+      - version
+    AutomationRuleKeyEnum:
+      enum:
+      - conversation.unanswered
+      - quote.no_response
+      type: string
+      description: |-
+        * `conversation.unanswered` - conversation.unanswered
+        * `quote.no_response` - quote.no_response
+    AutomationSwitch:
+      type: object
+      properties:
+        global_enabled:
+          type: boolean
+          description: '`AUTOMATIONS_ENABLED`: apagado, no se ejecuta ninguna regla.
+            Solo lectura.'
+        paused:
+          type: boolean
+        paused_changed_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: 'null: nunca.'
+      required:
+      - global_enabled
+      - paused
+      - paused_changed_at
+    Automations:
+      type: object
+      properties:
+        global_enabled:
+          type: boolean
+          description: '`AUTOMATIONS_ENABLED`: apagado, no se ejecuta ninguna regla.
+            Solo lectura.'
+        paused:
+          type: boolean
+        paused_changed_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: 'null: nunca.'
+        rules:
+          type: array
+          items:
+            $ref: '#/components/schemas/AutomationRule'
+      required:
+      - global_enabled
+      - paused
+      - paused_changed_at
+      - rules
     Batch:
       type: object
       properties:
@@ -17026,6 +17313,19 @@ components:
           maxLength: 254
       required:
       - email
+    PatchedAutomationRuleWriteRequest:
+      type: object
+      properties:
+        version:
+          type: integer
+          maximum: 2147483647
+          minimum: 0
+        mode:
+          $ref: '#/components/schemas/AutomationModeEnum'
+        params:
+          type: object
+          additionalProperties: {}
+          description: 'Solo los que cambian; una clave fuera del esquema: 400.'
     PatchedBranchUpdateRequest:
       type: object
       description: Lo que se envía cambia; lo que no, se queda como está. El código

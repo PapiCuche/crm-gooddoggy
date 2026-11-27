@@ -39,6 +39,8 @@ import type {
   AssignRequest,
   Assignment,
   AuditListParams,
+  AutomationSwitch,
+  Automations,
   Batch,
   BatchCreateRequest,
   Branch,
@@ -168,6 +170,7 @@ import type {
   PaginatedWarehouseList,
   PasswordResetConfirmRequest,
   PasswordResetRequestRequest,
+  PatchedAutomationRuleWriteRequest,
   PatchedBranchUpdateRequest,
   PatchedBrandUpdateRequest,
   PatchedCategoryUpdateRequest,
@@ -3598,6 +3601,412 @@ export function useAuditList<
 
   return withQueryKey(query, queryOptions.queryKey);
 }
+
+export const getAutomationsRetrieveUrl = (orgSlug: string) => {
+  return `/api/v1/o/${orgSlug}/automations/`;
+};
+
+/**
+ * Las reglas registradas (sin configurar: `OFF`, versión 0), el interruptor de la organización y `global_enabled`, con `automations.view`. Con `global_enabled = false` nada se ejecuta, esté la regla como esté.
+ */
+export const automationsRetrieve = async (
+  orgSlug: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<Automations> => {
+  return apiFetch<Automations>(getAutomationsRetrieveUrl(orgSlug), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getAutomationsRetrieveQueryKey = (orgSlug: string) => {
+  return [`/api/v1/o/${orgSlug}/automations/`] as const;
+};
+
+export const getAutomationsRetrieveQueryOptions = <
+  TData = Awaited<ReturnType<typeof automationsRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof automationsRetrieve>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getAutomationsRetrieveQueryKey(orgSlug);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof automationsRetrieve>>> = ({ signal }) =>
+    automationsRetrieve(orgSlug, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: orgSlug !== null && orgSlug !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof automationsRetrieve>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type AutomationsRetrieveQueryResult = NonNullable<
+  Awaited<ReturnType<typeof automationsRetrieve>>
+>;
+export type AutomationsRetrieveQueryError = ErrorType<Error>;
+
+export function useAutomationsRetrieve<
+  TData = Awaited<ReturnType<typeof automationsRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof automationsRetrieve>>, TError, TData>
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof automationsRetrieve>>,
+          TError,
+          Awaited<ReturnType<typeof automationsRetrieve>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useAutomationsRetrieve<
+  TData = Awaited<ReturnType<typeof automationsRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof automationsRetrieve>>, TError, TData>
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof automationsRetrieve>>,
+          TError,
+          Awaited<ReturnType<typeof automationsRetrieve>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useAutomationsRetrieve<
+  TData = Awaited<ReturnType<typeof automationsRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof automationsRetrieve>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function useAutomationsRetrieve<
+  TData = Awaited<ReturnType<typeof automationsRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof automationsRetrieve>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getAutomationsRetrieveQueryOptions(orgSlug, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+export const getAutomationsPauseUrl = (orgSlug: string) => {
+  return `/api/v1/o/${orgSlug}/automations/pause/`;
+};
+
+/**
+ * Pausa todas las reglas de la organización sin tocar su configuración (`automations.kill_switch` o `automations.manage`) y lo audita. Repetirlo no cambia nada. No toca `global_enabled`.
+ */
+export const automationsPause = async (
+  orgSlug: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<AutomationSwitch> => {
+  return apiFetch<AutomationSwitch>(getAutomationsPauseUrl(orgSlug), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getAutomationsPauseMutationKey = () => ["automationsPause"] as const;
+
+export const getAutomationsPauseMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof automationsPause>>,
+    TError,
+    AutomationsPauseMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof automationsPause>>,
+  TError,
+  AutomationsPauseMutationVariables,
+  TContext
+> => {
+  const mutationKey = getAutomationsPauseMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof automationsPause>>,
+    AutomationsPauseMutationVariables
+  > = (props) => {
+    const { orgSlug } = props ?? {};
+
+    return automationsPause(orgSlug, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type AutomationsPauseMutationResult = NonNullable<
+  Awaited<ReturnType<typeof automationsPause>>
+>;
+
+export type AutomationsPauseMutationError = ErrorType<Error>;
+export type AutomationsPauseMutationVariables = { orgSlug: string };
+
+export const useAutomationsPause = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof automationsPause>>,
+      TError,
+      AutomationsPauseMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof automationsPause>>,
+  TError,
+  AutomationsPauseMutationVariables,
+  TContext
+> => {
+  return useMutation(getAutomationsPauseMutationOptions(options), queryClient);
+};
+
+export const getAutomationsResumeUrl = (orgSlug: string) => {
+  return `/api/v1/o/${orgSlug}/automations/resume/`;
+};
+
+/**
+ * Reanuda la organización (`automations.manage`) y lo audita. Repetirlo no cambia nada. No toca `global_enabled`.
+ */
+export const automationsResume = async (
+  orgSlug: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<AutomationSwitch> => {
+  return apiFetch<AutomationSwitch>(getAutomationsResumeUrl(orgSlug), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getAutomationsResumeMutationKey = () => ["automationsResume"] as const;
+
+export const getAutomationsResumeMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof automationsResume>>,
+    TError,
+    AutomationsResumeMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof automationsResume>>,
+  TError,
+  AutomationsResumeMutationVariables,
+  TContext
+> => {
+  const mutationKey = getAutomationsResumeMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof automationsResume>>,
+    AutomationsResumeMutationVariables
+  > = (props) => {
+    const { orgSlug } = props ?? {};
+
+    return automationsResume(orgSlug, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type AutomationsResumeMutationResult = NonNullable<
+  Awaited<ReturnType<typeof automationsResume>>
+>;
+
+export type AutomationsResumeMutationError = ErrorType<Error>;
+export type AutomationsResumeMutationVariables = { orgSlug: string };
+
+export const useAutomationsResume = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof automationsResume>>,
+      TError,
+      AutomationsResumeMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof automationsResume>>,
+  TError,
+  AutomationsResumeMutationVariables,
+  TContext
+> => {
+  return useMutation(getAutomationsResumeMutationOptions(options), queryClient);
+};
+
+export const getAutomationsRuleUpdateUrl = (orgSlug: string, key: string) => {
+  return `/api/v1/o/${orgSlug}/automations/rules/${key}/`;
+};
+
+/**
+ * Cambia el modo y los parámetros enviados de una regla si `version` sigue vigente (0: sin configurar), con `automations.manage`, y lo audita. 400 en `params` con una clave fuera del esquema o un valor fuera de rango. 404: no es una regla registrada. 409: `STALE_VERSION`; `SIMULATION_TOO_SHORT` si pide `ON` sin 7 días seguidos en `SIMULATE` (reloj de la base): no cambia nada. Sin cambios no escribe. Responde como `GET …/automations/`. Con `global_enabled = false` nada se ejecuta, esté la regla como esté.
+ */
+export const automationsRuleUpdate = async (
+  orgSlug: string,
+  key: string,
+  patchedAutomationRuleWriteRequest?: PatchedAutomationRuleWriteRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<Automations> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<Automations>(getAutomationsRuleUpdateUrl(orgSlug, key), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(patchedAutomationRuleWriteRequest),
+  });
+};
+
+export const getAutomationsRuleUpdateMutationKey = () => ["automationsRuleUpdate"] as const;
+
+export const getAutomationsRuleUpdateMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof automationsRuleUpdate>>,
+    TError,
+    AutomationsRuleUpdateMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof automationsRuleUpdate>>,
+  TError,
+  AutomationsRuleUpdateMutationVariables,
+  TContext
+> => {
+  const mutationKey = getAutomationsRuleUpdateMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof automationsRuleUpdate>>,
+    AutomationsRuleUpdateMutationVariables
+  > = (props) => {
+    const { orgSlug, key, data } = props ?? {};
+
+    return automationsRuleUpdate(orgSlug, key, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type AutomationsRuleUpdateMutationResult = NonNullable<
+  Awaited<ReturnType<typeof automationsRuleUpdate>>
+>;
+export type AutomationsRuleUpdateMutationBody = PatchedAutomationRuleWriteRequest | undefined;
+export type AutomationsRuleUpdateMutationError = ErrorType<Error>;
+export type AutomationsRuleUpdateMutationVariables = {
+  orgSlug: string;
+  key: string;
+  data?: PatchedAutomationRuleWriteRequest;
+};
+
+export const useAutomationsRuleUpdate = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof automationsRuleUpdate>>,
+      TError,
+      AutomationsRuleUpdateMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof automationsRuleUpdate>>,
+  TError,
+  AutomationsRuleUpdateMutationVariables,
+  TContext
+> => {
+  return useMutation(getAutomationsRuleUpdateMutationOptions(options), queryClient);
+};
 
 export const getBranchesListUrl = (orgSlug: string, params?: BranchesListParams) => {
   const normalizedParams = new URLSearchParams();

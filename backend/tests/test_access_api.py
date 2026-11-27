@@ -70,7 +70,13 @@ WEBHOOKS = frozenset({"webhooks/meta/"})  # webhooks públicos firmados (F7-03a)
 WEBHOOKS_ROOT = "webhooks/"  # todo lo que hay debajo es un webhook: figura en `WEBHOOKS` o falla
 # F8-06: las únicas rutas con `AnyOf` (basta uno), por ruta y método, con sus códigos exactos.
 KILL = frozenset({"ai.kill_switch", "ai.manage"})
-ANY_OF = {(TENANT + "ai/switch/", "GET"): KILL, (TENANT + "ai/switch/off/", "POST"): KILL}
+AUTOMATIONS_KILL = frozenset({"automations.kill_switch", "automations.manage"})
+ANY_OF = {
+    (TENANT + "ai/switch/", "GET"): KILL,
+    (TENANT + "ai/switch/off/", "POST"): KILL,
+    # F11-07: pausar las automatizaciones (ADR-049 §4)
+    (TENANT + "automations/pause/", "POST"): AUTOMATIONS_KILL,
+}
 MEMBER = frozenset({TENANT + "me/"})  # rutas de tenant abiertas a todo miembro activo (F2-11)
 PREFIX = "api/v1/o/"  # las rutas de tenant, como `TENANT_PATH` en el middleware
 API = "api/"  # todo lo que hay debajo es contrato: o es de tenant o figura en `PLATFORM`
@@ -900,7 +906,8 @@ def test_every_tenant_route_declares_its_permissions(api: Any) -> None:
     gone = {(TENANT + "ya-no/", "GET"): KILL, (TENANT + "ai/switch/", "GET"): KILL - {"ai.manage"}}
     assert insecure(real, PLATFORM, MEMBER, WEBHOOKS, gone) == {
         TENANT + "ya-no/": STALE, TENANT + "ai/switch/": "AnyOf fuera de ANY_OF: ['GET']",
-        TENANT + "ai/switch/off/": "AnyOf fuera de ANY_OF: ['POST']"}  # fmt: skip
+        TENANT + "ai/switch/off/": "AnyOf fuera de ANY_OF: ['POST']",
+        TENANT + "automations/pause/": "AnyOf fuera de ANY_OF: ['POST']"}  # fmt: skip
     assert insecure(secure, SECURE_PLATFORM, frozenset({TENANT + "self/"})) == {}
     assert TENANT_PATH.match("/api/v1/o/org-a/") and not TENANT_PATH.match("/api/v1/x/org-a/")
 
