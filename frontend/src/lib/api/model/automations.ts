@@ -10,13 +10,11 @@ import type { AutomationRule } from "./automationRule";
 export interface Automations {
   /** `AUTOMATIONS_ENABLED`: apagado, no se ejecuta ninguna regla. Solo lectura. */
   global_enabled: boolean;
-  /** El interruptor de la organización. */
   paused: boolean;
   /**
    * null: nunca.
    * @nullable
    */
   paused_changed_at: string | null;
-  /** Las reglas registradas, todas. */
   rules: AutomationRule[];
 }

@@ -9,7 +9,6 @@
 export interface AutomationSwitch {
   /** `AUTOMATIONS_ENABLED`: apagado, no se ejecuta ninguna regla. Solo lectura. */
   global_enabled: boolean;
-  /** El interruptor de la organización. */
   paused: boolean;
   /**
    * null: nunca.

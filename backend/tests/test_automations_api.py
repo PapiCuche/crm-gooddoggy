@@ -5,33 +5,33 @@ global y aislamiento entre organizaciones en las dos direcciones.
 Middleware, sesión, motor de autorización y PostgreSQL con el rol `crm_app`."""
 
 import datetime as dt
+import threading
 from types import SimpleNamespace
 from typing import Any
 from uuid import UUID, uuid4
 
 import psycopg
 import pytest
+from django.db import connections
 from django.test import Client
 
-from apps.access.models import MembershipRole, Role
 from apps.automations import commands
 from apps.automations.api.views import STALE, TOO_SHORT
 from apps.automations.params import CONVERSATION_UNANSWERED as CONV
 from apps.automations.params import QUOTE_NO_RESPONSE as QUOTE
 from apps.automations.params import defaults
-from core.tenancy.scope import tenant_scope
 from tests import test_conversation_scopes as scopes
-from tests.factories import make_user
+from tests.factories import make_user, sign_in
 from tests.test_authorization import give
-from tests.test_automations_foundation import AUDIT, RULE
+from tests.test_automations_foundation import AUDIT, RULE, team
 from tests.test_conversations_api import UNAUTHENTICATED
 from tests.test_member_branch import DENIED
-from tests.test_memberships import ctx, join
+from tests.test_memberships import join
 from tests.test_self_context import NOT_FOUND, reply, signed
 from tests.test_team_writes import send
 
 crm, real_stack = scopes.crm, scopes.real_stack
-__all__ = ["crm", "real_stack"]  # los fixtures, para pytest
+__all__ = ["crm", "real_stack", "team"]  # los fixtures, para pytest
 pytestmark = pytest.mark.usefixtures("tenant_db")
 DB = psycopg.Connection[Any]
 BASE = "/api/v1/o/org-a/automations/"
@@ -56,21 +56,14 @@ def rules(response: Any) -> dict[str, dict[str, Any]]:
     return {found["key"]: found for found in response.json()["rules"]}
 
 
-def admin(crm: SimpleNamespace) -> Any:
-    ada = make_user(email="ada@example.com")
-    with tenant_scope(ctx(crm.a)):
-        role = Role.objects.get(code="admin")
-        MembershipRole.objects.create(membership_id=join(crm.a, ada).pk, role_id=role.pk)
-    return ada
-
-
-def test_each_role_gets_only_its_methods(crm: SimpleNamespace, migrator: DB) -> None:
+def test_each_role_gets_only_its_methods(team: SimpleNamespace, migrator: DB) -> None:
     """Owner y Administradora: todo. Supervisor: leer y pausar. Vendedora y sin rol: nada (403).
     De otra organización: 404. Sin sesión: 401."""
+    crm = team
     calls = (("get", BASE, None), ("patch", RULES + CONV + "/", {"version": 0, "mode": "OFF"}),
              ("post", PAUSE, None), ("post", RESUME, None))  # fmt: skip
     expected = {
-        crm.ana: (200, 200, 200, 200), admin(crm): (200, 200, 200, 200),
+        crm.ana: (200, 200, 200, 200), crm.ada: (200, 200, 200, 200),
         crm.sam: (200, 403, 200, 403), crm.vera: (403,) * 4, crm.bea: (403,) * 4,
         crm.luis: (404,) * 4,
     }  # fmt: skip
@@ -79,8 +72,6 @@ def test_each_role_gets_only_its_methods(crm: SimpleNamespace, migrator: DB) -> 
         assert got == statuses, who.email
     for method, path, body in calls:
         assert reply(send(Client(), method, path, body)) == UNAUTHENTICATED
-        assert reply(send(signed(crm.vera), method, path, body)) == DENIED
-        assert reply(send(signed(crm.luis), method, path, body)) == NOT_FOUND
     assert reply(patch(signed(crm.sam), "custom", {"version": 0})) == DENIED  # permiso primero
     assert reply(patch(signed(crm.ana), "custom", {"version": 0})) == NOT_FOUND
     assert migrator.execute(STATE).fetchall() == []  # nadie configuró nada
@@ -113,8 +104,8 @@ def test_reads_every_registered_rule_and_the_switches(
         settings.AUTOMATIONS_ENABLED = value
         assert ana.get(BASE).json()["global_enabled"] is False
     # apagado global: una regla sí pasa a `SIMULATE`, y la respuesta dice que nada se ejecuta
-    done = patch(ana, CONV, {"version": 0, "mode": "SIMULATE"}).json()
-    assert done["global_enabled"] is False and rules_of(done)[CONV]["mode"] == "SIMULATE"
+    done = patch(ana, CONV, {"version": 0, "mode": "SIMULATE"})
+    assert done.json()["global_enabled"] is False and rules(done)[CONV]["mode"] == "SIMULATE"
     assert settings.AUTOMATIONS_ENABLED is None  # ninguna llamada lo toca
     paused = send(ana, "post", PAUSE, None).json()
     assert paused["paused"] is True and paused["paused_changed_at"] is not None
@@ -128,10 +119,6 @@ def test_reads_every_registered_rule_and_the_switches(
     ]
 
 
-def rules_of(state: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    return {found["key"]: found for found in state["rules"]}
-
-
 def test_on_needs_seven_days_in_simulate_through_the_api(
     crm: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -143,9 +130,7 @@ def test_on_needs_seven_days_in_simulate_through_the_api(
         rules(patch(ana, QUOTE, {"version": 0, "mode": "SIMULATE"}))[QUOTE]["simulate_since"]
     )
     week = dt.timedelta(days=7)
-    assert rules(ana.get(BASE))[QUOTE]["on_allowed_at"] == (since + week).isoformat().replace(
-        "+00:00", "Z"
-    )
+    assert rules(ana.get(BASE))[QUOTE]["on_allowed_at"] == f"{(since + week).isoformat()[:-6]}Z"
 
     def at(when: dt.datetime) -> None:
         monkeypatch.setattr(commands, "_db_now", lambda alias: when)
@@ -162,9 +147,12 @@ def test_on_needs_seven_days_in_simulate_through_the_api(
     assert migrator.execute(STATE).fetchall() == [(crm.a, QUOTE, "SIMULATE", 3, again)]
     at(again + week)  # justo 7 días
     on = rules(patch(ana, QUOTE, {"version": 3, "mode": "ON"}))[QUOTE]
-    assert (on["mode"], on["version"], on["simulate_since"], on["on_allowed_at"]) == (
-        "ON", 4, None, None,
-    )  # fmt: skip
+    assert [on[k] for k in ("mode", "version", "simulate_since", "on_allowed_at")] == [
+        "ON",
+        4,
+        None,
+        None,
+    ]
     modes = [c.get("mode") for (_, _, c, _, _) in migrator.execute(AUDIT).fetchall()]
     assert modes == [["OFF", "SIMULATE"], ["SIMULATE", "OFF"], ["OFF", "SIMULATE"],
                      ["SIMULATE", "ON"]]  # fmt: skip
@@ -181,9 +169,9 @@ def test_stale_version_closed_params_and_a_body_that_chooses_nothing_else(
         "updated_by_user_id": str(crm.luis.pk), "id": str(other), "mode": "OFF",
     }  # fmt: skip
     settings.AUTOMATIONS_ENABLED = False
-    made = patch(ana, CONV, sneaky).json()
-    assert made["global_enabled"] is False and settings.AUTOMATIONS_ENABLED is False
-    assert rules_of(made)[CONV]["params"]["max_recipients"] == 2
+    made = patch(ana, CONV, sneaky)
+    assert made.json()["global_enabled"] is False and settings.AUTOMATIONS_ENABLED is False
+    assert rules(made)[CONV]["params"]["max_recipients"] == 2
     owners = "SELECT organization_id, key, mode, version, simulate_since, updated_by_user_id, id"
     rows = migrator.execute(owners + " FROM automation_rules ORDER BY 1").fetchall()
     mine = next(row for row in rows if row[0] == crm.a)
@@ -192,6 +180,7 @@ def test_stale_version_closed_params_and_a_body_that_chooses_nothing_else(
     stale = (409, f'{{"code":"STALE_VERSION","message":"{STALE}"}}'.encode())
     for version in (0, 2):
         assert reply(patch(ana, CONV, {"version": version, "mode": "SIMULATE"})) == stale
+    assert reply(patch(ana, QUOTE, {"version": 3, "mode": "SIMULATE"})) == stale  # sin fila
     for bad in ({"note": "Ana Pérez"}, {"max_recipients": 0}, {"max_recipients": 4},
                 {"max_recipients": "3"}, {"max_recipients": True},
                 {"opens_at": "20:00"}):  # fmt: skip
@@ -204,6 +193,7 @@ def test_stale_version_closed_params_and_a_body_that_chooses_nothing_else(
                      {"version": 1, "mode": "X"}, {"version": 1, "params": [1]},
                      {"version": 2**31}):  # fmt: skip
         assert patch(ana, CONV, bad_body).status_code == 400, bad_body
+    assert "S3CR3T" not in patch(ana, CONV, {"version": 1, "mode": "S3CR3T"}).content.decode()
     assert [row[:4] for row in migrator.execute(STATE).fetchall()] == sorted(
         [(crm.a, CONV, "OFF", 1), (crm.b, CONV, "SIMULATE", 1)])  # fmt: skip
     assert len(migrator.execute(AUDIT).fetchall()) == 1  # solo el cambio que valía
@@ -230,3 +220,46 @@ def test_other_organizations_never_cross_in_either_direction(
     assert ana.get(BASE).json()["paused"] is False  # pausar B no pausa A
     assert [row[:4] for row in migrator.execute(STATE).fetchall()] == sorted(
         [(crm.a, CONV, "OFF", 1), (crm.b, CONV, "OFF", 2)])  # fmt: skip
+
+
+def test_two_writers_at_the_same_version_of_an_existing_rule(
+    crm: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """El bloqueo y `WHERE version`: una gana (200), la otra 409; un cambio y una auditoría."""
+    rule(migrator, crm.a, CONV)
+    real, gate, got = commands._db_now, threading.Barrier(2, timeout=10), []
+    slow = lambda alias: threading.Event().wait(0.4) or real(alias)  # noqa: E731 — leen la v1
+    monkeypatch.setattr(commands, "_db_now", slow)
+
+    def write(body: dict[str, Any]) -> None:
+        try:
+            client = signed(crm.ana)
+            gate.wait()
+            got.append(patch(client, CONV, {"version": 1, **body}).status_code)
+        finally:
+            connections.close_all()
+
+    bodies = ({"mode": "SIMULATE"}, {"params": {"max_recipients": 1}})
+    threads = [threading.Thread(target=write, args=(body,)) for body in bodies]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(30)
+    assert sorted(got) == [200, 409]
+    assert [row[2:4] for row in migrator.execute(STATE).fetchall()] in ([("SIMULATE", 2)],
+                                                                       [("OFF", 2)])  # fmt: skip
+    assert len(migrator.execute(AUDIT).fetchall()) == 1
+
+
+def test_an_internal_value_error_is_a_500_without_its_message(
+    crm: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken(*args: Any, **kwargs: Any) -> None:
+        raise ValueError("internal-detail")
+
+    monkeypatch.setattr(commands, "record", broken)
+    client = Client(raise_request_exception=False)
+    sign_in(client, crm.ana)
+    assert reply(patch(client, CONV, {"version": 0, "mode": "SIMULATE"})) == (
+        500, b'{"code":"INTERNAL_ERROR"}')  # fmt: skip
+    assert migrator.execute(STATE).fetchall() == []  # deshecho

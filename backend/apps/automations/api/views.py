@@ -4,7 +4,9 @@ interruptor (`automations.view`), cambiar el modo y los parámetros de una regla
 (`automations.manage`). La organización es la de la ruta; el cuerpo solo aporta `version`, `mode`
 y `params` (cualquier otro campo se ignora). `global_enabled` (`AUTOMATIONS_ENABLED`) solo se lee:
 ninguna ruta lo enciende. Nada de aquí crea tareas ni mensajes ni cambia otros módulos. El
-historial de ejecuciones llega en F11-07b."""
+historial de ejecuciones llega en F11-07b. Pendiente: `PATCH` y pausar responden con el estado
+completo también a un rol propio con `automations.manage` o `automations.kill_switch` sin
+`automations.view`."""
 
 import datetime as dt
 from collections.abc import Iterator
@@ -19,9 +21,9 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.access.permissions import AnyOf, rbac_errors
-from apps.automations import commands, selectors
+from apps.automations import commands
 from apps.automations import params as schema
-from apps.automations.models import AutomationRule, Mode
+from apps.automations.models import AutomationRule, AutomationSwitch, Mode
 from core.api.errors import ApiError
 from core.api.schema import errors
 from core.tenancy import context
@@ -30,6 +32,7 @@ STALE = "Otra persona cambió la regla: vuelve a cargarla y repite el cambio."
 TOO_SHORT = "Antes de ON, la regla tiene que llevar al menos 7 días seguidos en SIMULATE."
 OFF_GLOBALLY = " Con `global_enabled = false` nada se ejecuta, esté la regla como esté."
 STOPPERS = AnyOf((commands.KILL, commands.MANAGE))
+CHOICE = {"invalid_choice": "OFF, SIMULATE u ON."}  # sin repetir lo enviado
 
 
 class AutomationRuleSerializer(serializers.Serializer[Any]):
@@ -52,31 +55,36 @@ class AutomationSwitchSerializer(serializers.Serializer[Any]):
     global_enabled = serializers.BooleanField(
         help_text="`AUTOMATIONS_ENABLED`: apagado, no se ejecuta ninguna regla. Solo lectura."
     )
-    paused = serializers.BooleanField(help_text="El interruptor de la organización.")
+    paused = serializers.BooleanField()
     paused_changed_at = serializers.DateTimeField(allow_null=True, help_text="null: nunca.")
 
 
 class AutomationsSerializer(AutomationSwitchSerializer):
-    rules = AutomationRuleSerializer(many=True, help_text="Las reglas registradas, todas.")
+    rules = AutomationRuleSerializer(many=True)
 
 
 class AutomationRuleWriteSerializer(serializers.Serializer[Any]):
     version = serializers.IntegerField(min_value=0, max_value=2**31 - 1)
-    mode = serializers.ChoiceField(choices=Mode.choices, required=False)
+    mode = serializers.ChoiceField(choices=Mode.choices, required=False, error_messages=CHOICE)
     params = serializers.DictField(
         required=False, help_text="Solo los que cambian; una clave fuera del esquema: 400."
     )
 
 
 def switch_state() -> dict[str, Any]:
-    row = selectors.switch()
+    row = AutomationSwitch.objects.first()  # sin fila, no está pausada
     return {"global_enabled": commands.globally_on(), "paused": bool(row and row.paused),
             "paused_changed_at": row.changed_at if row else None}  # fmt: skip
 
 
 def settings_state() -> Any:
-    """Lo que responden la lectura y el cambio de una regla: con `global_enabled` a la vista."""
-    return AutomationsSerializer(switch_state() | {"rules": selectors.rules()}).data
+    """Lo que responden la lectura y el cambio de una regla, con `global_enabled` a la vista. Sin
+    fila, una regla está en `OFF` con versión 0 (la que `set_rule` espera para crearla)."""
+    stored = {rule.key: rule for rule in AutomationRule.objects.filter(key__in=schema.KEYS)}
+    rules = [stored.get(key) or AutomationRule(key=key, version=0) for key in schema.KEYS]
+    for rule in rules:
+        rule.params = {**schema.defaults(rule.key), **rule.params}
+    return AutomationsSerializer(switch_state() | {"rules": rules}).data
 
 
 def _tenant() -> Any:
@@ -95,8 +103,8 @@ def domain() -> Iterator[None]:
         raise ApiError("STALE_VERSION", 409, STALE) from None
     except commands.NotSimulatedLongEnough:
         raise ApiError("SIMULATION_TOO_SHORT", 409, TOO_SHORT) from None
-    except ValueError as error:  # el esquema cerrado: el nombre del parámetro, nunca su valor
-        raise serializers.ValidationError({"params": [str(error)]}) from None
+    except commands.InvalidParams as error:  # el nombre del parámetro, nunca su valor; otro
+        raise serializers.ValidationError({"params": [str(error)]}) from None  # error: 500
 
 
 @extend_schema_view(

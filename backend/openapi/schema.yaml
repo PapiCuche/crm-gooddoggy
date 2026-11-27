@@ -13444,7 +13444,6 @@ components:
             Solo lectura.'
         paused:
           type: boolean
-          description: El interruptor de la organización.
         paused_changed_at:
           type: string
           format: date-time
@@ -13463,7 +13462,6 @@ components:
             Solo lectura.'
         paused:
           type: boolean
-          description: El interruptor de la organización.
         paused_changed_at:
           type: string
           format: date-time
@@ -13473,7 +13471,6 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/AutomationRule'
-          description: Las reglas registradas, todas.
       required:
       - global_enabled
       - paused
