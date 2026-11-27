@@ -22,7 +22,8 @@ chmod 700 "$srv/state"
 canary="canary-$$-not-for-output"
 export CALLS="$work/calls" CONTAINERS="$srv/containers" GH="$srv/gh" PROBE="$work/probe"
 export CRM_ENV_DIR="$srv/etc" CRM_DEPLOY_DIR="$srv/state" BACKUP_STATE_DIR="$srv/backup" CRM_PROC_DIR="$srv/proc"
-export CRM_TEST_SECRET="$canary" PATH="$bin:$PATH"
+REAL_TIMEOUT=$(command -v timeout) REAL_STAT=$(command -v stat)
+export CRM_TEST_SECRET="$canary" REAL_TIMEOUT REAL_STAT PATH="$bin:$PATH"
 
 # La sonda de la puerta de deploy.sh: el docker falso solo acepta exactamente esa en `docker exec`.
 awk '/exec -T backend python -c .import sys/ { sub(/.*python -c ./, ""); on = 1 }
@@ -33,6 +34,8 @@ cat > "$bin/docker" <<'EOF'
 #!/usr/bin/env bash
 echo "docker $1 ${2:-}" >> "$CALLS"
 violation() { echo "VIOLATION docker $*" >> "$CALLS"; exit 99; }
+[ -n "${VIA_TIMEOUT:-}" ] || violation "sin timeout: $1"
+[ "$FAKE_HANG" != "$1" ] || exec sleep 20 # docker colgado: lo corta el timeout
 case $1 in
   info) [ "$*" = "info --format {{.DockerRootDir}}" ] || violation "$@"; [ -n "$FAKE_DOCKER_DIR" ] || exit 1; echo "$FAKE_DOCKER_DIR" ;;
   ps) [ "$*" = "ps -aq --filter label=com.docker.compose.project=crm" ] || violation "$@"; [ -z "$FAIL_PS" ] || exit 1; awk '{ print $4 }' "$CONTAINERS" ;;
@@ -78,10 +81,25 @@ case $2 in /) v=$FAKE_DF_ROOT ;; "$FAKE_DOCKER_DIR") v=$FAKE_DF_DOCKER ;; *) ech
 echo "Filesystem 1024-blocks Used Available Capacity Mounted on"
 echo "/dev/fake $v $2"
 EOF
+# nproc sin --all obedece a OMP_NUM_THREADS, como el de coreutils.
 cat > "$bin/nproc" <<'EOF'
 #!/bin/sh
+[ "$1" = --all ] || { echo "${OMP_NUM_THREADS:-$FAKE_NPROC}"; exit 0; }
 [ -n "$FAKE_NPROC" ] || exit 1
 echo "$FAKE_NPROC"
+EOF
+# timeout: el script tiene que envolver cada docker en `timeout 30`; aquí corta a los 2 s.
+cat > "$bin/timeout" <<'EOF'
+#!/bin/sh
+[ "$1" = 30 ] && [ "$2" = docker ] || { echo "VIOLATION timeout $*" >> "$CALLS"; exit 99; }
+shift
+VIA_TIMEOUT=1 exec "$REAL_TIMEOUT" 2 "$@"
+EOF
+# stat: FAKE_STAT, si viene, sustituye la salida (un modo que no es octal).
+cat > "$bin/stat" <<'EOF'
+#!/bin/sh
+[ -z "$FAKE_STAT" ] || { echo "$FAKE_STAT"; exit 0; }
+exec "$REAL_STAT" "$@"
 EOF
 chmod +x "$bin/"*
 
@@ -119,7 +137,7 @@ baseline() {
   chmod 700 "$srv/state" "$srv/backup"
   rm -rf "$srv/state/lock" "$srv/state/cd-halted" "$srv/etc/deploy-freeze" "$srv/proc/meminfo" "$srv/proc/loadavg"
   export FAKE_DOCKER_DIR=/var/lib/docker FAKE_DF_ROOT="104857600 52428800 52428800 50%" FAKE_DF_DOCKER="104857600 52428800 52428800 50%"
-  export FAKE_NPROC=2 FAIL_PS="" FAIL_INSPECT="" FAIL_PROBE=""
+  export FAKE_NPROC=2 FAIL_PS="" FAIL_INSPECT="" FAIL_PROBE="" FAKE_HANG="" FAKE_STAT=""
   at 2026 12 1 10 0 # martes
   export FAKE_NOW
   printf 'MemTotal: 8000000 kB\nMemAvailable: 4194304 kB\nSwapTotal: 2097152 kB\nSwapFree: 2097152 kB\n' > "$srv/proc/meminfo"
@@ -239,6 +257,8 @@ rm "$srv/proc/loadavg"
 blocks carga "no se puede leer la carga"
 FAKE_NPROC="" blocks carga "número de vCPU"
 FAKE_NPROC=0 blocks carga "número de vCPU"
+echo "2.00 3.01 1.00 1/200 1234" > "$srv/proc/loadavg"
+OMP_NUM_THREADS=64 blocks carga "con 2 vCPU" # el entorno no sube el umbral
 unreadable "$srv/proc/loadavg" carga "no se puede leer la carga"
 
 # Producción actual: contenedores sanos y /health/ready.
@@ -259,6 +279,10 @@ blocks produccion "no hay contenedores"
 FAIL_PROBE=1 blocks produccion "/health/ready no responde 200"
 FAIL_PS=1 blocks produccion "docker ps falla"
 FAIL_INSPECT=1 blocks produccion "docker inspect falla"
+FAKE_HANG="info" blocks disco "no responde en 30 s"
+FAKE_HANG="ps" blocks produccion "docker ps falla o no responde en 30 s"
+FAKE_HANG="inspect" blocks produccion "docker inspect falla o no responde en 30 s"
+FAKE_HANG="exec" blocks produccion "/health/ready no responde 200"
 
 # Lock de los despliegues y del backup, y la marca de parada: bloquean y siguen ahí.
 mkdir "$srv/state/lock"
@@ -268,6 +292,10 @@ blocks lock "existe $srv/state/lock"
 printf 'motivo: %s\n' "$canary" > "$srv/state/cd-halted"
 run
 [ -f "$srv/state/cd-halted" ] || fail "borró la marca de parada"
+blocks parada "existe $srv/state/cd-halted"
+ln -s "$srv/nowhere" "$srv/state/lock"
+blocks lock "existe $srv/state/lock" # enlace roto: -e dice que no existe
+ln -s "$srv/nowhere" "$srv/state/cd-halted"
 blocks parada "existe $srv/state/cd-halted"
 unreadable "$srv/state" lock "no se puede leer $srv/state" 2
 if [ "$(id -u)" != 0 ]; then chmod 600 "$srv/state" && blocks lock "no se puede leer $srv/state" 2; fi # sin x, -e diría «no hay»
@@ -286,7 +314,7 @@ blocks incidente "respuesta inesperada de GitHub (etiqueta stop-the-line)"
 
 # Ventana de la fase 1 en hora de Lima (UTC−5).
 at 2026 11 30 9 0 && passes "lunes 09:00"
-at 2026 12 1 8 59 && blocks ventana "son las 0859"
+at 2026 12 1 8 59 && blocks ventana "son las 0859 en Lima; la ventana es de 0900 a 1800"
 at 2026 12 3 17 59 && passes "jueves 17:59"
 at 2026 12 3 18 0 && blocks ventana "son las 1800"
 at 2026 12 4 12 59 && passes "viernes 12:59"
@@ -328,6 +356,7 @@ chmod 664 "$srv/etc/deploy-freeze"
 blocks congelacion "no es un archivo legible"
 chmod 646 "$srv/etc/deploy-freeze"
 blocks congelacion "no es un archivo legible"
+FAKE_STAT="$(id -u) 6x4" blocks congelacion "no es un archivo legible" # modo que no es octal
 unreadable "$srv/etc/deploy-freeze" congelacion "no es un archivo legible"
 at 2026 12 31 10 0 && blocks congelacion "2026-12-31 está congelado (línea 4"
 

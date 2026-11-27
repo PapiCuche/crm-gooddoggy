@@ -17,6 +17,7 @@ disk_min_free_gib=20
 mem_min_available_mib=2048
 swap_max_pct=50
 load_max_per_cpu=1.5     # media de 5 min frente al número de vCPU
+docker_timeout=30        # segundos por llamada a docker: si no responde, bloquea
 # Ventana de la fase 1 (§6), en hora de Lima, HHMM: lunes a jueves de 09:00 a 18:00, viernes hasta 13:00.
 window_open=900 window_close=1800 friday_close=1300
 # Lima es UTC−5 fija (Perú no cambia de hora): se calcula sin tzdata, que si falta cae en UTC callando.
@@ -89,8 +90,8 @@ check_backup() {
 
 check_disk() {
   local docker_dir dir line size avail pct fail=""
-  docker_dir=$(docker info --format '{{.DockerRootDir}}' 2> /dev/null) && [[ $docker_dir == /* ]] ||
-    { block disco "docker info no dice el directorio de Docker"; return; }
+  docker_dir=$(timeout "$docker_timeout" docker info --format '{{.DockerRootDir}}' 2> /dev/null) && [[ $docker_dir == /* ]] ||
+    { block disco "docker info no dice el directorio de Docker (o no responde en $docker_timeout s)"; return; }
   for dir in / "$docker_dir"; do
     line=$(df -Pk "$dir" 2> /dev/null | awk 'NR == 2 { print $2, $4, $5 }')
     read -r size avail pct <<< "$line"
@@ -122,7 +123,7 @@ check_memory() {
 check_load() {
   local load cpus
   read -r _ load _ 2> /dev/null < "$proc/loadavg" || load=""
-  cpus=$(nproc 2> /dev/null) || cpus=""
+  cpus=$(nproc --all 2> /dev/null) || cpus="" # --all: sin --all, OMP_NUM_THREADS lo cambia
   if ! [[ $load =~ ^[0-9]+(\.[0-9]+)?$ ]] || ! num "$cpus" || [ "$cpus" -lt 1 ]; then
     block carga "no se puede leer la carga de $proc/loadavg o el número de vCPU"
   elif awk -v l="$load" -v c="$cpus" -v k="$load_max_per_cpu" 'BEGIN { exit !(l > k * c) }'; then
@@ -135,12 +136,12 @@ check_load() {
 check_production() {
   local ids rows svc status health id backend="" seen=" " bad="" missing="" want
   command -v docker > /dev/null || { block produccion "falta docker"; return; }
-  ids=$(docker ps -aq --filter "label=com.docker.compose.project=$project" 2> /dev/null) ||
-    { block produccion "docker ps falla"; return; }
+  ids=$(timeout "$docker_timeout" docker ps -aq --filter "label=com.docker.compose.project=$project" 2> /dev/null) ||
+    { block produccion "docker ps falla o no responde en $docker_timeout s"; return; }
   [ -n "$ids" ] || { block produccion "no hay contenedores del proyecto $project"; return; }
   # shellcheck disable=SC2086 # un id por palabra
-  rows=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}} {{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}} {{.Id}}' $ids 2> /dev/null) ||
-    { block produccion "docker inspect falla"; return; }
+  rows=$(timeout "$docker_timeout" docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}} {{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}} {{.Id}}' $ids 2> /dev/null) ||
+    { block produccion "docker inspect falla o no responde en $docker_timeout s"; return; }
   while read -r svc status health id; do
     if [ "$svc" = migrate ]; then
       [ "$status" != running ] || bad="$bad migrate(en marcha)"
@@ -159,7 +160,7 @@ check_production() {
   done
   if [ -n "$bad$missing" ]; then
     block produccion "no está sano:${bad}${missing:+ falta:$missing} (es un incidente, no un despliegue)"
-  elif ! docker exec "$backend" python -c "$probe" > /dev/null 2>&1; then
+  elif ! timeout "$docker_timeout" docker exec "$backend" python -c "$probe" > /dev/null 2>&1; then
     block produccion "/health/ready no responde 200 desde el backend"
   else
     ok produccion
@@ -214,7 +215,7 @@ check_window() {
   if [ "$wd" = 0 ] || [ "$wd" = 6 ]; then
     block ventana "es fin de semana en Lima ($today_ymd)"
   elif [ "$hhmm" -lt "$window_open" ] || [ "$hhmm" -ge "$close" ]; then
-    block ventana "son las $(printf '%04d' "$hhmm") en Lima; la ventana es de $window_open a $close"
+    block ventana "son las $(printf '%04d' "$hhmm") en Lima; la ventana es de $(printf '%04d' "$window_open") a $close"
   else
     ok ventana
   fi
@@ -241,6 +242,7 @@ check_freeze() {
   info=$(stat -c '%u %a' "$file" 2> /dev/null || stat -f '%u %Lp' "$file" 2> /dev/null) ||
     { block congelacion "no existe $file (el propietario lo mantiene; vacío si no hay fechas)"; return; }
   uid=${info% *} mode=${info#* }
+  [[ $mode =~ ^[0-7]{1,4}$ ]] || mode=777 # un modo que no es octal no se cree: bloquea
   if { [ "$uid" != 0 ] && [ "$uid" != "$(id -u)" ]; } || (((8#$mode & 8#022) != 0)) || [ ! -f "$file" ] || [ ! -r "$file" ]; then
     block congelacion "$file no es un archivo legible de root sin escritura de grupo ni otros"
     return
