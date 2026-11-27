@@ -319,6 +319,8 @@ describe("navegación del shell", () => {
   it("«Automatizaciones» pide `automations.view` (Supervisor también) y va antes de «Auditoría»", async () => {
     route.pathname = "/o/acme/automatizaciones";
     const view = (code: string) => ({ code, scopes: [] });
+    expect(await links([view("automations.kill_switch")])).toEqual([["/o/acme", null]]);
+    cleanup();
     expect(await links([view("audit.view"), view("automations.view")])).toEqual([
       ["/o/acme", null],
       ["/o/acme/automatizaciones", "page"],
