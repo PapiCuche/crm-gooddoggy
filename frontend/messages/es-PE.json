@@ -35,7 +35,8 @@
       "tasks": "Mis tareas",
       "quotes": "Cotizaciones",
       "quickReplies": "Respuestas rápidas",
-      "ai": "Inteligencia artificial"
+      "ai": "Inteligencia artificial",
+      "automations": "Automatizaciones"
     },
     "loading": "Cargando tu espacio…",
     "noRole": "Sin rol asignado",
@@ -3555,6 +3556,75 @@
       "denied": "No tienes permiso para gestionar las respuestas rápidas.",
       "done": "Categoría «{name}» {created, select, true {creada} other {guardada}}.",
       "unchanged": "Sin cambios en «{name}»: no había nada que guardar."
+    }
+  },
+  "automations": {
+    "eyebrow": "Ajustes",
+    "title": "Automatizaciones",
+    "intro": "Crean tareas internas en «Mis tareas» de {organization} para no olvidar un seguimiento. Nunca envían mensajes a los clientes.",
+    "loading": "Cargando las automatizaciones…",
+    "denied": "No tienes acceso a las automatizaciones.",
+    "off": "Apagadas en todo el sistema.",
+    "globalOff": "Ninguna regla se ejecuta, esté como esté. Encenderlas en producción (AUTOMATIONS_ENABLED) es una operación que solo hace el propietario, fuera de esta pantalla.",
+    "paused": "Pausadas desde {at}: ninguna regla se ejecuta hasta que se reanuden.",
+    "running": "Activas: las reglas en SIMULATE u ON se revisan cada minuto.",
+    "pauseOpen": "Pausar todas",
+    "pauseBusy": "Pausando…",
+    "pauseDone": "Las automatizaciones quedaron pausadas.",
+    "resumeOpen": "Reanudar",
+    "resumeBusy": "Reanudando…",
+    "resumeDone": "Las automatizaciones se reanudaron.",
+    "resumeOnlyManage": "Reanudarlas pide el permiso de gestionar las automatizaciones.",
+    "rules": {
+      "conversation": {
+        "unanswered": {
+          "name": "Conversación sin responder",
+          "about": "Avisa a quien atiende una conversación que lleva un rato sin respuesta y, si sigue así, a su supervisor."
+        }
+      },
+      "quote": {
+        "no_response": {
+          "name": "Cotización sin respuesta",
+          "about": "Recuerda seguir una cotización enviada que el cliente no respondió y avisa antes de que venza."
+        }
+      }
+    },
+    "mode": {
+      "label": "Modo",
+      "OFF": "OFF: apagada",
+      "SIMULATE": "SIMULATE: calcula sin crear tareas",
+      "ON": "ON: crea tareas"
+    },
+    "on": {
+      "rule": "ON exige antes al menos 7 días seguidos en SIMULATE y la revisión de la simulación por el propietario.",
+      "needsSimulate": "Antes de ON tiene que pasar a SIMULATE: la cuenta de 7 días empieza entonces.",
+      "wait": "Podrá pasar a ON {left} ({at}).",
+      "ready": "Ya lleva 7 días en SIMULATE: puede pasar a ON cuando el propietario revise la simulación.",
+      "reviewed": "El propietario revisó la simulación y autoriza pasar a ON.",
+      "required": "Marca la revisión del propietario para pasar a ON."
+    },
+    "params": {
+      "title": "Parámetros",
+      "first_after_minutes": "Avisar tras (minutos sin respuesta)",
+      "escalate_after_minutes": "Escalar tras (minutos desde el aviso)",
+      "max_recipients": "Personas por aviso, como máximo",
+      "max_open_per_user": "Tareas abiertas por persona, como máximo",
+      "after_hours": "Seguimiento tras (horas desde el envío)",
+      "before_expiry_hours": "Recordar antes de vencer (horas; 0, nunca)",
+      "opens_at": "Horario: desde",
+      "closes_at": "Horario: hasta",
+      "days": "Días de atención"
+    },
+    "save": "Guardar cambios",
+    "saving": "Guardando…",
+    "saved": "«{name}» quedó guardada.",
+    "unchanged": "No hay cambios que guardar.",
+    "readOnly": "Solo lectura: cambiarla pide el permiso de gestionar las automatizaciones.",
+    "errors": {
+      "SIMULATION_TOO_SHORT": "La API rechazó ON: la regla todavía no lleva 7 días seguidos en SIMULATE. No cambió nada.",
+      "STALE_VERSION": "Otra persona cambió esta regla. Cargamos la versión actual: revisa y repite el cambio.",
+      "VALIDATION_ERROR": "Algún parámetro está fuera de rango: revísalo.",
+      "field": "Revisa «{field}»: falta o está fuera de rango."
     }
   }
 }
