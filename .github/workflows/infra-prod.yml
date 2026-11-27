@@ -8,6 +8,7 @@ name: infra-prod
 # también cuando cambia una migración del backend (F1-16b).
 # F1-17: smoke.sh con docker y curl falsos (certificado, /demo y /health/* desde fuera).
 # F1-15b: también cuando cambia un Dockerfile: validate.sh exige sus bases por digest.
+# F1-20d: cd-preflight.sh (condiciones que bloquean un despliegue) con un servidor simulado.
 # Ejecuta código del PR: `pull_request` (nunca `pull_request_target`), solo lectura, acciones por SHA.
 on:
   pull_request:
@@ -46,6 +47,8 @@ jobs:
         run: bash infra/prod/test-deploy.sh
       - name: Modo del servidor (test-host-mode.sh, ADR-046)
         run: sh infra/prod/test-host-mode.sh
+      - name: Condiciones que bloquean un despliegue (test-cd-preflight.sh, ADR-048 §7)
+        run: bash infra/prod/test-cd-preflight.sh
       - name: Frontera de los workflows (images.yml incluido)
         working-directory: .github/scripts
         run: python3 -m unittest -q test_workflow_security
