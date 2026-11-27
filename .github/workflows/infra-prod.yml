@@ -11,6 +11,7 @@ name: infra-prod
 # F1-20b: el verificador de atestaciones con una web y un gh falsos (sin red ni credenciales).
 # F1-20d: cd-preflight.sh (condiciones que bloquean un despliegue) con un servidor simulado.
 # F1-20c: release.yml (frontera) y release_record.py con un repositorio git temporal, sin red.
+# F1-20e1: el agente del servidor (cd_agent.py) con una API de GitHub falsa, sin red ni token real.
 # Ejecuta código del PR: `pull_request` (nunca `pull_request_target`), solo lectura, acciones por SHA.
 on:
   pull_request:
@@ -22,6 +23,8 @@ on:
       - ".github/workflows/release.yml"
       - ".github/scripts/release_record.py"
       - ".github/scripts/test_release_record.py"
+      - ".github/scripts/deploy_class.py" # cd_agent.py lo usa para recalcular la clase
+      - ".github/scripts/test_cd_agent.py"
       - "**/Dockerfile*"
       - ".github/scripts/test_workflow_security.py"
       - ".github/scripts/test_backup_retention.py"
@@ -64,6 +67,9 @@ jobs:
       - name: Preparar y registrar un release (release_record.py, sin red, F1-20c)
         working-directory: .github/scripts
         run: python3 -m unittest -q test_release_record
+      - name: Agente del servidor, sondeo y verificación (cd_agent.py, sin red, F1-20e1)
+        working-directory: .github/scripts
+        run: python3 -m unittest -q test_cd_agent
       - name: Retención de los backups (lifecycle.json y prefijos)
         working-directory: .github/scripts
         run: python3 -m unittest -q test_backup_retention
