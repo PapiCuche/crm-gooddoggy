@@ -90,6 +90,7 @@ def test_schema_endpoint_serves_the_contract_without_internal_routes() -> None:
         "/api/v1/o/{org_slug}/automations/rules/{key}/",
         "/api/v1/o/{org_slug}/automations/pause/",
         "/api/v1/o/{org_slug}/automations/resume/",
+        "/api/v1/o/{org_slug}/automations/runs/",  # F11-07b
         "/api/v1/o/{org_slug}/conversations/{conversation_id}/copilot/suggest/",  # F8-08h
         "/api/v1/o/{org_slug}/conversations/{conversation_id}/copilot/summary/",  # F8-08i
         "/api/v1/o/{org_slug}/conversations/{conversation_id}/copilot/suggestions/"

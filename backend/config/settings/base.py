@@ -235,6 +235,9 @@ CELERY_BEAT_SCHEDULE = {
         "schedule": 300.0,
         "options": {"expires": 300},
     },
+    # F11-05a (ADR-049 §3): cada minuto encola, por organización accesible, sus automatizaciones;
+    # con `AUTOMATIONS_ENABLED` apagado no toca la base.
+    "automations.sweep": {"task": "automations.sweep", "schedule": 60, "options": {"expires": 60}},
     # D-F2-2: una vez al día, a hora fija (UTC). Un intervalo de 24 horas se cuenta desde que
     # beat arranca: si el contenedor se recrea a diario, la purga no se ejecutaría nunca.
     "accounts.purge_expired_sessions": {
@@ -419,6 +422,7 @@ SPECTACULAR_SETTINGS = {
         "ChannelAccountStatusEnum": "apps.conversations.models.AccountStatus",  # F7-07a
         "AutomationModeEnum": "apps.automations.models.Mode",  # F11-07: el `mode` de una regla
         "AutomationRuleKeyEnum": "apps.automations.params.KEYS",
+        "AutomationRunStatusEnum": "apps.automations.models.RunStatus",  # F11-07b
     },
 }
 # Object storage S3-compatible (ADR-008): credenciales solo por entorno.
