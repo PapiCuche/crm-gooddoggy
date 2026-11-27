@@ -14,7 +14,8 @@
 #   6. si la puerta falla, vuelve sola a los digests de release.env (la versión en marcha) y sale
 #      con error. Nunca deshace migraciones (expandir y contraer, ADR-033 §7).
 # Solo cuando todo pasa, release.env pasa a release.env.previous y el nuevo a release.env.
-# Ejecútalo dentro de tmux: una señal (Ctrl-C, kill) corta el despliegue y deja el lock puesto.
+# Ejecútalo dentro de tmux: una señal (Ctrl-C, kill) corta el despliegue y deja el lock puesto (el del
+# CRM; el lock común del servidor, host-lock.sh, lo suelta el núcleo). No mira cd-halted (F1-20e).
 # Uso: sudo infra/prod/deploy.sh [--allow-revision-mismatch] <release.env nuevo> [opciones de curl para smoke.sh]
 #      sudo infra/prod/deploy.sh [--allow-revision-mismatch] --rollback [opciones de curl]   (a release.env.previous)
 #      sudo infra/prod/deploy.sh --migrate   (solo `migrate` de la versión en marcha: crm-migrate.timer)
@@ -46,6 +47,8 @@ die() { finished=1; log "ERROR: $*"; exit 1; }
 # Los archivos de Compose de este servidor (dedicado o compartido, ADR-046): host-mode.sh.
 # shellcheck source=infra/prod/host-mode.sh
 . "$here/host-mode.sh"
+# shellcheck source=infra/prod/host-lock.sh
+. "$here/host-lock.sh"
 files=(-f "$here/compose.yaml")
 override=$(crm_compose_override "$here") || { echo "ERROR: modo del servidor ilegible (host-mode)" >&2; exit 1; }
 [ -z "$override" ] || files+=(-f "$override")
@@ -199,6 +202,8 @@ main() {
   mkdir "$state/lock" 2> /dev/null ||
     die "hay otro despliegue o el backup nocturno en curso, o un despliegue anterior se cortó: revisa $state/deploy.log (y journalctl -u crm-backup) antes de borrar $state/lock"
   locked=1
+  # El lock común del servidor (F1-20f), sin esperar: lo suelta el núcleo al salir, también con una señal.
+  host_lock 0 || die "no se toma el lock común del servidor: no se ha tocado nada"
 
   # ADR-033 §7: las particiones de auditoría se crean al migrar, 12 meses por delante. El
   # temporizador mensual (crm-migrate.timer) repite `migrate` de la versión en marcha sin desplegar.

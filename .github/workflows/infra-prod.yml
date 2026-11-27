@@ -11,6 +11,8 @@ name: infra-prod
 # F1-20b: el verificador de atestaciones con una web y un gh falsos (sin red ni credenciales).
 # F1-20d: cd-preflight.sh (condiciones que bloquean un despliegue) con un servidor simulado.
 # F1-20c: release.yml (frontera) y release_record.py con un repositorio git temporal, sin red.
+# F1-20f: el vigilante de la otra aplicación (neighbor-watch.sh) con un servidor simulado y el lock común
+# del servidor (host-lock.sh) en test-deploy.sh y test-cd-preflight.sh, con flock de verdad.
 # Ejecuta código del PR: `pull_request` (nunca `pull_request_target`), solo lectura, acciones por SHA.
 on:
   pull_request:
@@ -55,6 +57,8 @@ jobs:
         run: sh infra/prod/test-host-mode.sh
       - name: Condiciones que bloquean un despliegue (test-cd-preflight.sh, ADR-048 §7)
         run: bash infra/prod/test-cd-preflight.sh
+      - name: Vigilante de la otra aplicación (test-neighbor-watch.sh, ADR-048 §8)
+        run: bash infra/prod/test-neighbor-watch.sh
       - name: Frontera de los workflows (images.yml incluido)
         working-directory: .github/scripts
         run: python3 -m unittest -q test_workflow_security

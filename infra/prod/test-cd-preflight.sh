@@ -3,15 +3,17 @@
 # con etc/, el estado de los despliegues y del backup y un /proc falso, y delante en el PATH `docker`,
 # `curl`, `date`, `df` y `nproc` falsos que anotan cada llamada y marcan VIOLATION ante cualquier orden
 # que no sea de lectura. Cada condición tiene su prueba de bloqueo y la de lo que no se puede leer
-# (falla cerrado). Tras cada ejecución, el árbol es idéntico (solo lectura), runtime.env (una FIFO con
-# un canario) no se ha abierto y el canario no sale. Uso: bash infra/prod/test-cd-preflight.sh
+# (falla cerrado). F1-20f: el lock común (un flock falso que solo acepta el sondeo compartido y, si
+# hay flock, otro proceso con el lock de verdad) y la otra aplicación (neighbor-watch.sh --once). Tras cada ejecución, el árbol es idéntico
+# (solo lectura), runtime.env (una FIFO con un canario) no se ha abierto y el canario no sale. Uso: bash infra/prod/test-cd-preflight.sh
 set -euo pipefail
 src=$(cd "$(dirname "$0")" && pwd)
 script="$src/cd-preflight.sh"
 work=$(mktemp -d)
-writer=""
+writer="" holder=""
 cleanup() {
   if [ -n "$writer" ]; then kill "$writer" 2> /dev/null || true; fi
+  if [ -n "$holder" ]; then kill "$holder" 2> /dev/null || true; fi
   chmod -R u+rwx "$work" 2> /dev/null || true
   rm -rf "$work"
 }
@@ -22,8 +24,9 @@ chmod 700 "$srv/state"
 canary="canary-$$-not-for-output"
 export CALLS="$work/calls" CONTAINERS="$srv/containers" GH="$srv/gh" PROBE="$work/probe"
 export CRM_ENV_DIR="$srv/etc" CRM_DEPLOY_DIR="$srv/state" BACKUP_STATE_DIR="$srv/backup" CRM_PROC_DIR="$srv/proc"
-REAL_TIMEOUT=$(command -v timeout) REAL_STAT=$(command -v stat)
-export CRM_TEST_SECRET="$canary" REAL_TIMEOUT REAL_STAT PATH="$bin:$PATH"
+export CRM_HOST_LOCK_DIR="$srv/host" NEIGHBOR_URL=https://store.example.invalid/health
+REAL_TIMEOUT=$(command -v timeout) REAL_STAT=$(command -v stat) REAL_FLOCK=$(command -v flock || true)
+export CRM_TEST_SECRET="$canary" REAL_TIMEOUT REAL_STAT REAL_FLOCK PATH="$bin:$PATH"
 
 # La sonda de la puerta de deploy.sh: el docker falso solo acepta exactamente esa en `docker exec`.
 awk '/exec -T backend python -c .import sys/ { sub(/.*python -c ./, ""); on = 1 }
@@ -35,12 +38,19 @@ cat > "$bin/docker" <<'EOF'
 echo "docker $1 ${2:-}" >> "$CALLS"
 violation() { echo "VIOLATION docker $*" >> "$CALLS"; exit 99; }
 [ -n "${VIA_TIMEOUT:-}" ] || violation "sin timeout: $1"
-[ "$FAKE_HANG" != "$1" ] || exec sleep 20 # docker colgado: lo corta el timeout
+# docker colgado (lo corta el timeout); FAKE_HANG y FAIL_INSPECT son del CRM, no de la otra aplicación.
+[ "$FAKE_HANG" != "$1" ] || [[ ${3:-} == "{{.Name}}"* ]] || exec sleep 20
 case $1 in
   info) [ "$*" = "info --format {{.DockerRootDir}}" ] || violation "$@"; [ -n "$FAKE_DOCKER_DIR" ] || exit 1; echo "$FAKE_DOCKER_DIR" ;;
   ps) [ "$*" = "ps -aq --filter label=com.docker.compose.project=crm" ] || violation "$@"; [ -z "$FAIL_PS" ] || exit 1; awk '{ print $4 }' "$CONTAINERS" ;;
   inspect)
     [ "$2" = --format ] || violation "$@"
+    if [ "$3" = '{{.Name}} {{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' ]; then
+      shift 3 # neighbor-watch.sh: los contenedores de la otra aplicación, por nombre
+      rc=0
+      for n; do grep "^/$n " "$NEIGHBOR" || rc=1; done
+      exit $rc
+    fi
     shift 3
     [ -z "$FAIL_INSPECT" ] || exit 1
     for id; do grep " $id\$" "$CONTAINERS" || exit 1; done ;;
@@ -54,6 +64,10 @@ EOF
 cat > "$bin/curl" <<'EOF'
 #!/bin/sh
 echo "curl $*" >> "$CALLS"
+if [ "$*" = "-q -sS --proto =https --max-time 4 -o /dev/null -w %{http_code} $NEIGHBOR_URL" ]; then
+  printf '%s' "$NEIGHBOR_HTTP" # neighbor-watch.sh: GET a la URL pública de la otra aplicación
+  exit 0
+fi
 [ "$1" = -q ] || echo "VIOLATION curl sin -q (lee ~/.curlrc)" >> "$CALLS"
 for a; do
   case $a in
@@ -91,7 +105,7 @@ EOF
 # timeout: el script tiene que envolver cada docker en `timeout 30`; aquí corta a los 2 s.
 cat > "$bin/timeout" <<'EOF'
 #!/bin/sh
-[ "$1" = 30 ] && [ "$2" = docker ] || { echo "VIOLATION timeout $*" >> "$CALLS"; exit 99; }
+case "$1 $2" in "30 docker" | "4 docker") ;; *) echo "VIOLATION timeout $*" >> "$CALLS"; exit 99 ;; esac
 shift
 VIA_TIMEOUT=1 exec "$REAL_TIMEOUT" 2 "$@"
 EOF
@@ -100,6 +114,13 @@ cat > "$bin/stat" <<'EOF'
 #!/bin/sh
 [ -z "$FAKE_STAT" ] || { echo "$FAKE_STAT"; exit 0; }
 exec "$REAL_STAT" "$@"
+EOF
+# flock: solo el sondeo compartido sin esperar (nunca el exclusivo). FAKE_HOST_BUSY: lo tiene otro.
+cat > "$bin/flock" <<'EOF'
+#!/bin/sh
+[ "$*" = "-n -s 9" ] || { echo "VIOLATION flock $*" >> "$CALLS"; exit 99; }
+[ -z "$FAKE_HOST_BUSY" ] || exit 1
+[ -z "$REAL_FLOCK" ] || exec "$REAL_FLOCK" "$@"
 EOF
 chmod +x "$bin/"*
 
@@ -149,6 +170,14 @@ baseline() {
     service migrate exited none 4
   } > "$CONTAINERS"
   echo "[]" > "$GH/incident"
+  export NEIGHBOR_HTTP=200 NEIGHBOR="$srv/neighbor"
+  printf '%s\n' "/shop-web running healthy" "/shop-caddy running none" > "$NEIGHBOR"
+  chmod -R u+rwx "$srv/host" 2> /dev/null || true
+  rm -rf "$srv/etc/neighbor-watch" "$srv/host"
+  printf 'url %s\nhealthy shop-web\nrunning shop-caddy\n' "$NEIGHBOR_URL" > "$srv/etc/neighbor-watch"
+  chmod 644 "$srv/etc/neighbor-watch"
+  mkdir -m 755 "$srv/host" && (umask 022 && : > "$srv/host/lock")
+  export FAKE_HOST_BUSY=""
   printf '[ ]\n' > "$GH/stop-the-line"
   printf '# campañas de la otra aplicación\n\n2026-11-27 # campaña\n2026-12-20..2027-01-02\n' > "$srv/etc/deploy-freeze"
   chmod 644 "$srv/etc/deploy-freeze"
@@ -177,7 +206,7 @@ blocks() { # blocks <condición> <texto> [n.º de condiciones que bloquean]: sal
 passes() { # passes <contexto>
   run
   [ "$rc" = 0 ] || fail "$1: exit $rc"
-  if [ "$(grep -c '^ok ' "$out")" != 11 ] || ! grep -q '^PREFLIGHT OK$' "$out"; then fail "$1: no están las 11 en verde"; fi
+  if [ "$(grep -c '^ok ' "$out")" != 13 ] || ! grep -q '^PREFLIGHT OK$' "$out"; then fail "$1: no están las 13 en verde"; fi
   echo "ok   pasa: $1"
   baseline
 }
@@ -302,6 +331,50 @@ if [ "$(id -u)" != 0 ]; then chmod 600 "$srv/state" && blocks lock "no se puede 
 rmdir "$srv/state"
 blocks parada "no se puede leer $srv/state" 2
 
+# Lock común del servidor (F1-20f): un lock compartido de un instante, sin escribir ni esperar.
+FAKE_HOST_BUSY=1 blocks lock-comun "$srv/host/lock está tomado"
+rm -rf "$srv/host"
+passes "el lock común todavía no existe"
+rm "$srv/host/lock"
+passes "el directorio sin el archivo"
+chmod 775 "$srv/host"
+blocks lock-comun "$srv/host no es de root, tiene escritura de grupo u otros"
+chmod 666 "$srv/host/lock"
+blocks lock-comun "$srv/host/lock no es de root"
+rm "$srv/host/lock" && ln -s "$srv/etc/deploy-freeze" "$srv/host/lock"
+blocks lock-comun "$srv/host/lock no es de root, tiene escritura de grupo u otros o es un enlace"
+rm "$srv/host/lock" && mkdir -m 755 "$srv/host/lock"
+blocks lock-comun "$srv/host/lock no es un archivo"
+unreadable "$srv/host" lock-comun "no se puede leer $srv/host"
+unreadable "$srv/host/lock" lock-comun "o no se puede abrir"
+mkdir "$work/no-flock"
+IFS=: read -ra dirs <<< "$PATH"
+for d in "${dirs[@]}"; do
+  for f in "$d"/*; do
+    [ -x "$f" ] && [ "${f##*/}" != flock ] && [ ! -e "$work/no-flock/${f##*/}" ] && ln -s "$f" "$work/no-flock/${f##*/}" || true
+  done
+done
+PATH="$work/no-flock" blocks lock-comun "falta flock (util-linux)"
+# Con flock de verdad: otro proceso con el exclusivo (como deploy.sh: el `flock` ya salió) bloquea.
+if [ -n "$REAL_FLOCK" ]; then
+  bash -c 'exec 8< "$1" && "$2" 8 && touch "$3" && exec sleep 30' _ "$srv/host/lock" "$REAL_FLOCK" "$work/held" &
+  holder=$!
+  for _ in $(seq 100); do [ ! -e "$work/held" ] || break; sleep 0.1; done
+  blocks lock-comun "$srv/host/lock está tomado"
+  kill "$holder" && wait "$holder" 2> /dev/null || true
+  holder=""
+  passes "lock común libre con flock de verdad"
+fi
+
+# La otra aplicación (F1-20f): neighbor-watch.sh --once, sin escribir nada.
+NEIGHBOR_HTTP=503 blocks vecina "url: http 503, curl 0"
+sed -i.bak 's|^/shop-web running healthy|/shop-web running unhealthy|' "$NEIGHBOR" && rm "$NEIGHBOR.bak"
+blocks vecina "shop-web no está running/healthy"
+rm "$srv/etc/neighbor-watch"
+blocks vecina "no existe $srv/etc/neighbor-watch"
+chmod 666 "$srv/etc/neighbor-watch"
+blocks vecina "no es un archivo legible de root"
+
 # Incidente abierto en GitHub (sin credenciales): un issue, la red caída o una respuesta rara.
 echo '[{"number": 1, "labels": [{"name": "incident"}]}]' > "$GH/incident"
 blocks incidente "etiqueta incident"
@@ -356,7 +429,7 @@ chmod 664 "$srv/etc/deploy-freeze"
 blocks congelacion "no es un archivo legible"
 chmod 646 "$srv/etc/deploy-freeze"
 blocks congelacion "no es un archivo legible"
-FAKE_STAT="$(id -u) 6x4" blocks congelacion "no es un archivo legible" # modo que no es octal
+FAKE_STAT="$(id -u) 6x4" blocks congelacion "no es un archivo legible" 3 # modo no octal: también vecina y lock-comun
 unreadable "$srv/etc/deploy-freeze" congelacion "no es un archivo legible"
 at 2026 12 31 10 0 && blocks congelacion "2026-12-31 está congelado (línea 4"
 

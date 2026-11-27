@@ -14,7 +14,8 @@
 #   4. Marca el éxito (check.sh avisa si en 26 h no hay otro) y avisa a BACKUP_HEARTBEAT_URL.
 #      Si una noche falla, BACKUP_HEARTBEAT_FAIL_URL (heartbeat y alert en lib.sh).
 # nightly toma antes el lock de los despliegues (deploy_lock en lib.sh): ni un despliegue ni
-# `deploy.sh --migrate` corren a la vez que él (F1-15b).
+# `deploy.sh --migrate` corren a la vez que él (F1-15b). Después, el lock común del servidor
+# (host-lock.sh, F1-20f), con lo que quede de la misma espera: el retraso máximo no crece.
 # Si algo falla: log backup.failed y Sentry si SENTRY_DSN (alert en lib.sh); sale con error.
 set -euo pipefail
 # shellcheck source=infra/prod/backup/lib.sh
@@ -26,7 +27,8 @@ stage=config tmp='' alerted='' held_lock='' # alerted: un valor heredado del ent
 # El lock de los despliegues se suelta antes de los avisos: un despliegue no espera a Sentry ni al
 # servicio de latidos (hasta ~45 s si no responden).
 # Se olvida antes de borrarlo: un TERM entre los dos no borra el lock que deploy.sh acaba de tomar.
-release_lock() { local lock=$held_lock; held_lock=''; [ -z "$lock" ] || rmdir "$lock" || true; }
+# El común primero: un despliegue que tome el del CRM al soltarlo encuentra el común libre.
+release_lock() { local lock=$held_lock; host_unlock; held_lock=''; [ -z "$lock" ] || rmdir "$lock" || true; }
 finish() {
   local status=$?
   [ -z "$tmp" ] || rm -f "$tmp" "$tmp.counts" "$tmp.list" "$tmp.new"
@@ -47,6 +49,8 @@ for file in "${recipients[@]}"; do [ "$file" = -R ] || check_file "$file"; done
 if [ "$kind" = nightly ]; then
   stage=deploy_lock
   deploy_lock
+  stage=host_lock
+  host_lock "$lock_wait_left"
 fi
 tmp=$(mktemp "$state_dir/.backup.XXXXXX")
 

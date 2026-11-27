@@ -161,15 +161,48 @@ No hay tope duro: con unas 90 peticiones a la vez en `backend` se llegaría al l
 
 El backup nocturno (`backup.sh nightly`) toma el mismo lock que `deploy.sh`, `/var/lib/crm-deploy/lock`. Mientras dura, ningún despliegue arranca. Si un despliegue lo tiene, el backup espera hasta una hora (`BACKUP_LOCK_WAIT`). Si sigue puesto, porque un despliegue se cortó y lo dejó, el backup falla con `backup.failed` (`stage=deploy_lock`) y avisa. `backup.sh predeploy` no lo toma: lo lanza `deploy.sh`, que ya lo tiene.
 
+Después toma el lock común del servidor (abajo) con lo que queda de la **misma** espera: las dos juntas no pasan de `BACKUP_LOCK_WAIT`. El retraso máximo del nocturno no crece, así que `check.sh` (26 h) no da un `backup.missing` falso: 03:15 UTC, más hasta 10 min de `RandomizedDelaySec`, más 1 h de espera como mucho, más lo que dure, como antes. Si el lock común sigue tomado, falla con `backup.failed` (`stage=host_lock`) y suelta el lock del CRM.
+
 ## Condiciones que bloquean (`cd-preflight.sh`)
 
-`sudo infra/prod/cd-preflight.sh` comprueba, sin cambiar nada, las condiciones locales de ADR-048 §7: backup de menos de 26 h, disco (`/` y el directorio de Docker), memoria y swap, carga, producción sana (contenedores `healthy` y `/health/ready` desde el backend, con `docker` a secas: nunca `docker compose`, que cargaría los archivos de entorno), el lock de `/var/lib/crm-deploy`, la marca de parada `cd-halted`, un issue abierto con la etiqueta `incident` o `stop-the-line` (API pública de GitHub, sin credenciales), la ventana de la fase 1 (§6), los feriados nacionales del Perú y el calendario de congelación. Escribe una línea por condición y sale con 0 si todas pasan, 1 si alguna bloquea y 2 si recibe argumentos. Lo que no puede comprobar (un archivo que falta o no se puede leer, GitHub sin respuesta o con el límite de peticiones agotado) **bloquea**. Nunca borra el lock ni la marca de parada, y no escribe en el registro ni en ningún otro sitio.
+`sudo infra/prod/cd-preflight.sh` comprueba, sin cambiar nada, las condiciones locales de ADR-048 §7: backup de menos de 26 h, disco (`/` y el directorio de Docker), memoria y swap, carga, producción sana (contenedores `healthy` y `/health/ready` desde el backend, con `docker` a secas: nunca `docker compose`, que cargaría los archivos de entorno), el lock de `/var/lib/crm-deploy`, la marca de parada `cd-halted`, el lock común del servidor y que `flock` exista, la otra aplicación (`neighbor-watch.sh --once`), un issue abierto con la etiqueta `incident` o `stop-the-line` (API pública de GitHub, sin credenciales), la ventana de la fase 1 (§6), los feriados nacionales del Perú y el calendario de congelación. Escribe una línea por condición y sale con 0 si todas pasan, 1 si alguna bloquea y 2 si recibe argumentos. Lo que no puede comprobar (un archivo que falta o no se puede leer, GitHub sin respuesta o con el límite de peticiones agotado) **bloquea**. Nunca borra el lock ni la marca de parada, y no escribe en el registro ni en ningún otro sitio.
 
 - **Cuándo se usa:** el operador lo ejecuta a mano, y más adelante el agente del servidor (F1-20e1), **solo cuando el propietario habilite la fase 1** (ADR-048, enmienda E1). Hasta entonces rige el GO exacto por SHA y ningún procedimiento lo pide. Este PR no lo ejecuta en producción.
 - **Hora de Lima:** UTC−5 fija, calculada sin la base de zonas horarias (si falta, `TZ=America/Lima` cae en UTC sin avisar). Hoy el Perú no cambia de hora en verano. Si algún día lo hace, hay que actualizar el script.
 - **Umbrales y feriados:** en un solo bloque al principio del script, tal como los propone ADR-048 (decisión 6). Se revisan tras los 10 primeros despliegues. La lista de feriados se revisa cada año, porque el Congreso añade feriados por ley. Jueves y Viernes Santo salen del cálculo de la Pascua.
 - **`/etc/crm/deploy-freeze`** (lo mantiene el propietario, de `root`, sin escritura de grupo ni otros; no va al repositorio): una fecha `AAAA-MM-DD` o un rango `AAAA-MM-DD..AAAA-MM-DD` por línea, con `#` para los comentarios. Ahí van los días no laborables que declare el Gobierno y las campañas y operaciones de la otra aplicación del servidor (decisión 5). Si no hay fechas, el archivo existe y está vacío: si falta, bloquea.
-- **Lo que no comprueba:** CI, procedencia, huella, `main`, clase y ritmo (lado de GitHub, F1-20c y F1-20e1); el vigilante de la otra aplicación y el lock común del servidor (F1-20f).
+- **Lo que no comprueba:** CI, procedencia, huella, `main`, clase y ritmo (lado de GitHub, F1-20c y F1-20e1).
+- **La otra aplicación (F1-20f):** una comprobación en el momento. ADR-048 §7 pide «ninguna fallida en el último minuto»: se aproxima con esta comprobación más el vigilante, que mira cada 5 s durante el despliegue.
+- **El lock común:** no se mira en `/proc/locks`, que oculta un `flock` cuyo proceso ya salió (el de un descriptor heredado, como el de `deploy.sh`). Se prueba con un lock **compartido** de un instante en un subshell, sin escribir nada. Si en ese instante `deploy.sh` intenta tomarlo, falla sin tocar nada (falla cerrado).
+
+## Lock común del servidor y vigilante de la otra aplicación (F1-20f, ADR-048 §7 y §8)
+
+**Lock común** (`host-lock.sh`): `flock` exclusivo sobre `/var/lib/host-deploy/lock`, con el directorio de `root` en 0755 y el archivo de `root` en 0644. `deploy.sh` crea los dos si faltan. Lo toman `deploy.sh` (también `--rollback` y `--migrate`), sin esperar, y el backup nocturno, que espera (arriba). Siempre después del lock del CRM, así que no hay abrazo mortal. Lo suelta el núcleo cuando sale quien lo tiene, también con una señal: no puede quedar uno cortado, y **nadie lo borra nunca**. Si falta `flock` (util-linux, de serie en Ubuntu), si el directorio o el archivo no son de `root`, si tienen escritura de grupo u otros, o si son un enlace, `deploy.sh` para antes de tocar nada. `cd-preflight.sh` lo dice antes. Mientras la otra aplicación no lo use, no la frena (decisión 9 de ADR-048).
+
+**Contrato para la otra aplicación.** Es solo documentación: adoptarlo es un cambio en su repositorio y necesita una autorización aparte del propietario. Este PR no toca nada suyo.
+
+- Envuelve todo su despliegue, incluida la recreación de su borde, en `flock -n /var/lib/host-deploy/lock <su despliegue>`, o en `exec 9< /var/lib/host-deploy/lock && flock -n 9`. Abrirlo para leer basta.
+- Si el lock está tomado, no despliega ni espera sin límite. Nunca borra, sustituye, trunca ni cambia de permisos el archivo.
+- Mantiene el healthcheck de los contenedores que el propietario pone en `/etc/crm/neighbor-watch`.
+
+**Vigilante** (`neighbor-watch.sh`): cada 5 s mira tres cosas.
+
+- La URL pública de la otra aplicación: un GET que tiene que responder 2xx, sin seguir redirecciones.
+- Sus contenedores y el del borde, con `docker inspect`.
+- `MemAvailable`.
+
+Para con 3 comprobaciones seguidas fallidas de la otra aplicación (15 s) o con 3 muestras seguidas por debajo de 512 MiB. Lo que no puede leer cuenta como fallo. Pide la parada con la marca `/var/lib/crm-deploy/cd-halted` (`noclobber`: una marca que ya existe no se toca), nunca con `kill`, y sale con 1. Con la otra aplicación solo lee: nunca la reinicia, ni entra en sus contenedores o redes, ni lee su entorno.
+
+Qué vigila lo escribe el propietario en `/etc/crm/neighbor-watch` (de `root`, sin escritura de grupo ni otros; no va al repositorio). Va una entrada por línea, con `#` para los comentarios:
+
+- `url https://<dominio>/<ruta>`: una sola.
+- `healthy <contenedor>`: uno o más. Tienen que estar en marcha y `healthy`.
+- `running <contenedor>`: los que no tienen healthcheck. Basta con que estén en marcha.
+
+Si el archivo falta, está mal escrito o tiene escritura ajena, bloquea `cd-preflight.sh` y, vigilando, pide la parada.
+
+- **Nada lo arranca solo en este PR:** sin unidad de systemd ni cron. Lo lanzará el agente de F1-20e junto a `deploy.sh`. En fase 0, el operador puede tenerlo en otro panel de tmux (`sudo infra/prod/neighbor-watch.sh`) y pararlo con Ctrl-C al terminar el despliegue.
+- **`deploy.sh` todavía no mira `cd-halted`** (lo hace F1-20e). Una vuelta atrás manual del propietario (`sudo infra/prod/deploy.sh --rollback`) funciona aunque la marca esté puesta. Solo necesita el lock del CRM y el común. La marca para al agente y a `cd-preflight.sh`, no a esa vuelta atrás: F1-20e tiene que mantenerlo así para `--rollback`. Solo la quita el propietario (ADR-048 §9).
 
 ## Probar en local
 
@@ -178,6 +211,7 @@ sh infra/prod/validate.sh --caddy
 bash infra/prod/test-smoke.sh   # smoke.sh con docker y curl falsos: certificado, /demo y /health/*
 bash infra/prod/test-deploy.sh  # deploy.sh con docker falso; también el lock con backup.sh nightly
 bash infra/prod/test-cd-preflight.sh  # cd-preflight.sh con un servidor simulado, una prueba por condición
+bash infra/prod/test-neighbor-watch.sh  # el vigilante: parada en cada umbral, configuración y solo lectura
 ```
 
 Para levantarlo entero en local, usa archivos de entorno desechables en un directorio temporal y `CRM_DOMAIN=localhost`. Caddy emite entonces `crm.localhost` con su CA interna. Añade un override que publique el proxy en `127.0.0.1` con otros puertos y un `-p` propio. Al terminar, `down -v`.
