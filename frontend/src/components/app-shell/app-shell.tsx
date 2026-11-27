@@ -110,7 +110,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         <Sidebar label={t("shell.navigation")} current={pathname} />
       </aside>
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="border-border flex h-[60px] shrink-0 items-center gap-2 border-b px-4 lg:h-[70px] lg:border-l lg:px-8">
+        <header className="border-border flex h-(--shell-bar) shrink-0 items-center gap-2 border-b px-(--shell-gutter) lg:h-[70px] lg:border-l lg:px-8">
           <MobileMenu
             label={t("shell.menu")}
             title={t("shell.menuTitle")}
@@ -129,7 +129,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         <main
           id="workspace"
           tabIndex={-1}
-          className="flex-1 px-4 py-8 focus-visible:outline-none lg:px-8"
+          className="flex-1 px-(--shell-gutter) py-(--shell-pad) focus-visible:outline-none lg:px-8"
         >
           {children}
         </main>

@@ -88,6 +88,20 @@ const lastSeen = (box: HTMLElement, hidden = 0) => {
     .slice(Math.max(last, 0), last + 2)
     .map((li) => ({ id: li.dataset.id!, top: li.getBoundingClientRect().top - view.top }));
 };
+// El ancla (UX-INBOX-06e): la fila de arriba a la vista (aunque asome), y de reserva la última y la
+// siguiente. Como `overflow-anchor`: lo que crece dentro de la vista empuja hacia abajo, no saca por
+// arriba lo que se lee; lo que crece encima se compensa; y si al releer sale la de arriba, la última.
+const anchorOf = (box: HTMLElement) => {
+  const view = box.getBoundingClientRect().top;
+  const first = [...box.querySelectorAll<HTMLElement>("li[data-id]")].find(
+    (li) => li.getBoundingClientRect().bottom > view,
+  );
+  const top = first
+    ? [{ id: first.dataset.id!, top: first.getBoundingClientRect().top - view }]
+    : [];
+  return [...top, ...lastSeen(box)];
+};
+const SAY = 500; // ms: una ráfaga de llegadas se anuncia una vez, con la última cuenta
 // Al final (o yendo a él) se sigue lo último; si no, la fila leída vuelve a su altura en la región.
 // Solo cambia `scrollTop`, nunca un alto: el `ResizeObserver` que la llama no se realimenta.
 const place = (box: HTMLElement, follow: boolean, anchor: ReturnType<typeof lastSeen>) => {
@@ -156,10 +170,12 @@ export function ChatPanel({
   const atBottom = useRef(false); // al ocultarse el chat, ¿se leía lo último?
   const toBottom = useRef(false); // acabo de enviar: el mensaje nuevo se ve
   const pinned = useRef(true); // ¿se lee lo último? Se sigue; si no, se cuenta lo ajeno tras `seen`
-  const anchor = useRef<ReturnType<typeof lastSeen>>([]);
+  const anchor = useRef<ReturnType<typeof anchorOf>>([]);
   const chase = useRef({ on: false, top: 0 }); // el botón va al final: lo que llegue mientras, también
   const [atEnd, setAtEnd] = useState(true);
   const [seen, setSeen] = useState<string | null>(null);
+  // La región `status`: la cuenta anterior, si hay una subida por anunciar y lo que dice (0, nada).
+  const [voice, setVoice] = useState({ last: 0, due: false, said: 0 });
   const key = messagesKey(slug, conversation.id);
   const list = useInfiniteQuery<PaginatedMessageList, ApiError>({
     queryKey: key,
@@ -184,6 +200,13 @@ export function ChatPanel({
       : after < 0
         ? Infinity
         : rows.slice(after + 1).filter((message) => message.sender_user_id !== user.id).length;
+  const tell = (count: number) =>
+    count === Infinity ? t("chat.unseenMany") : t("chat.unseen", { count });
+  // El lector oye la llegada, no cada paso al bajar leyendo («2», «1»). Cada cambio vacía la región
+  // (quitar no se anuncia): una subida se oye aunque repita el número, y una ráfaga (o leer antes del
+  // plazo) se dice una vez con la última cuenta. En 0, vacía y callada.
+  if (voice.last !== unseen)
+    setVoice({ last: unseen, due: unseen > 0 && (voice.due || unseen > voice.last), said: 0 });
   // Envíos en pausa sin conexión (TanStack los suelta al volver la red): su burbuja lo dice.
   const paused = useMutationState({ filters: { status: "pending" }, select: pausedId });
   const problem = failed(list, t("denied"));
@@ -204,6 +227,13 @@ export function ChatPanel({
     kept.current = null;
   }, [rows.length, newest, pages, list.isFetchingNextPage]);
 
+  useEffect(() => {
+    if (!voice.due) return;
+    const say = () => setVoice((now) => ({ ...now, due: false, said: now.last }));
+    const timer = setTimeout(say, SAY);
+    return () => clearTimeout(timer);
+  }, [voice.due, voice.last]);
+
   useLayoutEffect(() => {
     const box = scroller.current;
     if (visible && atBottom.current && box) box.scrollTop = box.scrollHeight;
@@ -219,6 +249,9 @@ export function ChatPanel({
       if (box.scrollHeight === height.current) return;
       place(box, pinned.current || chase.current.on, anchor.current);
       height.current = box.scrollHeight;
+      // Sin `scroll` (creció dentro de la vista) las filas de abajo cambiaron de altura: se vuelve a
+      // medir. Oculto (`display: none`) todo mide 0: se guarda la de antes para cuando se vea.
+      if (box.clientHeight) anchor.current = anchorOf(box);
     });
     observer.observe(inner);
     return () => observer.disconnect();
@@ -266,7 +299,7 @@ export function ChatPanel({
     <div
       ref={panel}
       data-composing={composing || undefined}
-      className="group border-border bg-surface flex h-[calc(var(--keyboard-vh,100dvh)-8rem)] min-h-min flex-col rounded-lg border max-sm:data-composing:relative max-sm:data-composing:z-10 max-sm:data-composing:-mx-4 max-sm:data-composing:-mt-[92px] max-sm:data-composing:-mb-8 max-sm:data-composing:h-[var(--keyboard-vh,100dvh)] max-sm:data-composing:rounded-none max-sm:data-composing:border-0 lg:h-[calc(100dvh-18rem)] lg:min-h-[26rem]"
+      className="group border-border bg-surface flex h-[calc(var(--keyboard-vh,100dvh)-8rem)] min-h-min flex-col rounded-lg border max-sm:data-composing:relative max-sm:data-composing:z-10 max-sm:data-composing:-mx-(--shell-gutter) max-sm:data-composing:-mt-[calc(var(--shell-bar)+var(--shell-pad))] max-sm:data-composing:-mb-(--shell-pad) max-sm:data-composing:h-[var(--keyboard-vh,100dvh)] max-sm:data-composing:rounded-none max-sm:data-composing:border-0 lg:h-[calc(100dvh-18rem)] lg:min-h-[26rem]"
     >
       <header className="border-border relative flex shrink-0 flex-col gap-1 border-b p-2 lg:gap-2 lg:p-3">
         {/* Una sola fila que se parte en líneas. El DOM va en el orden de tabulación que se ve en
@@ -299,8 +332,6 @@ export function ChatPanel({
           <Button
             variant="ghost"
             className="border-border order-4 hidden size-11 border px-0 max-sm:group-data-composing:inline-flex"
-            aria-expanded="false"
-            onMouseDown={(event) => event.preventDefault()}
             onClick={() => (release(), refresh.current?.focus())}
           >
             <Ellipsis aria-hidden />
@@ -373,10 +404,10 @@ export function ChatPanel({
       {/* El aviso de «N mensajes nuevos» va antes que la región en el DOM, por encima de su pie: con
           teclado se llega a él sin pasar por cada «Guardar» o «Reintentar» del chat. */}
       <div className="relative flex min-h-0 flex-1 flex-col">
-        <div
-          role="status"
-          className="pointer-events-none absolute inset-x-0 bottom-2 z-10 flex justify-center"
-        >
+        <div className="pointer-events-none absolute inset-x-0 bottom-2 z-10 flex justify-center">
+          <p role="status" className="sr-only">
+            {voice.said ? tell(voice.said) : null}
+          </p>
           {unseen > 0 ? (
             <Button
               variant="primary"
@@ -393,7 +424,7 @@ export function ChatPanel({
               }}
             >
               <ArrowDown aria-hidden />
-              {unseen === Infinity ? t("chat.unseenMany") : t("chat.unseen", { count: unseen })}
+              {tell(unseen)}
             </Button>
           ) : null}
         </div>
@@ -418,7 +449,7 @@ export function ChatPanel({
             pinned.current = box.scrollHeight - box.scrollTop - box.clientHeight < END;
             if (pinned.current || box.scrollTop < chase.current.top) chase.current.on = false;
             chase.current.top = box.scrollTop;
-            anchor.current = lastSeen(box);
+            anchor.current = anchorOf(box);
             const read = lastSeen(box, PILL)[0]?.id;
             const shown = rows.findIndex(({ id }) => id === read);
             const upto = rows.findLastIndex(
@@ -460,6 +491,7 @@ export function ChatPanel({
           {t("copilot.excluded")}
         </p>
       ) : null}
+      {/* El redactor va el último del panel: `useComposing` lo reconoce así (nada después). */}
       {modes.reply || modes.note ? (
         <Composer
           inserter={inserter}

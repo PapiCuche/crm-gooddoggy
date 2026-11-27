@@ -2500,6 +2500,7 @@
       "label": "Mensajes",
       "choose": "Elige una conversación para ver sus mensajes.",
       "loading": "Cargando mensajes…",
+      "opening": "Cargando la conversación…",
       "empty": "Todavía no hay mensajes en esta conversación.",
       "older": "Cargar mensajes anteriores",
       "refresh": "Actualizar mensajes",

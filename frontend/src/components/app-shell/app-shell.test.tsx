@@ -91,6 +91,9 @@ describe("TenantGate", () => {
     const roles = within(main).getAllByRole("listitem");
     expect(roles.map((role) => role.textContent)).toEqual(["Owner", "Ventas"]); // nombres, no códigos
     expect(screen.getByRole("banner")).toHaveTextContent("Workspace › Inicio");
+    // Bajo 1024 px, las medidas que el chat compacto anula (UX-INBOX-03c): una sola definición.
+    expect(screen.getByRole("banner")).toHaveClass("h-(--shell-bar)", "px-(--shell-gutter)");
+    expect(main).toHaveClass("px-(--shell-gutter)", "py-(--shell-pad)");
     expect(document.title).toBe("Acme SAC · Good Doggy CRM");
     const skip = screen.getByRole("link", { name: "Saltar al contenido" });
     const target = document.querySelector(skip.getAttribute("href") ?? "");
