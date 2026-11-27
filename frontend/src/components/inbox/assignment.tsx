@@ -145,7 +145,9 @@ export function AssignmentActions({ detail }: { detail: ConversationDetail }) {
           {said.text}
         </p>
       ) : null}
-      {can && closed ? <p className="text-muted text-sm">{t("closed")}</p> : null}
+      {can && closed ? (
+        <p className="text-muted text-sm max-sm:group-data-composing:hidden">{t("closed")}</p>
+      ) : null}
       {acts ? (
         <div
           id={panel}

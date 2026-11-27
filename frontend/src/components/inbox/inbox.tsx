@@ -37,6 +37,7 @@ export function Inbox() {
     status: "",
     unanswered: false,
     platform: "",
+    account: "",
   });
   const wanted = useSearchParams()?.get("c") || null;
   const [picked, setPicked] = useState<{ slug: string; row: Conversation } | null>(null); // con su organización
@@ -53,6 +54,11 @@ export function Inbox() {
   if (why && why !== gone) setGone(why); // 401 (sin texto): la sesión lo resuelve
   if (selected && gone && !why) setGone(null); // p. ej., «adelante» hasta un `?c=` válido: el aviso ya no vale
   const chatShown = !!selected || (!!wanted && !notFound);
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setMounted(true)); // tras pintar la región vacía
+    return () => cancelAnimationFrame(frame);
+  }, []);
   useEffect(() => {
     if (!why) return;
     pushed.current = false;
@@ -172,9 +178,14 @@ export function Inbox() {
             </>
           ) : (
             <p className={cn("text-muted", !wanted && "max-lg:hidden")}>
-              {t(wanted ? "chat.loading" : "chat.choose")}
+              {t(wanted ? "chat.opening" : "chat.choose")}
             </p>
           )}
+          {/* Un enlace `?c=` anuncia que se abre: la región se monta vacía y se llena después (una
+              que aparece con su texto no siempre se anuncia). */}
+          <p role="status" className="sr-only">
+            {mounted && wanted && !selected && !notFound ? t("chat.opening") : ""}
+          </p>
         </section>
       </div>
     </section>
