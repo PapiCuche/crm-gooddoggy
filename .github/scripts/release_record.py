@@ -43,8 +43,8 @@ IMAGES_JOBS = ("images publish", "images attest")
 TIME = "%Y-%m-%dT%H:%M:%SZ"
 COMMON = ("sha", "base", "images-run-id", "release-env", "repo", "out")
 COMMANDS = {"images-run": ("sha", "repository", "runs"), "images-jobs": ("run-id", "jobs"), "prepare": COMMON,
-            "approve": (*COMMON, "fingerprint", "class", "prepared-at", "run-id", "approvals", "approvers", "actor",
-                        "triggering-actor")}
+            "approve": (*COMMON, "fingerprint", "class", "prepared-at", "run-id", "run-attempt", "repository",
+                        "approvals", "approvers", "actor", "triggering-actor")}
 OPTIONAL = {"repo", "approvers", "actor", "triggering-actor"}
 
 
@@ -150,7 +150,9 @@ def prepare(args: argparse.Namespace) -> tuple[dict, str]:
         f"- Huella del release.env: `{record['fingerprint']}` (run de images {record['images_run_id']})",
         f"- Preparado {record['prepared_at']}; la aprobación vale para este SHA y caduca a las 24 h (§5)", "",
         "## Migraciones del rango", "", *([f"- `{m}`" for m in migrations(report)] or ["- ninguna"]), "",
-        "## release.env", "", "```", *lines, "```", "", markdown(report),
+        "## release.env", "", "```", *lines, "```", "",
+        markdown(report).replace("Solo informativa en la fase 1 (ADR-048): no despliega, no aprueba y no bloquea nada.",
+                                 "Aquí la clase sí cuenta: con C o `none` no se pide aprobación (C sigue en fase 0)."),
     ]
     return record, "\n".join(summary)
 
@@ -184,8 +186,9 @@ def approved_by(entries: list, allowed: set[str], actors: set[str]) -> list[str]
 
 def approve(args: argparse.Namespace) -> dict:
     sha, base = sha_arg(args.sha, "sha"), sha_arg(args.base, "base")
-    if not re.fullmatch(r"[1-9][0-9]*", args.images_run_id) or not re.fullmatch(r"[1-9][0-9]*", args.run_id):
-        raise Refused("invalid run id")
+    if not all(re.fullmatch(r"[1-9][0-9]*", n) for n in (args.images_run_id, args.run_id, args.run_attempt)) or \
+            not re.fullmatch(r"[\w.-]+/[\w.-]+", args.repository):
+        raise Refused("invalid run id, run attempt or repository")
     try:
         prepared = dt.datetime.strptime(args.prepared_at, TIME).replace(tzinfo=dt.timezone.utc)
     except ValueError:
@@ -201,7 +204,8 @@ def approve(args: argparse.Namespace) -> dict:
     actors = {a.lower() for a in (args.actor, args.triggering_actor) if a}
     by = approved_by(load(args.approvals), approvers(args.approvers), actors)
     payload = {"schema": 1, "sha": sha, "fingerprint": args.fingerprint, "base": base, "class": cls,
-               "run_id": args.run_id, "images_run_id": args.images_run_id, "approved_by": by,
+               "repository": args.repository, "run_id": args.run_id, "run_attempt": args.run_attempt,
+               "images_run_id": args.images_run_id, "approved_by": by,
                "prepared_at": args.prepared_at, "approved_at": args.now.strftime(TIME),
                "expires_at": (args.now + VALID_FOR).strftime(TIME)}
     return {"ref": sha, "task": "crm-release", "environment": ENVIRONMENT, "auto_merge": False,

@@ -265,12 +265,14 @@ class ReleaseWorkflowTest(unittest.TestCase):
         self.assertIn("    needs: prepare\n", found["approve"])
         self.assertIn("    environment:\n      name: production\n      deployment: false\n", found["approve"])
         self.assertEqual(self.text.count("environment:"), 1)
+        self.assertRegex(self.text, r"(?m)^  cancel-in-progress: false\b")
         self.assertNotRegex(self.text, r"continue-on-error|secrets\.(?!GITHUB_TOKEN\b)|ssh|scp")
 
     def test_inputs_only_through_env(self):
         for block in run_blocks(self.text):
             self.assertNotIn("${{", block)
-        self.assertEqual(re.findall(r"\$\{\{\s*inputs\.(\w+)", self.text), ["sha", "base", "sha", "base"])
+        self.assertEqual(re.findall(r"\$\{\{\s*inputs\.(\w+)", self.text), ["sha", "base"] * 3)
+        self.assertIn('\nrun-name: "release ${{ inputs.sha }} base ${{ inputs.base }}"', self.text)  # lo exige el agente
         self.assertEqual(len(re.findall(r"(?m)^      (?:SHA|BASE): \$\{\{ inputs\.(?:sha|base) \}\}$", self.text)), 4)
 
     def test_main_checkout_runs_classifier_and_verifier(self):
@@ -278,7 +280,7 @@ class ReleaseWorkflowTest(unittest.TestCase):
         self.assertEqual(self.text.count("persist-credentials: false"), 2)
         self.assertNotRegex(self.text, r"(?m)^\s+ref:|uses:\s*\./|pip3? install|uv sync|npm|pnpm")
         self.assertIn("python3 .github/scripts/release_record.py prepare", self.text)
-        self.assertIn("python3 .github/scripts/release_record.py approve", self.text)
+        self.assertIn('--run-attempt "$GITHUB_RUN_ATTEMPT" --repository "$GITHUB_REPOSITORY"', self.text)
         self.assertIn('python3 infra/prod/verify_attestations.py --sha "$SHA"', self.text)
         verifier = (ROOT / "infra/prod/verify_attestations.py").read_text()
         version = re.search(r'GH_VERSION = "([\d.]+)"', verifier).group(1)

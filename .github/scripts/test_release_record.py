@@ -199,6 +199,7 @@ class PrepareAndApproveTest(unittest.TestCase):
 
     def approve(self, sha, prepared, now=NOW, entries=None, **over):
         args = {"--sha": sha, "--base": self.repo.base, "--images-run-id": "42", "--run-id": "9001",
+                "--run-attempt": "2", "--repository": REPO,
                 "--release-env": self.path("release.env", "\n".join(env_lines(sha))),
                 "--fingerprint": prepared["fingerprint"], "--class": prepared["class"],
                 "--prepared-at": prepared["prepared_at"], "--repo": self.repo.root,
@@ -220,6 +221,7 @@ class PrepareAndApproveTest(unittest.TestCase):
         self.assertIn("Rige la fase 0: el GO exacto por SHA", summary)
         self.assertIn("backend/apps/notes/migrations/0002_x.py", summary)
         self.assertIn(f"REVISION={self.repo.migration}", summary)
+        self.assertNotIn("no bloquea nada", summary)
 
     def test_prepare_refuses_class_c_none_backwards_and_outside_main(self):
         cases = {"class C": (self.repo.c, None), "none": (self.repo.docs, self.repo.c),
@@ -243,7 +245,8 @@ class PrepareAndApproveTest(unittest.TestCase):
             "required_contexts": [], "production_environment": True, "transient_environment": False,
             "description": f"Release {self.repo.a1[:12]} class A1, approved (ADR-048 §5)",
             "payload": {"schema": 1, "sha": self.repo.a1, "fingerprint": prepared["fingerprint"],
-                        "base": self.repo.base, "class": "A1", "run_id": "9001", "images_run_id": "42",
+                        "base": self.repo.base, "class": "A1", "repository": REPO, "run_id": "9001",
+                        "run_attempt": "2", "images_run_id": "42",
                         "approved_by": ["owner"], "prepared_at": "2026-11-27T15:00:00Z",
                         "approved_at": "2026-11-27T16:00:00Z", "expires_at": "2026-11-28T16:00:00Z"}})
 
@@ -261,7 +264,8 @@ class PrepareAndApproveTest(unittest.TestCase):
             "self-approval": {"--triggering-actor": "owner"},
             "actor approval": {"--actor": "Owner"},
             "no approvers": {"--approvers": ""},
-            "invalid run id": {"--run-id": "0"},
+            "invalid run id": {"--run-id": "0"}, "invalid run attempt": {"--run-attempt": "1 x"},
+            "invalid repository": {"--repository": "a/b/c"},
             "invalid images run id": {"--images-run-id": "42; x"},
             "invalid prepared_at": {"--prepared-at": "yesterday"},
             "invalid sha": {"--sha": "HEAD"},

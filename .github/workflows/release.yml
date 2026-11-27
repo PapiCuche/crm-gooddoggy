@@ -1,4 +1,5 @@
 name: release
+run-name: "release ${{ inputs.sha }} base ${{ inputs.base }}" # el agente del servidor lo exige igual
 
 # F1-20c (ADR-048 §4, §5 y §11): prepara un release de main y, tras la aprobación del propietario en el
 # entorno `production`, deja un registro de despliegue de GitHub con la tupla de §5. NO DESPLIEGA NADA: no
@@ -32,7 +33,7 @@ permissions: {}
 
 concurrency:
   group: release-production
-  cancel-in-progress: true
+  cancel-in-progress: false # nadie cancela una aprobación pendiente para cambiar de run
 
 env:
   GH_VERSION: "2.103.3" # el que exige infra/prod/verify_attestations.py
@@ -133,6 +134,7 @@ jobs:
           python3 .github/scripts/release_record.py approve --sha "$SHA" --base "$BASE" \
             --images-run-id "$IMAGES_RUN_ID" --release-env "$RUNNER_TEMP/images/release.env" \
             --fingerprint "$FINGERPRINT" --class "$CLASS" --prepared-at "$PREPARED_AT" --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" --repository "$GITHUB_REPOSITORY" \
             --approvals "$RUNNER_TEMP/approvals.json" --approvers "$CD_APPROVERS" --actor "$ACTOR" \
             --triggering-actor "$TRIGGERING_ACTOR" --out "$RUNNER_TEMP/deployment.json"
       - name: Registro de despliegue (datos; no despliega nada)
