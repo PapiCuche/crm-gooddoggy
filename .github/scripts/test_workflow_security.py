@@ -126,6 +126,12 @@ class ActionPinningTest(unittest.TestCase):
             if p.name != "images.yml":
                 self.assertNotRegex(p.read_text(), r"packages:\s*write", p.name)
 
+    def test_only_images_attests(self):
+        # F1-20b: ningún otro workflow (images-pr.yml incluido: código del PR) firma ni atesta nada.
+        for p in sorted(WORKFLOWS.glob("*.yml")):
+            if p.name != "images.yml":
+                self.assertNotRegex(p.read_text(), r"id-token|attestations:|actions/attest|cosign|sigstore", p.name)
+
 
 class ImagesWorkflowTest(unittest.TestCase):
     """F1-15 (ADR-033 §7): publica en GHCR con `packages: write`; la frontera no se puede ensanchar."""
@@ -140,13 +146,39 @@ class ImagesWorkflowTest(unittest.TestCase):
     def test_packages_write_only_in_publish_job(self):
         self.assertEqual(permissions(self.text), {"contents": "read"})
         found = jobs(self.text)
-        self.assertEqual(set(found), {"publish"})
+        self.assertEqual(set(found), {"publish", "attest"})
         self.assertEqual(job_permissions(found["publish"]), {"contents": "read", "packages": "write"})
         self.assertEqual(len(re.findall(r"packages:\s*write", self.text)), 1)
 
+    def test_attest_job_is_minimal(self):
+        # F1-20b (ADR-048 §7): firmar solo tras publish, solo en main, sin checkout ni código del repo, y
+        # sin tocar las imágenes (ni push-to-registry ni sesión en el registro).
+        attest = jobs(self.text)["attest"]
+        self.assertEqual(job_permissions(attest), {"id-token": "write", "attestations": "write"})
+        self.assertEqual(len(re.findall(r"(?m)^\s+(?:id-token|attestations):", self.text)), 2)
+        self.assertRegex(attest, r"(?m)^    needs: publish$")
+        self.assertRegex(attest, r"(?m)^    if: github\.event_name == 'push' && github\.ref == 'refs/heads/main'$")
+        self.assertEqual(run_blocks(attest), [])
+        self.assertNotRegex(attest, r"checkout|push-to-registry|docker|secrets\.|github-token|continue-on-error")
+        steps = re.findall(r"uses: (\S+) # v[\d.]+\n\s+with:\n\s+subject-name: (.+)\n\s+subject-digest: (.+)\n", attest)
+        self.assertEqual(len(re.findall(r"- name:", attest)), 3)
+        self.assertEqual(len(re.findall(r"(?m)^          \S", attest)), 6)  # solo subject-name y subject-digest
+        self.assertEqual(steps, [
+            ("actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6", f"${{{{ needs.publish.outputs.repo }}}}/{n}",
+             f"${{{{ needs.publish.outputs.{n} }}}}") for n in ("backend", "frontend", "proxy")
+        ])
+
+    def test_attested_digests_are_the_validated_release(self):
+        # Las salidas de publish se escriben después de validar release.env, desde los mismos digests.
+        self.assertIn('echo "$name=$digest" >> "$RUNNER_TEMP/digests"', self.text)
+        output = self.text.index('{ echo "repo=$repo"; cat "$RUNNER_TEMP/digests"; } >> "$GITHUB_OUTPUT"')
+        self.assertLess(self.text.index("grep -qxE 'REVISION=[0-9a-f]{40}' \"$release\""), output)
+        for name in ("repo", "backend", "frontend", "proxy"):
+            self.assertIn(f"{name}: ${{{{ steps.push.outputs.{name} }}}}", self.text)
+
     def test_no_secret_but_github_token(self):
         self.assertEqual(set(re.findall(r"\$\{\{\s*secrets\.(\w+)", self.text)), {"GITHUB_TOKEN"})
-        self.assertNotRegex(self.text, r"id-token|attestations:|pull_request|workflow_run")
+        self.assertNotRegex(self.text, r"pull_request|workflow_run")
 
     def test_no_expressions_in_run(self):
         for block in run_blocks(self.text):

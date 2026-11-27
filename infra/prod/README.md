@@ -64,6 +64,14 @@ La imagen del frontend se construye con `NEXT_PUBLIC_INBOX_WS=on` (F6-09): el In
 
 Los paquetes son **públicos** (ADR-033, decisión 8). GitHub crea cada paquete privado la primera vez. El propietario lo cambia a público una sola vez en la configuración del paquete. Mientras no lo haga, el job avisa. Con paquetes privados, se entra antes de desplegar con un token de solo lectura de paquetes: `sudo docker login ghcr.io`.
 
+### Atestaciones de procedencia (F1-20b, ADR-048 §7)
+
+Tras publicar, el job `attest` de `images.yml` firma una atestación de procedencia (SLSA v1, Sigstore) por imagen propia, solo en los push a `main`. Es el único job con `id-token: write` y `attestations: write`, y no hace checkout ni toca, sube o reetiqueta las imágenes. Si falla, las imágenes quedan publicadas **sin** atestación y el verificador bloquea ese release: se corrige con un commit nuevo.
+
+`python3 infra/prod/verify_attestations.py --sha <SHA> release.env` lo comprueba sin credenciales y solo lee. Sale con 0 solo si las tres imágenes tienen una atestación válida de `images.yml` en `refs/heads/main` para ese SHA y ese digest, y su etiqueta `org.opencontainers.image.revision` es el SHA. Cualquier otra cosa sale con 1: una atestación ausente o distinta, un error de red o un 403/429 de la cuota anónima de la API (60 por hora por IP, compartida con la otra aplicación; son 3 por ejecución, así que el agente lo ejecuta una vez por release). Necesita `gh` **2.103.3** exacto, sin sesión, instalado desde el tarball oficial `gh_2.103.3_linux_amd64.tar.gz` (sha256 `4c806978ffce1cec70853302a56d70ac6da4f19bae7adca4e1a8ab00633dd91d`, con `sha256sum --check`; `bin/gh` en `/usr/local/bin`). No va en ninguna imagen.
+
+**Todavía no se usa en producción.** Este cambio no lo instala ni lo ejecuta en el servidor. Eso llega con el agente (F1-20e1) y solo cuando el propietario habilite la fase 1 (ADR-048, enmienda E1). Hasta entonces rige el GO exacto por SHA.
+
 ## Desplegar
 
 En el servidor, con el checkout de `infra/prod` en el mismo commit que las imágenes y sin cambios locales. Siempre dentro de `tmux` (o `screen`), para que una sesión SSH perdida no corte el despliegue:
