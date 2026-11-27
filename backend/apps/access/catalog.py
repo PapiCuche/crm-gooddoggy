@@ -113,6 +113,11 @@ PERMISSIONS: tuple[PermissionDef, ...] = (  # docs/fase-0/03 §H (catálogo v1)
     # F8-08b (ADR-034 §10, D-F8-08): pedir sugerencias y resúmenes del copiloto. No sensible; al
     # nacer, solo el Owner: ninguna plantilla lo recibe hasta que el Owner lo conceda.
     PermissionDef("ai.use", "ai"),
+    # F11-02 (ADR-049 §8, D-F11-05): ver las reglas y el historial; cambiar modo y parámetros y
+    # reanudar; y solo pausar (sensible, como `ai.kill_switch`).
+    PermissionDef("automations.view", "automations"),
+    PermissionDef("automations.manage", "automations"),
+    PermissionDef("automations.kill_switch", "automations", is_sensitive=True),
 )
 BY_CODE = {permission.code: permission for permission in PERMISSIONS}
 
@@ -201,6 +206,9 @@ ROLE_TEMPLATES: tuple[RoleTemplate, ...] = (
             "channels.manage",  # 03 §H lo marca ⚙️ (lo activa el Owner); a confirmar
             "quick_replies.manage",  # F6-08a1; las ya clonadas no lo reciben (ADR-018 §3)
             "ai.kill_switch",  # F8-06, ADR-034 §10; las ya clonadas no lo reciben (ADR-018 §3)
+            "automations.view",  # F11-02, D-F11-05: administra; las ya clonadas no lo reciben
+            "automations.manage",
+            "automations.kill_switch",  # sensible; así cubre al Supervisor, como `ai.kill_switch`
         )
         | dict.fromkeys(
             (
@@ -235,6 +243,8 @@ ROLE_TEMPLATES: tuple[RoleTemplate, ...] = (
             "quotes.discount",  # puede ir bajo el costo sin que la cotización lo vea (a decidir)
             "conversations.assign",  # F6-01: reparte las de su equipo
             "ai.kill_switch",  # F8-06: solo apagar; sensible: MFA si MFA_ENFORCEMENT=enforce
+            "automations.view",  # F11-02, D-F11-05: lee y pausa, no cambia ni reanuda
+            "automations.kill_switch",
         )
         | {"contacts.view": Scope.TEAM}
         | {f"opportunities.{a}": Scope.TEAM for a in OPPORTUNITY_OPERATE}  # F5-04, 03 §H

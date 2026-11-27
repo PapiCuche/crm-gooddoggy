@@ -5,6 +5,7 @@ import {
   type QueryClient,
   type QueryKey,
   useMutation,
+  useMutationState,
   useQueryClient,
 } from "@tanstack/react-query";
 import { FileText, ImageIcon, Paperclip, RotateCw, Send, StickyNote, X } from "lucide-react";
@@ -14,6 +15,7 @@ import {
   type ReactNode,
   type RefObject,
   useEffect,
+  useEffectEvent,
   useId,
   useImperativeHandle,
   useRef,
@@ -38,7 +40,7 @@ import type {
   SendMessageRequest,
 } from "@/lib/api/model";
 import { type ApiErrorKey, apiErrorKey } from "@/lib/api-errors";
-import type { ApiError } from "@/lib/http";
+import { ApiError } from "@/lib/http";
 import { cn } from "@/lib/utils";
 
 import { useDraftsValue } from "./drafts";
@@ -78,7 +80,15 @@ const DROP_FILE_ON: ApiErrorKey[] = [
   "MEDIA_NOT_SUPPORTED_BY_CHANNEL",
 ];
 // `draft`: la clave del borrador al enviar; los callbacks corren aunque el cuadro ya no esté montado.
-type Outgoing = SendMessageRequest & { file?: File; draft: string };
+// `press`: el id del toque (UX-INBOX-06f).
+type Outgoing = SendMessageRequest & { file?: File; draft: string; press: string };
+// UX-INBOX-06f: un envío pulsado sin conexión sale al volver la red solo en los 5 min siguientes al
+// toque, medidos con el reloj de pared (`Date.now()` sigue contando con la pestaña o el equipo
+// dormidos; si el reloj retrocede, no se fía). Caducado o cancelado, se rechaza sin pedir nada.
+export const HOLD = 5 * 60_000;
+const fresh = (since: number, now = Date.now()) => now >= since && now - since < HOLD;
+const GONE = new ApiError(0, "SEND_NOT_STARTED"); // nunca se reintenta: `retry: false` y el toque
+
 // Un 409 de la política de envío: lo que cambió puede estar también en la conversación.
 const REFRESH_ON = [
   "CONVERSATION_CLOSED",
@@ -250,8 +260,18 @@ function ComposeBox({
   const text = useDraftsValue((all) => all.get(draft).text);
   const busy = useDraftsValue((all) => all.get(draft).sending);
   const unsure = useDraftsValue((all) => !!all.get(draft).attempt?.unsure);
+  const notice = useDraftsValue((all) => all.get(draft).notice ?? null);
+  const press = useDraftsValue((all) => all.get(draft).press ?? null);
+  const attemptId = useDraftsValue((all) => all.get(draft).attempt?.id ?? null);
+  // Retenido: pulsado, sin conexión (TanStack lo tiene en pausa) y su petición aún no salió.
+  const paused = useMutationState({ filters: { status: "pending" }, select: pausedId });
+  const held = press && !press.started && attemptId && paused.includes(attemptId) ? press : null;
+  const [now, setNow] = useState(() => Date.now());
   const setText = (next: string | ((current: string) => string)) =>
-    drafts.update(draft, ({ text }) => ({ text: typeof next === "string" ? next : next(text) }));
+    drafts.update(draft, ({ text }) => ({
+      text: typeof next === "string" ? next : next(text),
+      notice: null,
+    }));
   const forget = (sent: Outgoing) =>
     drafts.update(sent.draft, ({ attempt }) =>
       attempt?.id === sent.client_message_id ? { attempt: null } : {},
@@ -322,8 +342,52 @@ function ComposeBox({
     field.setSelectionRange(field.value.length, field.value.length);
   }, [placed]);
 
+  // Devuelve un toque que no salió (caducado o cancelado): el texto y el archivo siguen en el cuadro y
+  // el intento conserva su id; no es «dudoso», no hubo petición. Solo el toque vigente y sin salir.
+  // Un reintento de algo que ya salió no dice «no se envió nada»: lo anterior pudo llegar. El aviso
+  // queda en el borrador (se ve al volver); el archivo solo sigue si el cuadro sigue montado.
+  const release = (at: string, id: string, why: "expired" | "cancelled") => {
+    const { press: current, attempt } = drafts.get(at);
+    if (current?.id !== id || current.started) return;
+    const kept = String(file !== null && box.current !== null);
+    const notice = t(`held.${why}`, {
+      note: String(note),
+      file: kept,
+      retry: String(!!current.retry),
+    });
+    drafts.update(at, () => ({ sending: false, press: null, notice }));
+    const mine = `pending-${attempt?.id}`;
+    client.setQueryData<Pages>(key, (data) =>
+      edit(data, (rows) => rows.filter((row) => row.id !== mine)),
+    );
+  };
+  const expire = useEffectEvent((at: number) => {
+    setNow(at);
+    if (!held || fresh(held.since, at)) return;
+    const focus = document.activeElement;
+    release(draft, held.id, "expired");
+    // Con el foco en «Cancelar» (que se va) o en ninguna parte, vuelve al cuadro, como al cancelar.
+    if (focus === document.body || box.current?.form?.contains(focus)) box.current?.focus();
+  });
+  useEffect(() => {
+    if (!held) return;
+    const tick = () => expire(Date.now()); // cada segundo se vuelve a leer el reloj de pared
+    const first = setTimeout(tick, 0);
+    const timer = setInterval(tick, 1000);
+    return () => (clearTimeout(first), clearInterval(timer));
+  }, [held]);
+
   const send = useMutation<Message, ApiError, Outgoing>({
-    mutationFn: ({ file: attached, client_message_id, body }) => {
+    mutationFn: ({ file: attached, client_message_id, body, draft: at, press }) => {
+      // Sale solo el toque vigente, una vez y dentro del plazo; desde aquí no se cancela.
+      const current = drafts.get(at).press;
+      if (current?.id !== press || current.started || !fresh(current.since)) {
+        return Promise.reject(GONE);
+      }
+      drafts.update(at, ({ attempt }) => ({
+        press: { ...current, started: true },
+        attempt: attempt && { ...attempt, sent: true },
+      }));
       const request = { client_message_id, body }; // la clave del borrador no va a la API
       // Sin respuesta en el plazo es un error de red: libera el cuadro; el reintento lleva el id.
       const options = { signal: AbortSignal.timeout(attached ? 120_000 : 30_000) };
@@ -343,7 +407,11 @@ function ComposeBox({
             )
           : conversationMessagesSend(slug, conversation.id, request, options);
     },
-    onSettled: (_done, _error, request) => drafts.update(request.draft, () => ({ sending: false })),
+    // Un toque viejo que vuelve tras cancelarse no suelta el candado de otro más nuevo.
+    onSettled: (_done, _error, request) =>
+      drafts.update(request.draft, ({ press }) =>
+        press?.id === request.press ? { sending: false, press: null } : {},
+      ),
     onMutate: async (request) => {
       await client.cancelQueries({ queryKey: key });
       onQueued();
@@ -395,6 +463,7 @@ function ComposeBox({
       box.current?.focus();
     },
     onError: (error, request) => {
+      if (error === GONE) return release(request.draft, request.press, "expired"); // nada salió
       client.setQueryData<Pages>(key, (data) =>
         edit(data, (rows) =>
           rows.filter(({ id }) => id !== `pending-${request.client_message_id}`),
@@ -457,8 +526,10 @@ function ComposeBox({
       tried = { id: uuid(), first: text, media: file !== null };
     }
     sentFile.current = file;
-    drafts.update(draft, () => ({ attempt: tried, sending: true }));
-    send.mutate({ client_message_id: tried.id, body: text, file: file ?? undefined, draft });
+    const pressed = { id: uuid(), since: Date.now(), retry: !!tried.sent };
+    drafts.update(draft, () => ({ attempt: tried, sending: true, press: pressed, notice: null }));
+    const request = { client_message_id: tried.id, body: text, draft, press: pressed.id };
+    send.mutate({ ...request, file: file ?? undefined });
   };
   // Solo JPEG, PNG o PDF dentro de su tope; si no, se explica y el archivo no queda adjunto.
   const pick = (chosen: File | undefined) => {
@@ -483,6 +554,9 @@ function ComposeBox({
     submit();
   };
   const idle = note ? t("save") : t("send");
+  const left = held ? Math.max(0, Math.min(HOLD, held.since + HOLD - now)) : 0;
+  const retry = String(!!held?.retry);
+  const clock = `${Math.floor(Math.ceil(left / 1000) / 60)}:${String(Math.ceil(left / 1000) % 60).padStart(2, "0")}`;
   // En menos de 640 px el formulario es una cuadrícula de dos columnas: la respuesta lleva el cuadro
   // y un botón de icono en la misma fila; la nota, el cuadro y debajo su aviso con «Guardar nota».
   const first = tabbed ? "max-sm:row-start-1" : "max-sm:row-start-2";
@@ -508,7 +582,7 @@ function ComposeBox({
         <Send aria-hidden />
       )}
       <span className={note ? undefined : "max-sm:sr-only"}>
-        {busy ? t(note ? "saving" : "sending") : problem ? t("retry") : idle}
+        {busy ? t(held ? "held.button" : note ? "saving" : "sending") : problem ? t("retry") : idle}
       </span>
     </Button>
   );
@@ -598,8 +672,13 @@ function ComposeBox({
           </Button>
         </div>
       ) : null}
+      {/* Retenido: se anuncia al empezar y una vez por minuto, no cada segundo. */}
       <p role="status" className="sr-only">
-        {busy ? t(note ? "saving" : "sending") : ""}
+        {held
+          ? t("held.status", { note: String(note), retry, minutes: Math.ceil(left / 60_000) })
+          : busy
+            ? t(note ? "saving" : "sending")
+            : ""}
       </p>
       {/* El tope se anuncia solo al cruzar el 90 % y el 100 %: el texto depende del nivel, no de la cuenta. */}
       <p aria-live="polite" className="sr-only">
@@ -688,9 +767,28 @@ function ComposeBox({
           {t("unsure.warning")} {confirmed ? t(file ? "unsure.file" : "unsure.text") : null}
         </p>
       ) : null}
-      {saved ? (
+      {held ? (
+        <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-sm max-sm:col-span-2">
+          <p aria-hidden className="min-w-0 flex-1 font-medium">
+            {t("held.countdown", { note: String(note), retry, time: clock })}
+          </p>
+          <Button
+            type="button"
+            variant="ghost"
+            className="border-border h-11 border"
+            aria-label={t("held.cancelLabel", { note: String(note) })}
+            onClick={() => {
+              release(draft, held.id, "cancelled");
+              box.current?.focus();
+            }}
+          >
+            {t("held.cancel")}
+          </Button>
+        </div>
+      ) : null}
+      {saved || notice ? (
         <p role="status" className="text-sm max-sm:col-span-2">
-          {saved}
+          {saved ?? notice}
         </p>
       ) : null}
       {problem || refusal ? (

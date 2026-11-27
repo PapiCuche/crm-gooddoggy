@@ -15,7 +15,7 @@ import { TenantProvider } from "@/components/app-shell/tenant-context";
 import type { Conversation, Grant, Message, SelfContext } from "@/lib/api/model";
 import { hangPosts, mockApi, renderApp } from "@/test-utils";
 
-import { keepPending, messagesKey, pausedId } from "./composer";
+import { HOLD, keepPending, messagesKey, pausedId } from "./composer";
 import { Inbox } from "./inbox";
 
 // Cada vez que se dibuja una fila de la lista (el punto de su red solo está en la fila): UX-INBOX-04b.
@@ -743,9 +743,9 @@ describe("sin conexión y reintentos (UX-INBOX-06c)", () => {
     await type("Hola Rosa");
     fireEvent.click(sendButton());
     const list = await log();
-    expect(await within(list).findByText("Sin conexión: se enviará al reconectar")).toBeVisible();
+    expect(await within(list).findByText("Sin conexión: aún no se envió")).toBeVisible();
     expect(within(list).queryByText("En cola")).toBeNull(); // no se afirma lo que no pasó
-    fireEvent.click(sendButton("Enviando…")); // el candado sigue: ni un segundo envío
+    fireEvent.click(sendButton("En espera")); // el candado sigue: ni un segundo envío
     await settle();
     expect(s.posts()).toEqual([]);
     expect(timeout).not.toHaveBeenCalled(); // el plazo de 30 s no corre mientras espera
@@ -766,8 +766,8 @@ describe("sin conexión y reintentos (UX-INBOX-06c)", () => {
     act(() => onlineManager.setOnline(false));
     await type("Llamar mañana", "Nota interna");
     fireEvent.click(sendButton("Guardar nota"));
-    expect(await screen.findByText("Sin conexión: se guardará al reconectar")).toBeVisible();
-    expect(screen.queryByText(/se enviará/)).toBeNull();
+    expect(await screen.findByText("Sin conexión: aún no se guardó")).toBeVisible();
+    expect(screen.queryByText(/aún no se envió/)).toBeNull();
   });
 
   it("la respuesta se perdió tras guardarse: el reintento lleva su id y se ve una sola burbuja", async () => {
@@ -870,5 +870,243 @@ describe("sin conexión y reintentos (UX-INBOX-06c)", () => {
     expect(kept.map(({ id }) => id)).toEqual(["pending-a", "s1"]);
     const empty = { results: [], next: null };
     expect(keepPending(client, messagesKey("acme", "3"), empty)).toBe(empty);
+  });
+});
+
+describe("envío retenido sin conexión: 5 minutos o «Cancelar» (UX-INBOX-06f)", () => {
+  let clock = 0; // el reloj de pared (`Date.now`); los temporizadores siguen siendo los reales
+  beforeEach(() => {
+    clock = Date.parse("2026-11-26T15:00:00Z");
+    vi.spyOn(Date, "now").mockImplementation(() => clock);
+  });
+  afterEach(() => onlineManager.setOnline(true));
+  const online = (on: boolean) => act(() => onlineManager.setOnline(on));
+  const cancel = () => screen.queryByRole("button", { name: "Cancelar envío" });
+  const picker = () => document.querySelector<HTMLInputElement>('input[type="file"]')!;
+  const png = new File(["x"], "foto.png", { type: "image/png" });
+  const hold = async (text = "Hola Rosa", file?: File) => {
+    online(false);
+    await type(text);
+    if (file) fireEvent.change(picker(), { target: { files: [file] } });
+    fireEvent.click(sendButton());
+    await waitFor(() => expect(cancel()).toBeVisible());
+  };
+  const pressedIds = (client: QueryClient) =>
+    client
+      .getMutationCache()
+      .getAll()
+      .map(({ state }) => (state.variables as { client_message_id: string }).client_message_id);
+  const back = (text = "Hola Rosa") =>
+    waitFor(async () => {
+      expect(await box()).toHaveValue(text);
+      expect(await box()).not.toHaveAttribute("readonly");
+    });
+
+  it("dentro de los 5 min sale una sola vez al reconectar, con su id; dice cuánto falta", async () => {
+    const s = server();
+    const { client } = show();
+    await openChat();
+    await hold();
+    expect(
+      screen.getByText(/aún no se envió\. Se enviará solo si vuelve la conexión en 5:00/),
+    ).toBeVisible();
+    fireEvent.click(sendButton("En espera")); // doble toque: el candado sigue
+    fireEvent.click(sendButton("En espera"));
+    clock += HOLD - 1;
+    expect(await screen.findByText(/conexión en 0:01;/)).toBeVisible();
+    expect(screen.getByText(/en menos de 1 minuto\./)).toHaveClass("sr-only");
+    online(true);
+    await waitFor(() => expect(box()).resolves.toHaveValue(""));
+    await settle();
+    expect(s.ids()).toEqual(pressedIds(client));
+    expect(s.posts()).toHaveLength(1);
+  });
+
+  it("a los 5 min justos no sale: vuelve al cuadro, sin burbuja ni alerta; un tab dormido igual", async () => {
+    const s = server();
+    show();
+    await openChat();
+    await hold();
+    clock += HOLD; // el equipo durmió: ningún temporizador corrió
+    online(true);
+    expect(
+      await screen.findByText(
+        "No se envió: pasaron 5 minutos sin conexión. El texto sigue en el cuadro.",
+      ),
+    ).toBeVisible();
+    await back();
+    await settle();
+    expect(s.posts()).toEqual([]);
+    expect(screen.queryByRole("alert")).toBeNull();
+    const shown = screen
+      .queryAllByText("Hola Rosa")
+      .filter(({ tagName }) => tagName !== "TEXTAREA");
+    expect(shown).toEqual([]); // sin la burbuja
+    expect(sendButton()).toBeEnabled(); // «Enviar», no «Reintentar»
+  });
+
+  it("si el reloj retrocede no se fía: no sale", async () => {
+    const s = server();
+    show();
+    await openChat();
+    await hold();
+    clock -= 1000;
+    online(true);
+    await back();
+    await settle();
+    expect(s.posts()).toEqual([]);
+  });
+
+  it("sin red, caduca sola a los 5 min; lo soltado nunca sale después, y el reintento lleva su id", async () => {
+    const s = server();
+    const { client } = show();
+    await openChat();
+    await hold();
+    act(() => cancel()!.focus());
+    clock += HOLD;
+    expect(await screen.findByText(/^No se envió: pasaron 5 minutos/)).toBeVisible();
+    expect(cancel()).toBeNull();
+    expect(await box()).toHaveFocus(); // el foco no queda en <body>
+    await back();
+    for (const on of [true, false, true, false, true]) online(on);
+    await settle();
+    expect(s.posts()).toEqual([]); // la mutación soltada sigue en la caché y no pide nada
+    fireEvent.click(sendButton());
+    await waitFor(() => expect(s.posts()).toHaveLength(1));
+    expect(new Set([...s.ids(), ...pressedIds(client)]).size).toBe(1);
+  });
+
+  it("«Cancelar» no envía nada; un toque nuevo sale una vez y el viejo no suelta su candado", async () => {
+    const s = server();
+    const { client } = show();
+    await openChat();
+    await hold();
+    fireEvent.click(cancel()!);
+    expect(
+      await screen.findByText("Cancelado: no se envió nada. El texto sigue en el cuadro."),
+    ).toBeVisible();
+    await back();
+    expect(await box()).toHaveFocus();
+    fireEvent.click(sendButton()); // sigue sin red: otro toque, otra espera
+    await waitFor(() => expect(cancel()).toBeVisible());
+    s.wait();
+    online(true);
+    await waitFor(() => expect(s.posts()).toHaveLength(1));
+    await settle();
+    expect(await box()).toHaveAttribute("readonly"); // en vuelo: el toque cancelado no lo libera
+    expect(cancel()).toBeNull(); // ya salió: no se promete cancelarlo
+    s.go();
+    await waitFor(() => expect(box()).resolves.toHaveValue(""));
+    expect(s.posts()).toHaveLength(1);
+    expect(new Set([...s.ids(), ...pressedIds(client)]).size).toBe(1); // el mismo id
+  });
+
+  it("en cuanto la petición sale, «Cancelar» se va y los 5 min no la tocan; en línea ni aparece", async () => {
+    const s = server();
+    const inner = s.api.getMockImplementation()!;
+    const shownAtSend: boolean[] = []; // tras el render que dispara el envío, antes de su respuesta
+    s.api.mockImplementation(async (input, init) => {
+      if (init?.method === "POST") {
+        await Promise.resolve();
+        await Promise.resolve();
+        shownAtSend.push(cancel() !== null);
+      }
+      return inner(input, init);
+    });
+    show();
+    await openChat();
+    await hold();
+    s.wait();
+    clock += HOLD - 1;
+    online(true);
+    await waitFor(() => expect(s.posts()).toHaveLength(1));
+    expect(shownAtSend).toEqual([false]);
+    clock += HOLD;
+    await act(() => new Promise((resolve) => setTimeout(resolve, 1100)));
+    expect(cancel()).toBeNull();
+    expect(screen.queryByText(/^No se envió/)).toBeNull();
+    expect(await box()).toHaveAttribute("readonly");
+    s.go();
+    await waitFor(() => expect(box()).resolves.toHaveValue(""));
+    const flashes: boolean[] = [];
+    const watcher = new MutationObserver(() => flashes.push(cancel() !== null));
+    watcher.observe(document.body, { subtree: true, childList: true });
+    await type("Otra");
+    fireEvent.click(sendButton()); // con red: sale sin retención
+    await waitFor(() => expect(box()).resolves.toHaveValue(""));
+    watcher.disconnect();
+    expect(flashes.filter(Boolean)).toEqual([]);
+    expect(s.posts()).toHaveLength(2);
+  });
+
+  it("cambiar de conversación: solo vuelve el borrador de la suya, sin tocar los otros", async () => {
+    const s = server();
+    show();
+    await openChat();
+    await hold("Hola Rosa", png); // el archivo es del cuadro: al volver ya no está ni se promete
+    await openChat(/Juan Pérez/);
+    await type("Hola Juan");
+    clock += HOLD;
+    online(true); // caduca sin su cuadro a la vista
+    await settle();
+    expect(await box()).toHaveValue("Hola Juan");
+    await openChat();
+    await back();
+    const why = "No se envió: pasaron 5 minutos sin conexión. El texto sigue en el cuadro.";
+    expect(await screen.findByText(why)).toBeVisible(); // caducó sin el cuadro: el aviso se guardó
+    await openChat(/Juan Pérez/);
+    expect(await box()).toHaveValue("Hola Juan");
+    expect(screen.queryByText(why)).toBeNull();
+    expect(s.api.mock.calls.filter(([, init]) => init?.method === "POST")).toEqual([]);
+  });
+
+  it("un reintento de algo que ya salió no dice «no se envió nada» al cancelar ni al caducar", async () => {
+    const s = server();
+    const inner = s.api.getMockImplementation()!;
+    s.api.mockImplementation(async (input, init) => {
+      if (init?.method !== "POST") return inner(input, init);
+      s.stored.push(saved("s1", "Hola Rosa")); // se guardó y la respuesta se perdió
+      throw new TypeError("Failed to fetch");
+    });
+    show();
+    await openChat();
+    await type("Hola Rosa");
+    fireEvent.click(sendButton());
+    expect(await screen.findByRole("alert")).toHaveTextContent("No hay conexión con el servidor");
+    online(false);
+    fireEvent.click(sendButton("Reintentar"));
+    await waitFor(() => expect(cancel()).toBeVisible());
+    expect(
+      screen.getByText(/este reintento aún no salió \(el anterior pudo llegar\)/, {
+        ignore: ".sr-only",
+      }),
+    ).toBeVisible();
+    fireEvent.click(cancel()!);
+    const retried =
+      /este reintento no salió\. Revisa la conversación: el intento anterior pudo llegar\./;
+    expect(await screen.findByText(retried)).toBeVisible();
+    expect(screen.queryByText(/no se envió nada|^No se envió/)).toBeNull();
+    fireEvent.click(sendButton()); // sigue sin red: caduca
+    await waitFor(() => expect(cancel()).toBeVisible());
+    clock += HOLD;
+    expect(await screen.findByText(/^Este reintento no salió: pasaron 5 minutos/)).toBeVisible();
+    expect(s.posts()).toHaveLength(1);
+  });
+
+  it("con archivo: cancelar deja texto y archivo, sin «dudoso», y el siguiente toque usa su id", async () => {
+    const s = server();
+    const { client } = show();
+    await openChat();
+    await hold("Mira", png);
+    fireEvent.click(cancel()!);
+    expect(await screen.findByText(/El texto y el archivo siguen en el cuadro\.$/)).toBeVisible();
+    expect(screen.getByText("foto.png")).toBeVisible();
+    expect(screen.queryByText(/Puede que el archivo/)).toBeNull();
+    online(true);
+    fireEvent.click(sendButton()); // un solo toque: sin el aviso de dos toques
+    const media = () => s.api.mock.calls.filter(([url]) => String(url).endsWith("/1/media/"));
+    await waitFor(() => expect(media()).toHaveLength(1));
+    const sent = (media()[0]![1]!.body as FormData).get("client_message_id");
+    expect(new Set([sent, ...pressedIds(client)]).size).toBe(1);
   });
 });

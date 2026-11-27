@@ -52,6 +52,11 @@ register_converter(SocialPlatform, "social")
 urlpatterns = [
     path("conversations/", conversations.ConversationsView.as_view(), name="conversations"),
     path(
+        "conversations/accounts/",
+        conversations.AccountOptionsView.as_view(),
+        name="conversations-accounts",
+    ),
+    path(
         "conversations/unanswered/",
         conversations.UnansweredCountView.as_view(),
         name="conversations-unanswered",

@@ -10,6 +10,10 @@ import type { ConversationsUnansweredCountPlatform } from "./conversationsUnansw
 
 export type ConversationsUnansweredCountParams = {
   /**
+   * UX-INBOX-02d: solo las de esa cuenta (`channel.id`). Una que no se ve deja la lista vacía, igual que una que no existe.
+   */
+  account?: string;
+  /**
    * `all` (por omisión), `mine` (asignadas a quien consulta) o `unassigned`.
    *
    * * `all` - all

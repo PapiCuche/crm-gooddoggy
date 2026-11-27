@@ -124,6 +124,7 @@ Se comprueban al empezar la pasada y otra vez antes de cada sujeto. Pausar a mit
 - Aparece `apps.automations` (L4, junto a `ai_agents`), con tres tablas, un barrido de beat cada 60 s, tres permisos y una pantalla de ajustes. Las tareas ganan `conversation_id` y `quote_id` y un punto de entrada protegido para el sistema.
 - `conversations` gana `awaiting_reply_since`, que también le sirve al Inbox («esperando hace 25 min»). Depende de #1093 y de cómo quede «Sin responder».
 - `automation_runs.task_ids` es una lista sin FK. La tarea no se borra (borrado lógico), así que la referencia no queda colgando. Si hace falta integridad referencial, una tabla puente (`automation_run_tasks`) la da sin contract.
+- `automation_runs.recipients` también es una lista sin FK (ids de miembro): cada tarea exige un miembro activo al crearse (`lock_active_member`), pero la lista guardada no tiene integridad referencial. Lo mismo `subject_id`, que es polimórfico (conversación o cotización). Nota de F11-02 ([#1176](https://github.com/PapiCuche/crm-gooddoggy/issues/1176)).
 - El generador de tareas automáticas puede llenar «Mis tareas». Los topes por persona y por pasada, la simulación previa y el cierre automático lo contienen.
 - Cuando llegue el motor genérico, reutilizará `automation_runs` (idempotencia, reintentos, DEAD), los interruptores, los permisos y las acciones. Sus reglas serán filas con `key = 'custom'` y columnas nuevas (expand).
 - No cambia ADR-002, ADR-010 ni el outbox.

@@ -349,9 +349,9 @@ describe("asignación en la pantalla (F6-05b)", () => {
     const s = server({ status: "CLOSED" });
     show();
     await openChat();
-    expect(
-      await header().findByText("La conversación está cerrada: no se puede asignar."),
-    ).toBeVisible();
+    const said = await header().findByText("La conversación está cerrada: no se puede asignar.");
+    expect(said).toBeVisible();
+    expect(said).toHaveClass("max-sm:group-data-composing:hidden"); // escribiendo, con la fila
     for (const name of ["Tomar", "Soltar", "Transferir"]) {
       expect(header().queryByRole("button", { name })).toBeNull();
     }
