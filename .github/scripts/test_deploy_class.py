@@ -199,7 +199,10 @@ class DeployClassTest(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertIn(top(r["class"] for r in path_reasons(rules, path)), ("B", "C"))
         for path in ("infra/prod/Caddyfile.shared", "infra/prod/compose.shared.yaml", "infra/prod/deploy.sh",
-                     "infra/prod/host-mode.sh", ".github/scripts/deploy_class_rules.json"):
+                     "infra/prod/host-mode.sh", ".github/scripts/deploy_class_rules.json",
+                     # el verificador del agente del servidor (F1-20e1): un release B no puede cambiarlo
+                     "infra/prod/cd_agent.py", "infra/prod/verify_attestations.py", "infra/prod/cd-preflight.sh",
+                     ".github/scripts/deploy_class.py", ".github/scripts/release_record.py"):
             with self.subTest(path=path):
                 self.assertEqual(top(r["class"] for r in path_reasons(rules, path)), "C")
 

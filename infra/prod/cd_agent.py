@@ -52,6 +52,7 @@ BOT = ("github-actions[bot]", "Bot", 41898282)  # the only creator of a crm-rele
 WORKFLOW = ".github/workflows/release.yml"
 JOBS = ("release prepare", "release approve")
 EVERY = 120  # seconds between polls (§11)
+STATE_DIR = "/var/lib/crm-cd"
 NUM = re.compile(r"[1-9][0-9]{0,19}")
 DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 TOKEN = re.compile(r"[A-Za-z0-9_]{20,255}")
@@ -171,7 +172,7 @@ def release_env_of(blob: bytes) -> str:
 class Agent:
     def __init__(self, conf: dict, gh: GitHub, now: dt.datetime, log=print) -> None:
         self.conf, self.gh, self.now, self.log = conf, gh, now, log
-        self.state = pathlib.Path(conf.get("STATE_DIR", "/var/lib/crm-cd"))
+        self.state = pathlib.Path(conf.get("STATE_DIR", STATE_DIR))
         self.git_dir = conf.get("GIT_DIR", str(ROOT))
 
     def api(self, path: str):
@@ -265,6 +266,7 @@ class Agent:
         jobs = one_per_name(self.api(f"actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100"),
                             int(run_id), JOBS, int(attempt))
         approved_at = when(jobs["release approve"].get("started_at"), "approve job started_at")
+        prepared_at = when(jobs["release prepare"].get("started_at"), "prepare job started_at")
         if not dt.timedelta(0) <= self.now - approved_at <= rr.VALID_FOR:
             raise Refused("approval expired: the approve job started more than 24 h ago (§5)")
         by = rr.approved_by(self.api(f"actions/runs/{run_id}/approvals"),
@@ -275,12 +277,19 @@ class Agent:
         runs = self.api(f"actions/workflows/images.yml/runs?head_sha={sha}&per_page=100")
         if str(rr.images_run(runs, sha, REPO)) != images_id:
             raise Refused("images_run_id is not THE images run of the SHA")
+        images = runs["workflow_runs"][0]  # a re-run after prepare can publish other digests (§5)
+        if images.get("run_attempt") != 1 and not when(images.get("run_started_at"), "images run start") < prepared_at:
+            raise Refused("images run re-run after the preparation (§5)")
         one_per_name(self.api(f"actions/runs/{images_id}/jobs?filter=latest&per_page=100"), int(images_id),
                      rr.IMAGES_JOBS)
         artifacts = self.api(f"actions/runs/{images_id}/artifacts?name=release-env").get("artifacts")
         if not isinstance(artifacts, list) or len(artifacts) != 1 or artifacts[0].get("name") != "release-env" \
                 or artifacts[0].get("expired") is not False:
             raise Refused("images run: not exactly one live release-env artifact")
+        made = artifacts[0].get("workflow_run") or {}
+        if made.get("id") != int(images_id) or made.get("head_sha") != sha or \
+                not when(artifacts[0].get("created_at"), "artifact created_at") < prepared_at:
+            raise Refused("release-env artifact not of that run or created after the preparation (§5)")
         artifact = num(artifacts[0].get("id"), "artifact id")
         lines = rr.release_env(release_env_of(self.gh.get(f"/repos/{REPO}/actions/artifacts/{artifact}/zip",
                                                           raw=True)[0]), sha)
@@ -327,16 +336,24 @@ def run(argv: list[str], timeout: int, log=None) -> bool:
 
 def write(path: pathlib.Path, text: str) -> None:
     tmp = path.with_name(path.name + ".tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+    tmp.unlink(missing_ok=True)  # never reuse a stale .tmp (or its mode)
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
     with os.fdopen(fd, "w") as handle:
         handle.write(text)
+        handle.flush()
+        os.fsync(handle.fileno())
     os.replace(tmp, path)
+
+
+def drop(state: str) -> None:
+    pathlib.Path(state, "deployable.json").unlink(missing_ok=True)
 
 
 def once(config: str, opener=None, now: dt.datetime | None = None) -> int:
     try:
+        drop(STATE_DIR)  # first: an unreadable or missing cd.conf must not leave an old verdict
         conf = parse(private_file(config, secret=False))
-        pathlib.Path(conf.get("STATE_DIR", "/var/lib/crm-cd"), "deployable.json").unlink(missing_ok=True)
+        drop(conf.get("STATE_DIR", STATE_DIR))
         if conf.get("MODE") != "approve":
             print("mode off: no polling and nothing deployable (only MODE=approve polls; auto is phase 2)")
             return 0

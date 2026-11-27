@@ -103,18 +103,20 @@ class AgentTest(unittest.TestCase):
         self.jobs = {"total_count": 2, "jobs": [job("release prepare", started=2), job("release approve")]}
         self.images_jobs = {"total_count": 2, "jobs": [job(n, 42) for n in rr.IMAGES_JOBS]}
         self.approvals = [approval("owner")]
+        self.images_runs = run_json(self.sha, run_attempt=1, run_started_at=t(4))
+        self.artifact = {"id": 5, "name": "release-env", "expired": False, "created_at": t(3),
+                         "workflow_run": {"id": 42, "head_sha": self.sha}}  # before prepare (2 h ago)
         self.routes = {
             DEPLOYMENTS: [self.record], "actions/runs/7": self.run,
             "actions/runs/7/attempts/1/jobs?per_page=100": self.jobs, "actions/runs/7/approvals": self.approvals,
-            f"actions/workflows/images.yml/runs?head_sha={self.sha}&per_page=100": run_json(self.sha),
+            f"actions/workflows/images.yml/runs?head_sha={self.sha}&per_page=100": self.images_runs,
             "actions/runs/42/jobs?filter=latest&per_page=100": self.images_jobs,
-            "actions/runs/42/artifacts?name=release-env": {"artifacts": [{"id": 5, "name": "release-env",
-                                                                          "expired": False}]},
+            "actions/runs/42/artifacts?name=release-env": {"artifacts": [self.artifact]},
             "actions/artifacts/5/zip": zipped("\n".join(env_lines(self.sha)) + "\n"),
         }
         self.opener = Opener(self.routes)
         self.argv = []
-        for name, value in (("REMOTE_RE", re.compile(".+")),  # a local path stands in for the https remote
+        for name, value in (("REMOTE_RE", re.compile(".+")), ("STATE_DIR", str(self.state)),  # a local path stands in for the https remote
                             ("PREFLIGHT", [sys.executable, "-c", "print('PREFLIGHT OK')"]),
                             ("ATTEST", [sys.executable, "-c", "import sys; sys.exit(sys.argv[1:3] != ['--sha', "
                                         f"'{self.sha}'])"])):
@@ -138,9 +140,10 @@ class AgentTest(unittest.TestCase):
             self.assertEqual(req.unredirected_hdrs["Authorization"], f"Bearer {TOKEN}")
         self.assertNotIn(TOKEN, repr(self.argv))
 
-    def cycle(self, now=NOW, **settings):
-        self.conf.write_text("".join(f"{k}={v}\n" for k, v in {**self.settings, **settings}.items()))
-        self.conf.chmod(0o644)
+    def cycle(self, now=NOW, mode=0o644, **settings):
+        if mode:
+            self.conf.write_text("".join(f"{k}={v}\n" for k, v in {**self.settings, **settings}.items()))
+            self.conf.chmod(mode)
         out = io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
             code = agent.once(str(self.conf), self.opener, now)
@@ -161,6 +164,8 @@ class AgentTest(unittest.TestCase):
         self.run["display_title"] = f"release {sha} base {self.base}"
 
     def test_deployable_only_with_every_check_green(self):
+        (self.state / "deployable.json.tmp").write_text("stale")
+        (self.state / "deployable.json.tmp").chmod(0o666)  # a stale .tmp never lends its mode
         code, text = self.cycle()
         self.assertEqual(code, 0, text)
         self.assertIn(f"DEPLOYABLE record 900: {self.sha} class A1", text)
@@ -171,16 +176,20 @@ class AgentTest(unittest.TestCase):
         self.assertFalse(any("deploy.sh" in " ".join(a) for a, _ in self.argv))  # never deploys
 
     def test_any_mode_but_approve_is_off_without_network(self):
-        (self.state / "deployable.json").write_text("{}")
+        other = self.state.with_name("other")  # a STATE_DIR other than the default is cleared too
+        other.mkdir()
         for mode in ("off", "auto", "AUTO", "", "deploy", "approve,auto"):
             with self.subTest(mode=mode):
-                self.refused("mode off", MODE=mode)
+                (other / "deployable.json").write_text("{}")
+                self.refused("mode off", MODE=mode, STATE_DIR=str(other))
+                self.assertFalse((other / "deployable.json").exists())
         self.assertEqual((self.opener.requests, self.argv), ([], []))
 
     def test_forged_records_from_anywhere_but_release_yml_on_main(self):
         cases = [(self.record["creator"], {"login": "owner", "type": "User", "id": 1}, "github-actions[bot]"),
                  (self.record, {"task": "deploy"}, "not a crm-release record"),
                  (self.record, {"ref": self.repo.docs}, "record sha/ref differ"),
+                 (self.record["creator"], {"id": 1}, "github-actions[bot]"),  # a user can take the login
                  (self.run, {"path": ".github/workflows/ci.yml"}, "release run: path"),
                  (self.run, {"event": "push"}, "release run: event"),
                  (self.run, {"head_branch": "feature"}, "release run: head_branch"),
@@ -285,7 +294,14 @@ class AgentTest(unittest.TestCase):
         self.token.chmod(0o600)
         self.token.write_text(f"GITHUB_TOKEN={TOKEN}\n")
         self.refused("no valid CD_GITHUB_TOKEN", code=1)
+        for bad in ("short", f"{TOKEN} x", f"{TOKEN}:x"):
+            self.token.write_text(f"CD_GITHUB_TOKEN={bad}\n")
+            self.refused("no valid CD_GITHUB_TOKEN", code=1)
         self.token.write_text(f"CD_GITHUB_TOKEN={TOKEN}\n")
+        self.refused("must be a regular file of root, mode go-w", code=1, mode=0o664)  # group-writable cd.conf
+        link = self.token.with_name("link")
+        link.symlink_to(self.token)
+        self.refused("not deployable: OSError", code=1, TOKEN_FILE=str(link))  # O_NOFOLLOW
         self.assertEqual(self.opener.requests, [])
         with mock.patch.object(agent, "REMOTE_RE", REMOTE_RE):
             self.refused("GIT_REMOTE must be", code=1, GIT_REMOTE=f"https://x:{TOKEN}@github.com/a/b")
@@ -294,6 +310,36 @@ class AgentTest(unittest.TestCase):
         self.assertTrue(REMOTE_RE.fullmatch(agent.REMOTE))
         with self.assertRaises(agent.Refused):
             agent.HttpsOnly().redirect_request(None, None, 302, "", {}, "http://blob.example/x")
+
+    def test_images_rerun_after_the_preparation_is_refused(self):
+        # A re-run of the same images run (same id, still green) with a new artifact and a forged record that
+        # carries the new fingerprint: the digests are not the approved ones (ADR-048 §5).
+        lines = env_lines(self.sha, BACKEND_IMAGE=f"{rr.REGISTRY}/backend@sha256:{'b' * 64}")
+        self.routes["actions/artifacts/5/zip"] = zipped("\n".join(lines))
+        self.record["payload"]["fingerprint"] = rr.fingerprint(lines)
+        self.artifact["created_at"] = t(1.5)
+        self.refused("created after the preparation")
+        for change, reason in (({"workflow_run": {"id": 43, "head_sha": self.sha}}, "not of that run"),
+                               ({"workflow_run": {"id": 42, "head_sha": self.repo.docs}}, "not of that run"),
+                               ({"created_at": None}, "artifact created_at is not")):
+            with self.subTest(change=change), mock.patch.dict(self.artifact, {"created_at": t(3), **change}):
+                self.refused(reason)
+        self.artifact["created_at"] = t(3)
+        self.images_runs["workflow_runs"][0].update(run_attempt=2, run_started_at=t(1.5))
+        self.refused("images run re-run after the preparation")
+        self.images_runs["workflow_runs"][0].update(run_attempt=1, run_started_at=t(4))
+        self.artifact["expired"] = True
+        self.refused("not exactly one live release-env artifact")
+
+    def test_incomplete_job_list(self):
+        self.jobs["total_count"] = 3  # another page exists: a duplicate could hide there
+        self.refused("incomplete list")
+
+    def test_no_old_verdict_survives_an_unreadable_or_missing_config(self):
+        for breaks in (lambda: self.conf.chmod(0o666), self.conf.unlink):
+            self.assertIn("DEPLOYABLE", self.cycle()[1])
+            breaks()
+            self.refused("not deployable", code=1, mode=None)
 
 
 if __name__ == "__main__":
