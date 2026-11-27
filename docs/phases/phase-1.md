@@ -61,6 +61,15 @@ Previos transversales: [#3](https://github.com/PapiCuche/crm-gooddoggy/issues/3)
 | F1-20i | [#1175](https://github.com/PapiCuche/crm-gooddoggy/issues/1175) Verificación de punta a punta en entorno seguro | `chore/cd-phase-1-safe-rehearsal` | #1173, #1174 |
 
 - **Hecho en F1-20d ([#1169](https://github.com/PapiCuche/crm-gooddoggy/issues/1169)):** `infra/prod/cd-preflight.sh`, de solo lectura y cerrado ante lo que no puede comprobar: backup, disco, memoria y swap, carga, producción sana, lock, marca de parada, incidente abierto (API pública de GitHub, sin credenciales), ventana de la fase 1 en hora de Lima, feriados del Perú y `/etc/crm/deploy-freeze`. Prueba con un servidor simulado (`test-cd-preflight.sh`, en `infra-prod.yml`). Solo se usará cuando el propietario habilite la fase 1; no se ha ejecutado en producción.
+- **Hecho en F1-20c ([#1171](https://github.com/PapiCuche/crm-gooddoggy/issues/1171)):** `.github/workflows/release.yml`, a mano (`workflow_dispatch` con `sha` y `base`) e **inerte** hasta que el propietario ponga `CD_RELEASE_ENABLED=true`.
+  - **prepare** (sin entorno ni secretos) comprueba lo siguiente con el código de `main` (`release_record.py`, el clasificador y el verificador de atestaciones):
+    - el rango;
+    - el `release.env` del único run de `images.yml` del SHA, bajado por su id (`images.yml` lo sube como artefacto `release-env`, 30 días);
+    - la huella, la clase y las atestaciones.
+    - Con clase C o `none` no pide aprobación.
+  - **approve** (`environment: production`, `deployment: false`) vuelve a calcular la huella y la clase. Solo acepta la aprobación de un login de `CD_APPROVERS` que no lanzó el run, dentro de las 24 h. Entonces deja un registro de despliegue con la tupla de §5, que caduca a las 24 h.
+  - **No despliega nada.** Permisos: solo `contents: read`, `actions: read` y `deployments: write`, fijados en `test_workflow_security.py`. `release_record.py` es clase B en la tabla del clasificador.
+  - **Probado sin entorno real:** pruebas y ensayo local contra la historia, las atestaciones y la API reales (sin escribir nada). Las comprobaciones en vivo son pasos del propietario: #1198 y #1175.
 
 La parte del propietario (identidades, entorno `production`, token, avisos y la habilitación expresa) es el checklist F1-20g ([#1198](https://github.com/PapiCuche/crm-gooddoggy/issues/1198)).
 

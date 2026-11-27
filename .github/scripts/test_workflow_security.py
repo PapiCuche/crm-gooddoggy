@@ -176,6 +176,17 @@ class ImagesWorkflowTest(unittest.TestCase):
         for name in ("repo", "backend", "frontend", "proxy"):
             self.assertIn(f"{name}: ${{{{ steps.push.outputs.{name} }}}}", self.text)
 
+    def test_release_env_artifact_after_validation(self):
+        # F1-20c: release.yml lee el release.env de este artefacto, por el id del run; solo digests y REVISION.
+        publish = jobs(self.text)["publish"]
+        step = re.search(r"- name: release\.env como artefacto[^\n]*\n((?:        .*\n)+)", publish).group(1)
+        self.assertEqual(step, "        uses: actions/upload-artifact@"
+                         "cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2\n"
+                         "        with:\n          name: release-env\n          path: ${{ runner.temp }}/release.env\n"
+                         "          if-no-files-found: error\n          retention-days: 30\n")
+        self.assertLess(publish.index("grep -qxE 'REVISION=[0-9a-f]{40}' \"$release\""), publish.index(step))
+        self.assertEqual(self.text.count("upload-artifact"), 1)
+
     def test_no_secret_but_github_token(self):
         self.assertEqual(set(re.findall(r"\$\{\{\s*secrets\.(\w+)", self.text)), {"GITHUB_TOKEN"})
         self.assertNotRegex(self.text, r"pull_request|workflow_run")
@@ -224,6 +235,79 @@ class DeployClassWorkflowTest(unittest.TestCase):
         self.assertEqual(permissions(self.text), {"contents": "read"})
         self.assertEqual([job_permissions(b) for b in jobs(self.text).values()], [{}])
         self.assertNotRegex(self.text, r"secrets\.|environment:|continue-on-error")
+
+
+class ReleaseWorkflowTest(unittest.TestCase):
+    """F1-20c (ADR-048 §4, §5, §11): inerte hasta que el propietario lo habilite; nunca despliega."""
+
+    text = (WORKFLOWS / "release.yml").read_text()
+    guard = "    if: vars.CD_RELEASE_ENABLED == 'true' && github.ref == 'refs/heads/main'"
+
+    def test_only_manual_dispatch(self):
+        self.assertEqual(triggers(self.text), {"workflow_dispatch"})
+        self.assertNotRegex(self.text, r"pull_request|workflow_run|workflow_call|schedule|push:")
+
+    def test_permissions_are_minimal(self):
+        self.assertRegex(self.text, r"(?m)^permissions: \{\}$")
+        found = jobs(self.text)
+        self.assertEqual(set(found), {"prepare", "approve"})
+        self.assertEqual(job_permissions(found["prepare"]), {"contents": "read", "actions": "read"})
+        self.assertEqual(job_permissions(found["approve"]),
+                         {"contents": "read", "actions": "read", "deployments": "write"})
+        for p in sorted(WORKFLOWS.glob("*.yml")):  # el registro y el entorno, solo aquí
+            if p.name != "release.yml":
+                self.assertNotRegex(p.read_text(), r"deployments:|environment:", p.name)
+
+    def test_inert_until_enabled_and_without_automatic_deployment(self):
+        found = jobs(self.text)
+        for block in found.values():
+            self.assertEqual(re.findall(r"(?m)^    if: .*$", block), [self.guard])
+        self.assertIn("    needs: prepare\n", found["approve"])
+        self.assertIn("    environment:\n      name: production\n      deployment: false\n", found["approve"])
+        self.assertEqual(self.text.count("environment:"), 1)
+        self.assertNotRegex(self.text, r"continue-on-error|secrets\.(?!GITHUB_TOKEN\b)|ssh|scp")
+
+    def test_inputs_only_through_env(self):
+        for block in run_blocks(self.text):
+            self.assertNotIn("${{", block)
+        self.assertEqual(re.findall(r"\$\{\{\s*inputs\.(\w+)", self.text), ["sha", "base", "sha", "base"])
+        self.assertEqual(len(re.findall(r"(?m)^      (?:SHA|BASE): \$\{\{ inputs\.(?:sha|base) \}\}$", self.text)), 4)
+
+    def test_main_checkout_runs_classifier_and_verifier(self):
+        self.assertEqual(self.text.count("actions/checkout@"), 2)
+        self.assertEqual(self.text.count("persist-credentials: false"), 2)
+        self.assertNotRegex(self.text, r"(?m)^\s+ref:|uses:\s*\./|pip3? install|uv sync|npm|pnpm")
+        self.assertIn("python3 .github/scripts/release_record.py prepare", self.text)
+        self.assertIn("python3 .github/scripts/release_record.py approve", self.text)
+        self.assertIn('python3 infra/prod/verify_attestations.py --sha "$SHA"', self.text)
+        verifier = (ROOT / "infra/prod/verify_attestations.py").read_text()
+        version = re.search(r'GH_VERSION = "([\d.]+)"', verifier).group(1)
+        self.assertRegex(self.text, rf'(?m)^  GH_VERSION: "{re.escape(version)}"')
+        self.assertRegex(self.text, r'(?m)^  GH_SHA256: "[0-9a-f]{64}"$')
+        self.assertLess(self.text.index("sha256sum --check --strict"), self.text.index("tar -xzf"))
+
+    def test_release_env_only_from_the_selected_images_run(self):
+        downloads = re.findall(r"gh run download [^\n]+", self.text)
+        tail = '--repo "$GITHUB_REPOSITORY" --name release-env --dir "$RUNNER_TEMP/images"'
+        self.assertEqual(downloads, [f'gh run download "$run_id" {tail}', f'gh run download "$IMAGES_RUN_ID" {tail}'])
+        self.assertNotIn("download-artifact", self.text)
+        prepare = jobs(self.text)["prepare"]
+        self.assertLess(prepare.index("images-jobs --run-id"), prepare.index("gh run download"))
+        self.assertLess(prepare.index("verify_attestations.py"), prepare.index('>> "$GITHUB_OUTPUT"'))
+
+    def test_record_only_after_the_checks(self):
+        approve = jobs(self.text)["approve"]
+        self.assertEqual(len(re.findall(r"--method POST", self.text)), 1)
+        self.assertLess(approve.index("/approvals"), approve.index("release_record.py approve"))
+        self.assertLess(approve.index("release_record.py approve"), approve.index('deployments" --input'))
+        self.assertRegex(approve, r"set -euo pipefail\n\s+python3 -c .+IMAGES_RUN_ID")
+
+
+class InputsNeverInRunTest(unittest.TestCase):
+    def test_no_inputs_expression_in_any_run(self):
+        for p in sorted(WORKFLOWS.glob("*.yml")):
+            for block in run_blocks(p.read_text()):
+                self.assertNotRegex(block, r"\$\{\{[^}]*\binputs\.", p.name)
 
 
 class ImagesPullRequestTest(unittest.TestCase):

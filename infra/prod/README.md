@@ -73,6 +73,15 @@ Tras publicar, el job `attest` de `images.yml` firma una atestación de proceden
 
 **Todavía no se usa en producción.** Este cambio no lo instala ni lo ejecuta en el servidor. Eso llega con el agente (F1-20e1) y solo cuando el propietario habilite la fase 1 (ADR-048, enmienda E1). Hasta entonces rige el GO exacto por SHA.
 
+### Preparar y aprobar un release (F1-20c, ADR-048 §4, §5 y §11)
+
+`images.yml` sube además el `release.env` como artefacto `release-env` (30 días). `.github/workflows/release.yml` se lanza a mano (`workflow_dispatch`, entradas `sha` y `base`) y **no despliega nada**: no tiene secretos ni acceso al servidor.
+
+- **Inerte** mientras la variable del repositorio `CD_RELEASE_ENABLED` no valga `true`: sus dos jobs se saltan. Solo corre en `main`.
+- **prepare** (sin entorno; `contents` y `actions` de lectura) toma el único run de `images.yml` de ese SHA (push a `main` en este repositorio, con `publish` y `attest` en `success`), baja su `release-env` **por el id de ese run** y, con el código de `main` (`.github/scripts/release_record.py`, `deploy_class.py` y `verify_attestations.py`), comprueba `base → sha → main`, el formato del `release.env`, la clase de `(base, sha]` y las atestaciones. Clase C, `none` o cualquier error: no pide aprobación. Deja un resumen con la huella, la clase, las migraciones y los digests.
+- **approve** (`environment: production` con `deployment: false`, además `deployments: write`) espera el clic del propietario. Después vuelve a calcular la huella y la clase. Rechaza si no hay aprobación, si hay un rechazo o si quien aprobó no está en `CD_APPROVERS` o lanzó el run. También rechaza si pasaron más de 24 h desde la preparación. Si todo pasa, crea un registro de despliegue (`task: crm-release`) con la tupla de §5 y `expires_at` a las 24 h de la aprobación.
+- **Sin autoaprobación:** el propietario es el único revisor del entorno, con «Prevent self-review» y sin bypass de administradores. `GITHUB_TOKEN` no puede aprobar, y el agente del servidor vuelve a comprobar `CD_APPROVERS`. Mientras los agentes usen el token del propietario, el clic no prueba nada: la configuración es del propietario (#1198).
+
 ## Desplegar
 
 En el servidor, con el checkout de `infra/prod` en el mismo commit que las imágenes y sin cambios locales. Siempre dentro de `tmux` (o `screen`), para que una sesión SSH perdida no corte el despliegue:
