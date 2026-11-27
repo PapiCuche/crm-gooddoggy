@@ -1675,6 +1675,69 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/automations/runs/:
+    get:
+      operationId: automations_runs_list
+      description: El historial de ejecuciones, lo más reciente primero (ADR-016),
+        con `automations.view`. El sujeto lleva su id y su número solo si `conversations.view`
+        o `quotes.view` de quien consulta lo cubre; si no, `visible = false` y ninguno
+        de los dos.
+      parameters:
+      - name: cursor
+        in: query
+        required: false
+        description: El `next` de la página anterior. Sin él, la primera página.
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        description: Filas por página.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+          default: 50
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - automations
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedAutomationRunList'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/branches/:
     get:
       operationId: branches_list
@@ -13435,6 +13498,105 @@ components:
       description: |-
         * `conversation.unanswered` - conversation.unanswered
         * `quote.no_response` - quote.no_response
+    AutomationRun:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        rule_key:
+          type: string
+        rule_version:
+          type: integer
+        subject:
+          $ref: '#/components/schemas/AutomationSubject'
+        episode_at:
+          type: string
+          format: date-time
+        step:
+          type: integer
+          description: '1: aviso; 2: escalado.'
+        mode:
+          $ref: '#/components/schemas/AutomationModeEnum'
+        status:
+          $ref: '#/components/schemas/AutomationRunStatusEnum'
+        reason:
+          type: string
+          nullable: true
+          description: Un código cerrado.
+        recipients:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: Ids de miembro.
+        task_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+        attempts:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        closed_at:
+          type: string
+          format: date-time
+          nullable: true
+      required:
+      - attempts
+      - closed_at
+      - created_at
+      - episode_at
+      - id
+      - mode
+      - reason
+      - recipients
+      - rule_key
+      - rule_version
+      - status
+      - step
+      - subject
+      - task_ids
+    AutomationRunStatusEnum:
+      enum:
+      - DONE
+      - SKIPPED
+      - FAILED
+      - DEAD
+      - CLOSED
+      type: string
+      description: |-
+        * `DONE` - Done
+        * `SKIPPED` - Skipped
+        * `FAILED` - Failed
+        * `DEAD` - Dead
+        * `CLOSED` - Closed
+    AutomationSubject:
+      type: object
+      properties:
+        type:
+          type: string
+          description: '`conversation` o `quote`.'
+        id:
+          type: string
+          format: uuid
+          nullable: true
+          readOnly: true
+          description: 'null: sin acceso.'
+        number:
+          type: string
+          nullable: true
+        visible:
+          type: boolean
+          readOnly: true
+          description: 'false: «sin acceso».'
+      required:
+      - id
+      - number
+      - type
+      - visible
     AutomationSwitch:
       type: object
       properties:
@@ -16765,6 +16927,20 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/AuditEntry'
+        next:
+          type: string
+          nullable: true
+          description: Cursor de la página siguiente; `null` en la última.
+    PaginatedAutomationRunList:
+      type: object
+      required:
+      - results
+      - next
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/AutomationRun'
         next:
           type: string
           nullable: true

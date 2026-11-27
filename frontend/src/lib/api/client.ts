@@ -41,6 +41,7 @@ import type {
   AuditListParams,
   AutomationSwitch,
   Automations,
+  AutomationsRunsListParams,
   Batch,
   BatchCreateRequest,
   Branch,
@@ -131,6 +132,7 @@ import type {
   OrganizationSummary,
   PaginatedAccountOptionList,
   PaginatedAuditEntryList,
+  PaginatedAutomationRunList,
   PaginatedBatchLineList,
   PaginatedBranchList,
   PaginatedBrandList,
@@ -4007,6 +4009,160 @@ export const useAutomationsRuleUpdate = <TError = ErrorType<Error>, TContext = u
 > => {
   return useMutation(getAutomationsRuleUpdateMutationOptions(options), queryClient);
 };
+
+export const getAutomationsRunsListUrl = (orgSlug: string, params?: AutomationsRunsListParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : String(value));
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/v1/o/${orgSlug}/automations/runs/?${stringifiedParams}`
+    : `/api/v1/o/${orgSlug}/automations/runs/`;
+};
+
+/**
+ * El historial de ejecuciones, lo más reciente primero (ADR-016), con `automations.view`. El sujeto lleva su id y su número solo si `conversations.view` o `quotes.view` de quien consulta lo cubre; si no, `visible = false` y ninguno de los dos.
+ */
+export const automationsRunsList = async (
+  orgSlug: string,
+  params?: AutomationsRunsListParams,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<PaginatedAutomationRunList> => {
+  return apiFetch<PaginatedAutomationRunList>(getAutomationsRunsListUrl(orgSlug, params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getAutomationsRunsListQueryKey = (
+  orgSlug: string,
+  params?: AutomationsRunsListParams,
+) => {
+  return [`/api/v1/o/${orgSlug}/automations/runs/`, ...(params ? [params] : [])] as const;
+};
+
+export const getAutomationsRunsListQueryOptions = <
+  TData = Awaited<ReturnType<typeof automationsRunsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: AutomationsRunsListParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof automationsRunsList>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getAutomationsRunsListQueryKey(orgSlug, params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof automationsRunsList>>> = ({ signal }) =>
+    automationsRunsList(orgSlug, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: orgSlug !== null && orgSlug !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof automationsRunsList>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type AutomationsRunsListQueryResult = NonNullable<
+  Awaited<ReturnType<typeof automationsRunsList>>
+>;
+export type AutomationsRunsListQueryError = ErrorType<Error>;
+
+export function useAutomationsRunsList<
+  TData = Awaited<ReturnType<typeof automationsRunsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params: undefined | AutomationsRunsListParams,
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof automationsRunsList>>, TError, TData>
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof automationsRunsList>>,
+          TError,
+          Awaited<ReturnType<typeof automationsRunsList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useAutomationsRunsList<
+  TData = Awaited<ReturnType<typeof automationsRunsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: AutomationsRunsListParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof automationsRunsList>>, TError, TData>
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof automationsRunsList>>,
+          TError,
+          Awaited<ReturnType<typeof automationsRunsList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useAutomationsRunsList<
+  TData = Awaited<ReturnType<typeof automationsRunsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: AutomationsRunsListParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof automationsRunsList>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function useAutomationsRunsList<
+  TData = Awaited<ReturnType<typeof automationsRunsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: AutomationsRunsListParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof automationsRunsList>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getAutomationsRunsListQueryOptions(orgSlug, params, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
 
 export const getBranchesListUrl = (orgSlug: string, params?: BranchesListParams) => {
   const normalizedParams = new URLSearchParams();
