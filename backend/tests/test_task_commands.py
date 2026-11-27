@@ -332,4 +332,5 @@ def test_the_migration_goes_back_and_forward(world: SimpleNamespace, migrator: D
     assert migrator.execute(exists).fetchone() == (True,)
     assert migrator.execute(
         "SELECT count(*) FROM pg_constraint WHERE conrelid = 'tasks'::regclass AND contype = 'f'"
-    ).fetchone() == (8,)
+        " AND convalidated"
+    ).fetchone() == (10,)  # F11-03: y la conversación y la cotización, validadas (0003)

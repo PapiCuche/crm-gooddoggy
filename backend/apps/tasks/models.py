@@ -63,6 +63,10 @@ class Task(TenantModel):
         db_constraint=False,
         db_index=False,
     )
+    # F11-03 (ADR-049 §4): la conversación o la cotización de una tarea automática. FKs compuestas
+    # en la migración 0002 (`NOT VALID`, validadas en la 0003); solo las escribe `automation`.
+    conversation_id = models.UUIDField(null=True, blank=True)
+    quote_id = models.UUIDField(null=True, blank=True)
     due_at = models.DateTimeField(null=True, blank=True)
     is_all_day = models.BooleanField(default=False)
     reminder_at = models.DateTimeField(null=True, blank=True)
