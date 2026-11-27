@@ -9,22 +9,35 @@ después de `conversations_reply_guard`, de la `0061`, así que ve la marca ya c
 1. fuera de «Sin responder» la deja en `NULL` (una respuesta que cuenta, resuelta o cerrada);
 2. si ya esperaba y tenía su hora, la conserva: el episodio sigue (otro mensaje del cliente, una
    respuesta que falló, una asignación);
-3. si el episodio empieza con un mensaje del cliente, la hora de ese mensaje (`last_message_at`);
+3. si el episodio empieza con un mensaje del cliente, el `created_at` de ese mensaje (el entrante
+   más reciente: `record_inbound` lo crea antes de escribir la conversación);
 4. si no (una respuesta en cola que termina `FAILED`, o una fila de antes de esta migración), el
-   primer mensaje del cliente después de la última respuesta que cuenta (no `FAILED`, o
-   `PROVIDER_UNKNOWN`: pudo salir), con `messages_org_conversation_idx`; sin ninguno visible (sin
-   el contexto de la organización, RLS oculta los mensajes), `last_message_at`.
-Nunca rechaza una escritura, así que la imagen anterior (al migrar o tras volver atrás, ADR-033
-§7) sigue escribiendo igual y la columna queda bien también con lo que ella escribe.
+   `created_at` del primer mensaje del cliente después de la última respuesta que cuenta (no
+   `FAILED`, o `PROVIDER_UNKNOWN`: pudo salir; una nota interna no es respuesta).
+Los pasos 3 y 4 leen la misma columna del mismo mensaje, así que una respuesta que falla devuelve
+exactamente la hora del episodio (`episode_at` de ADR-049 forma parte de una clave única). Las dos
+consultas usan `messages_org_conversation_idx`; si no ven ningún mensaje del cliente, la hora es
+`last_message_at`. Nunca rechaza una escritura, así que la imagen anterior (al migrar o tras volver
+atrás, ADR-033 §7) sigue escribiendo igual y la columna queda bien también con lo que ella escribe.
 
-Aproximaciones conocidas (solo afectan a avisos internos; también en `docs/phases/phase-11.md`):
+Aproximaciones conocidas (solo afectan a avisos internos; también en `docs/phases/phase-11.md`, que
+el barrido de F11-05 debe tener en cuenta):
 - a) el paso 4 no ve una resolución: si se resolvió sin responder, el cliente volvió a escribir y
   la respuesta siguiente falla, la hora es la del mensaje anterior a la resolución (dice más espera
   de la real);
-- b) si el cliente escribe mientras una respuesta sigue en cola y luego esa respuesta falla, la
-  conversación no se vuelve a escribir y la hora queda en el mensaje más reciente (dice menos);
-- c) volver a «Sin responder» sin un mensaje nuevo (hoy ningún comando lo hace) toma
-  `last_message_at`.
+- b) si el cliente escribe mientras una respuesta sigue en cola y luego esa respuesta falla (también
+  si el fallo y el mensaje llegan a la vez), la conversación no se vuelve a escribir y la hora queda
+  en el mensaje más reciente (dice menos);
+- c) volver a «Sin responder» sin un mensaje nuevo (hoy ningún comando lo hace) toma la hora del
+  último mensaje del cliente;
+- d) una respuesta enviada fuera del CRM (`FOREIGN_ECHO` de `delivery`: otra app o la bandeja
+  nativa) no termina la espera, y tampoco las respuestas de otra app en un hilo en `standby`;
+- e) la confirmación automática de una baja o un alta (`queue_confirmation`, remitente `SYSTEM`) sí
+  la termina, como cuenta en «Sin responder»;
+- f) `messages.created_at` lo pone el reloj de cada proceso (web y worker pueden estar en hosts
+  distintos), no el de la base;
+- g) tras un `save()`, el objeto en memoria puede tener un valor viejo: quien la use (F11-05) vuelve
+  a leer la fila.
 
 `lock_timeout` de 5 s: si no consigue el bloqueo, la migración falla entera (es atómica) y se
 puede repetir. Hacia atrás: el disparador, la función y la columna."""
@@ -53,7 +66,11 @@ BEGIN
         RETURN NEW;
     END IF;
     IF since IS NULL AND NOT was AND NEW.last_message_direction = 'INBOUND' THEN
-        since := NEW.last_message_at;
+        since := (  -- el mensaje que abre el episodio: la misma fuente que el paso 4
+            SELECT max(i.created_at) FROM public.messages i
+            WHERE i.organization_id = NEW.organization_id AND i.conversation_id = NEW.id
+              AND i.direction = 'INBOUND'
+        );
     END IF;
     IF since IS NULL THEN
         since := coalesce((

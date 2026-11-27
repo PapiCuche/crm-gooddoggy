@@ -80,7 +80,7 @@ def test_the_first_customer_message_starts_the_wait_and_the_episode_keeps_it(
     first, _ = inbound(world)
     convo = SimpleNamespace(pk=first.conversation_id)
     start = since(migrator, convo)
-    assert start is not None and start == clock(migrator, convo)  # la llegada del mensaje
+    assert start == first.created_at  # la hora del mensaje que abre el episodio
     inbound(world, "wamid.2")  # otro mensaje del cliente: el mismo episodio
     assert since(migrator, convo) == start and clock(migrator, convo) > start
     run(world, commands.add_note, conversation_id=convo.pk, body="Llamar luego")
@@ -99,8 +99,7 @@ def test_a_reply_ends_the_wait_and_a_failed_one_brings_back_the_start_of_the_epi
     reply, _ = outbound(world, convo)
     assert since(migrator, convo) is None  # en cola cuenta (#1093) hasta que falle
     move(world, reply, "FAILED", "PROVIDER_REJECTED")
-    assert since(migrator, convo) == first.created_at  # el episodio, no la hora de la respuesta
-    assert start <= since(migrator, convo) < clock(migrator, convo)
+    assert since(migrator, convo) == start == first.created_at  # la misma hora, exacta
     inbound(world, "wamid.3")  # el cliente insiste: sigue el mismo
     assert since(migrator, convo) == first.created_at
     again, _ = outbound(world, convo)
@@ -108,10 +107,21 @@ def test_a_reply_ends_the_wait_and_a_failed_one_brings_back_the_start_of_the_epi
     move(world, again, "DELIVERED")
     assert since(migrator, convo) is None  # la que llegó termina el episodio
     later, _ = inbound(world, "wamid.4")
-    assert since(migrator, convo) == clock(migrator, convo)  # uno nuevo
+    assert since(migrator, convo) == later.created_at  # uno nuevo
     lost, _ = outbound(world, convo)
     move(world, lost, "FAILED", "PROVIDER_REJECTED")
     assert since(migrator, convo) == later.created_at  # desde la respuesta que sí llegó
+
+
+def test_an_internal_note_is_never_a_reply(world: SimpleNamespace, migrator: DB) -> None:
+    first, _ = inbound(world)
+    convo = SimpleNamespace(pk=first.conversation_id)
+    run(world, commands.add_note, conversation_id=convo.pk, body="Revisar talla")
+    inbound(world, "wamid.2")
+    run(world, commands.add_note, conversation_id=convo.pk, body="Llamar luego")
+    lost, _ = outbound(world, convo)
+    move(world, lost, "FAILED", "PROVIDER_REJECTED")
+    assert since(migrator, convo) == first.created_at  # las notas no cortan el episodio
 
 
 def test_a_provider_unknown_reply_counts_until_meta_says_it_failed(
@@ -148,9 +158,11 @@ def test_resolving_or_closing_ends_the_wait_and_a_new_message_opens_a_new_one(
     start = since(migrator, convo)
     status(world, convo, "RESOLVED", resolved_at=timezone.now())
     assert since(migrator, convo) is None
-    inbound(world, "wamid.2")  # la reabre: otro episodio
+    again, _ = inbound(world, "wamid.2")  # la reabre: otro episodio
     assert reloaded(world, convo).status == "OPEN"
-    assert since(migrator, convo) == clock(migrator, convo) > start
+    assert since(migrator, convo) == again.created_at > start
+    inbound(world, "wamid.3")  # el episodio sigue: su hora es la de la reapertura
+    assert since(migrator, convo) == again.created_at
     reply, _ = outbound(world, convo)
     status(world, convo, "CLOSED", closed_at=timezone.now())
     move(world, reply, "FAILED", "PROVIDER_REJECTED")  # cerrada: ya no espera aunque falle
@@ -166,7 +178,7 @@ def test_a_conversation_resolved_too_long_ago_is_closed_and_the_new_one_waits(
     later, _ = inbound(world, "wamid.2")
     fresh = SimpleNamespace(pk=later.conversation_id)
     assert fresh.pk != gone.pk and since(migrator, gone) is None
-    assert since(migrator, fresh) == clock(migrator, fresh)
+    assert since(migrator, fresh) == later.created_at
 
 
 def reloaded(world: SimpleNamespace, convo: Any) -> Conversation:
@@ -193,6 +205,8 @@ def test_what_the_application_or_the_previous_image_writes_never_breaks_it(
     assert since(migrator, convo) is None
     old(world, convo, awaiting_reply_since=timezone.now())
     assert since(migrator, convo) is None  # contestada: nada la pone
+    thread = SimpleNamespace(pk=convo.pk, channel_account_id=world.account_a.pk)
+    again = tables.message(world.a, thread)  # su `record_inbound`: el mensaje y la conversación
     old(
         world,
         convo,
@@ -200,8 +214,8 @@ def test_what_the_application_or_the_previous_image_writes_never_breaks_it(
         last_message_preview="¿Hola?",
         last_message_direction="INBOUND",
         last_inbound_at=timezone.now(),
-    )  # su `record_inbound`
-    assert since(migrator, convo) == clock(migrator, convo)
+    )
+    assert since(migrator, convo) == again.created_at
     old(world, convo, status="RESOLVED", resolved_at=timezone.now(), version=F("version") + 1)
     assert since(migrator, convo) is None
 
@@ -210,7 +224,7 @@ def test_with_no_visible_customer_message_it_falls_back_and_never_raises(
     world: SimpleNamespace, migrator: DB
 ) -> None:
     """Sin el contexto de la organización RLS oculta las filas: `crm_app` no actualiza nada (ni
-    error). Sin un mensaje del cliente visible, el paso 4 toma `last_message_at`."""
+    error). Sin un mensaje del cliente visible, los pasos 3 y 4 toman `last_message_at`."""
     convo = tables.conversation(
         world.a, world.contact_a, world.account_a, last_message_preview="Hola",
         last_message_direction="OUTBOUND",
@@ -225,6 +239,9 @@ def test_with_no_visible_customer_message_it_falls_back_and_never_raises(
     assert since(migrator, convo) == clock(migrator, convo)
     migrator.execute("UPDATE conversations SET last_reply_failed = false WHERE id = %s", [convo.pk])
     assert since(migrator, convo) is None
+    with tenant_scope(ctx(world.a)):  # el paso 3 sin mensaje del cliente: igual
+        Conversation.objects.filter(pk=convo.pk).update(last_message_direction="INBOUND")
+    assert since(migrator, convo) == clock(migrator, convo)
 
 
 def test_another_organization_neither_sees_nor_changes_it(world: SimpleNamespace) -> None:
@@ -266,7 +283,7 @@ def episode_plan(world: SimpleNamespace, conversation_id: Any) -> str:
 
 
 def fictitious(migrator: DB, world: SimpleNamespace, size: int) -> None:
-    """`size` conversaciones ficticias de A, de cuatro formas (por `g % 4`): solo el cliente;
+    """`size` conversaciones ficticias de A, de cuatro formas (por `g % 4`): solo el cliente (dos);
     contestada; una respuesta que llegó, dos mensajes y una que falló; resuelta sin contestar."""
     org, account = world.a, world.account_a.pk
     migrator.execute(
@@ -288,7 +305,7 @@ def fictitious(migrator: DB, world: SimpleNamespace, size: int) -> None:
         [org, account],
     )
     steps = (  # (forma, orden, dirección, estado de entrega, motivo)
-        (0, 1, "INBOUND", None, None), (1, 1, "INBOUND", None, None),
+        (0, 1, "INBOUND", None, None), (0, 2, "INBOUND", None, None), (1, 1, "INBOUND", None, None),
         (1, 2, "OUTBOUND", "SENT", None), (2, 1, "INBOUND", None, None),
         (2, 2, "OUTBOUND", "DELIVERED", None), (2, 3, "INBOUND", None, None),
         (2, 4, "INBOUND", None, None), (2, 5, "OUTBOUND", "FAILED", "PROVIDER_REJECTED"),
@@ -349,6 +366,7 @@ def test_the_migrations_backfill_in_batches_and_go_back_and_forth(
     for shape, value, expected, first in rows:
         assert value == (expected if shape in (0, 2) else None), (shape, value, expected)
         assert shape != 2 or value > first  # tras la respuesta que llegó, no el de antes
+        assert shape != 0 or value == first  # el primero del episodio, no el último
     with as_migrator():  # repetirla no cambia nada
         FILL.fill(None, SimpleNamespace(connection=connection))
     with pytest.raises(RuntimeError, match="BYPASSRLS"):  # `crm_app` no ve todas las filas
