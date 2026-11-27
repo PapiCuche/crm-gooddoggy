@@ -5,7 +5,9 @@ para toda fila nueva o modificada y la `0003` las valida. Todo en una sola sente
 `lock_timeout` de 5 s, en los dos sentidos: `ADD COLUMN` toma `ACCESS EXCLUSIVE` sobre `tasks` y
 cada FK, `SHARE ROW EXCLUSIVE` sobre `conversations` y `quotes` (bloquea sus escrituras mientras
 dura, que es solo el cambio de catálogo). Si no consigue los bloqueos en 5 s, la migración falla
-entera, sin estado a medias, y se repite. `crm_app` ya tiene `SELECT`, `INSERT` y `UPDATE` de la
+entera, sin estado a medias, y se repite. Hacia atrás (solo al volver atrás), `DROP CONSTRAINT`
+toma `ACCESS EXCLUSIVE` también sobre `conversations` y `quotes` (bloquea sus lecturas mientras
+dura), con el mismo tope de 5 s. `crm_app` ya tiene `SELECT`, `INSERT` y `UPDATE` de la
 tabla (no por columna) y la tabla ya tiene RLS con FORCE.
 
 Desplegar y volver atrás (ADR-033 §7): la imagen anterior no conoce las columnas y sigue

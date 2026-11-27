@@ -5,6 +5,7 @@ la entrada con la clave única de `automation_runs` (F11-02), como lo hará el b
 
 import json
 import threading
+import time
 from datetime import UTC, datetime
 from itertools import count
 from types import SimpleNamespace
@@ -25,6 +26,7 @@ from apps.tasks.models import Task
 from core.tenancy.context import ActorType, TenantContext
 from core.tenancy.scope import tenant_scope
 from tests import test_opportunity_scopes as scopes
+from tests.conftest import migrator_conninfo
 from tests.factories import make_user
 from tests.test_memberships import ctx, join
 from tests.test_opportunities_tables import make
@@ -88,7 +90,9 @@ def create(org: UUID, *, actor: TenantContext | None = None, **over: Any) -> lis
 
 
 def cancel(org: UUID, task: Any, version: int = 1, **over: Any) -> bool:
-    fields = {"rule_key": UNANSWERED, "reason": "RESOLVED", "run_id": uuid4(), **over}
+    subject = getattr(task, "conversation_id", None) or getattr(task, "quote_id", None) or uuid4()
+    fields = {"rule_key": UNANSWERED, "reason": "RESOLVED", "run_id": uuid4(),
+              "subject_id": subject, **over}  # fmt: skip
     with tenant_scope(ctx(org)) as tenant:
         return automation.cancel_automation_task(tenant, task_id=task.pk, version=version, **fields)
 
@@ -144,14 +148,17 @@ def test_only_the_system_creates_or_cancels_and_a_person_never_does(w: SimpleNam
     [task] = create(w.a, subject_id=w.convo.pk, recipients=[w.vera.pk])
     person = ctx(w.a, w.ana)
     posing = TenantContext(w.a, "test", None, ActorType.SYSTEM, w.ana.pk)
+    borrowed = TenantContext(
+        w.a, "test", w.ana.pk, ActorType.SYSTEM, None
+    )  # el sistema con persona
     agent = TenantContext(w.a, "test", None, ActorType.AI_AGENT, None)
-    for actor in (person, posing, agent):
+    for actor in (person, posing, borrowed, agent):
         with pytest.raises(ValueError, match="solo el sistema"):
             create(w.a, actor=actor, subject_id=w.convo.pk, recipients=[w.vera.pk])
         with tenant_scope(actor) as tenant, pytest.raises(ValueError, match="solo el sistema"):
             automation.cancel_automation_task(tenant, task_id=task.pk, version=1,
-                                              rule_key=UNANSWERED, reason="RESOLVED",
-                                              run_id=uuid4())  # fmt: skip
+                                              rule_key=UNANSWERED, subject_id=w.convo.pk,
+                                              reason="RESOLVED", run_id=uuid4())  # fmt: skip
     with tenant_scope(ctx(w.a)):
         assert Task.objects.count() == 1 and Task.objects.get().status == "PENDING"
 
@@ -256,8 +263,9 @@ def test_cancel_only_touches_an_open_automation_task_nobody_changed(
 def test_cancel_never_reaches_a_manual_deleted_or_foreign_task(w: SimpleNamespace) -> None:
     [gone] = create(w.a, subject_id=w.convo.pk, recipients=[w.ana.pk])
     with tenant_scope(ctx(w.a, w.ana)) as person:
-        manual = commands.create_task(person, title="Mía", contact_id=w.contact)
         commands.delete_task(person, task_id=gone.pk)
+    with tenant_scope(ctx(w.a)):  # una manual enlazada a la misma conversación
+        manual = Task.objects.create(title="Mía", conversation_id=w.convo.pk)
     [foreign] = create(w.b, subject_id=w.foreign_convo, recipients=[w.luis.pk])
     errors = []
     for task in (manual, gone, foreign, SimpleNamespace(pk=uuid4())):
@@ -399,3 +407,97 @@ def test_templates_cover_the_registered_rules_with_fixed_text_only() -> None:
         assert template.title.count("{") == 1 and "{number}" in template.title
         assert "{" not in template.description
         assert set(template.closed) == {"RESOLVED", "RULE_CHANGED"}
+
+
+def test_cancel_needs_the_task_of_the_rule_subject(w: SimpleNamespace) -> None:
+    [quoted] = create(w.a, rule_key=QUOTE, subject_id=w.quote, recipients=[w.ana.pk])
+    [convo] = create(w.a, subject_id=w.convo.pk, recipients=[w.ana.pk])
+    other = conversation(w.a, w.ids["sam"]).pk
+    for task, key, subject in ((quoted, UNANSWERED, w.quote),  # otra regla, otro tipo de sujeto
+                               (convo, QUOTE, w.convo.pk),
+                               (convo, UNANSWERED, other)):  # fmt: skip
+        with pytest.raises(Task.DoesNotExist):
+            cancel(w.a, task, rule_key=key, subject_id=subject)
+    with tenant_scope(ctx(w.a)):
+        assert set(Task.objects.values_list("status", flat=True)) == {"PENDING"}
+    assert cancel(w.a, quoted, rule_key=QUOTE) is True
+    with tenant_scope(ctx(w.a)):
+        assert (
+            Task.objects.get(pk=quoted.pk).cancel_reason == "La cotización ya no espera respuesta"
+        )
+
+
+def test_cancel_waits_for_a_person_holding_the_task_and_then_leaves_it(w: SimpleNamespace) -> None:
+    [task] = create(w.a, subject_id=w.convo.pk, recipients=[w.vera.pk])
+    held, release, results = threading.Event(), threading.Event(), list[Any]([None, None])
+
+    def person() -> None:
+        try:
+            with tenant_scope(ctx(w.a, w.ana)) as tenant:
+                commands.assign_task(tenant, task_id=task.pk, version=1, assigned_user_id=w.sam.pk)
+                held.set()
+                release.wait(timeout=10)  # la persona aún no confirma
+        finally:
+            held.set()
+            connection.close()
+
+    def system() -> None:
+        try:
+            results[1] = cancel(w.a, task)  # versión 1: la que conoce el barrido
+        except Exception as error:  # noqa: BLE001 — lo comprueba el test
+            results[1] = type(error).__name__
+        finally:
+            connection.close()
+
+    first = threading.Thread(target=person)
+    first.start()
+    assert held.wait(timeout=10)
+    second = threading.Thread(target=system)
+    second.start()
+    second.join(timeout=2)
+    results[0] = second.is_alive()  # espera el bloqueo de la fila
+    release.set()
+    first.join(timeout=10)
+    second.join(timeout=10)
+    assert results == [True, False]
+    with tenant_scope(ctx(w.a)):
+        found = Task.objects.get(pk=task.pk)
+    assert (found.status, found.assigned_user_id, found.version) == ("PENDING", w.sam.pk, 2)
+
+
+def test_recipients_are_locked_in_id_order_so_two_sweeps_never_deadlock(
+    w: SimpleNamespace, migrator: DB
+) -> None:
+    low, high = sorted([w.vera.pk, w.sam.pk])
+    other = conversation(w.a, w.ids["sam"]).pk  # otro contacto: no se esperan por él
+    results = list[Any]([None, None])
+    with psycopg.connect(migrator_conninfo()) as holder:
+        holder.execute(  # alguien retiene la membresía de menor id
+            "SELECT 1 FROM organization_memberships WHERE organization_id = %s AND user_id = %s"
+            " FOR NO KEY UPDATE", [w.a, low],
+        )  # fmt: skip
+
+        def sweep(index: int, subject: UUID, recipients: list[UUID]) -> None:
+            try:
+                made = create(w.a, subject_id=subject, recipients=recipients)
+                results[index] = [t.assigned_user_id for t in made]
+            except Exception as error:  # noqa: BLE001 — lo comprueba el test
+                results[index] = type(error).__name__
+            finally:
+                connection.close()
+
+        threads = [threading.Thread(target=sweep, args=(0, w.convo.pk, [low, high])),
+                   threading.Thread(target=sweep, args=(1, other, [high, low]))]  # fmt: skip
+        for thread in threads:
+            thread.start()
+        waiting = "SELECT count(DISTINCT pid) FROM pg_locks WHERE NOT granted"
+        for _ in range(200):  # los dos esperan: el orden de quien llama no cuenta
+            if migrator.execute(waiting).fetchone() == (2,):
+                break
+            time.sleep(0.05)
+        else:
+            pytest.fail("los dos barridos no llegaron a esperar")
+        holder.rollback()
+    for thread in threads:
+        thread.join(timeout=15)
+    assert results == [[low, high], [low, high]]

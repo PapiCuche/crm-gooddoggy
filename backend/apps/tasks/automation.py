@@ -167,11 +167,19 @@ def create_automation_task(
 
 
 def cancel_automation_task(
-    ctx: TenantContext, *, task_id: UUID, version: int, rule_key: str, reason: str, run_id: UUID
+    ctx: TenantContext,
+    *,
+    task_id: UUID,
+    version: int,
+    rule_key: str,
+    subject_id: UUID,
+    reason: str,
+    run_id: UUID,
 ) -> bool:
-    """Cancela una tarea automática con el motivo fijo de `reason` (`RESOLVED`, `RULE_CHANGED`)
-    solo si sigue abierta y en `version` (nadie la cambió). Si no, la deja y devuelve `False`.
-    `Task.DoesNotExist` si no existe, está borrada, es de otra organización o no es automática."""
+    """Cancela una tarea automática del sujeto de la regla con el motivo fijo de `reason`
+    (`RESOLVED`, `RULE_CHANGED`) solo si sigue abierta y en `version` (nadie la cambió). Si no, la
+    deja y devuelve `False`. `Task.DoesNotExist` si no existe, está borrada, es de otra
+    organización, no es automática o no enlaza a ese sujeto del tipo de la regla."""
     alias = _system(ctx)
     template = _template(rule_key, 1)
     if reason not in template.closed:
@@ -179,9 +187,10 @@ def cancel_automation_task(
     if isinstance(version, bool) or not isinstance(version, int) or not 1 <= version < 2**31:
         raise ValueError("versión: un entero de 1 a 2147483647")
     task_pk, run = _uuid(task_id, "tarea"), _uuid(run_id, "ejecución")
+    subject = {f"{template.subject}_id": _uuid(subject_id, template.subject)}
     with transaction.atomic(using=alias):
-        live = Task.objects.using(alias).filter(deleted_at__isnull=True,
-                                                source=TaskSource.AUTOMATION)  # fmt: skip
+        automated = Task.objects.using(alias).filter(source=TaskSource.AUTOMATION, **subject)
+        live = automated.filter(deleted_at__isnull=True)
         task: Task = live.select_for_update(no_key=True).get(pk=task_pk)
         if task.version != version or task.status not in _OPEN:
             return False
