@@ -110,6 +110,9 @@ export function useQuickReplies({
   const [away, setAway] = useState(false); // el foco salió del cuadro
   const [activeId, setActiveId] = useState<string | null>(null);
   const [failedAt, setFailedAt] = useState<string | null>(null); // el texto cuando falló `render`
+  // UX-INBOX-05b: elegida en la hoja, el cuadro cambió antes de que volviera (p. ej., terminó un
+  // envío y lo vació): no se inserta, pero se avisa en la hoja mientras el texto siga igual.
+  const [stale, setStale] = useState<{ text: string; shortcut: string }>();
   const pick = useRef<string | null>(null); // Enter antes de que llegue la búsqueda
   // Lo último que se ve: un `render` que vuelve tarde solo inserta si nada cambió desde que se pidió.
   const latest = useRef({ conversationId, text });
@@ -163,11 +166,18 @@ export function useQuickReplies({
     if (!reply || render.isPending) return;
     const asked = { conversationId, text };
     const append = browsing && text.trim() !== ""; // el borrador se queda; el `/atajo`, no
+    setStale(undefined);
     render.mutate(reply, {
       onSuccess: (done) => {
-        // Si se siguió escribiendo o se cambió de conversación, lo escrito manda: se descarta.
+        // Si se siguió escribiendo o se cambió de conversación, lo escrito manda: se descarta. Con
+        // la hoja aún abierta en la misma conversación, se avisa y se puede volver a elegir.
         const now = latest.current;
-        if (now.conversationId !== asked.conversationId || now.text !== asked.text) return;
+        if (now.conversationId !== asked.conversationId) return;
+        if (now.text !== asked.text) {
+          if (!browsing) return; // el aviso solo se ve con la lista abierta
+          setStale({ text: now.text, shortcut: reply.shortcut });
+          return setActiveId(reply.id); // Enter en el buscador la vuelve a pedir
+        }
         const next = append ? `${asked.text}\n\n${done.text}` : done.text; // como el copiloto
         setDismissed(true); // un texto que empiece con `/` no vuelve a abrir el selector
         setMissing({ text: next, names: done.missing });
@@ -230,13 +240,15 @@ export function useQuickReplies({
   };
 
   const failure =
-    render.error && failedAt === text
-      ? render.error.status === 404
-        ? t("gone")
-        : errors(`api.${apiErrorKey(render.error)}`)
-      : found.isError
-        ? errors(`api.${apiErrorKey(found.error)}`)
-        : null;
+    browsing && stale?.text === text
+      ? t("stale", { shortcut: stale.shortcut })
+      : render.error && failedAt === text
+        ? render.error.status === 404
+          ? t("gone")
+          : errors(`api.${apiErrorKey(render.error)}`)
+        : found.isError
+          ? errors(`api.${apiErrorKey(found.error)}`)
+          : null;
   const state = render.isPending
     ? t("inserting")
     : found.isPending
@@ -252,7 +264,8 @@ export function useQuickReplies({
         id={list}
         aria-label={t("label")}
         aria-busy={!current}
-        className="min-h-0 overflow-y-auto overscroll-contain py-1"
+        // El margen va en los grupos: un `mousedown` sobre la propia `listbox` es su barra.
+        className="min-h-0 overflow-y-auto overscroll-contain [&>:first-child]:pt-1 [&>:last-child]:pb-1"
       >
         {groups.map((group) => (
           <div key={group.id} role="group" aria-labelledby={`${list}-g-${group.id}`}>
@@ -356,6 +369,19 @@ export function useQuickReplies({
       onBlur={(event) => {
         if (!browse?.sheet && !event.currentTarget.contains(event.relatedTarget)) shut(false);
       }}
+      // Safari y Firefox quitan el foco del buscador (sin `relatedTarget`) al pulsar una cabecera o
+      // la ayuda, y se cerraría: en el desplegable, el `mousedown` solo conserva su efecto en el
+      // buscador (cursor, selección) y en la propia `listbox` (su barra de desplazamiento).
+      onMouseDown={(event) =>
+        browse?.sheet ||
+        (event.target as Element).matches("input, [role=listbox]") ||
+        event.preventDefault()
+      }
+      onKeyDown={(event) => {
+        if (event.key !== "Escape" || ime(event)) return; // también con el foco en «Cerrar»
+        event.preventDefault();
+        shut(true);
+      }}
     >
       <div className="flex min-h-0 flex-1 flex-col pb-[env(safe-area-inset-bottom)]">
         <div className="flex items-center gap-2 p-2">
@@ -389,9 +415,17 @@ export function useQuickReplies({
       </div>
     </dialog>
   ) : null;
+  // En un teléfono el botón va en la fila de los modos (UX-INBOX-05b): si cambia de fila (al girar)
+  // con el foco dentro, el foco pasa al nuevo. React suelta la referencia antes de quitar el nodo.
+  const carry = useRef(false);
+  useEffect(() => void (carry.current = false));
   const trigger = enabled ? (
     <Button
-      ref={button}
+      ref={(node) => {
+        button.current = node;
+        if (node && carry.current) node.focus();
+        return () => void (carry.current = document.activeElement === node);
+      }}
       type="button"
       variant="ghost"
       className="border-border size-11 rounded-[14px] border px-0"
@@ -401,6 +435,7 @@ export function useQuickReplies({
       onClick={() => {
         setSearch("");
         setActiveId(null);
+        setStale(undefined); // el aviso es de esa vez: al volver a abrir, no se repite
         setBrowse({ id: conversationId, sheet: window.matchMedia?.(SHEET).matches === true });
       }}
     >
