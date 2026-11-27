@@ -7,6 +7,15 @@ export const coarse = () =>
 const never = () => () => {};
 // Para lo que se pinta (ayuda, `enterKeyHint`): se relee en cada render; en el servidor, escritorio.
 export const useCoarse = () => useSyncExternalStore(never, coarse, () => false);
+// Por debajo de 640 px (`max-sm`), y al cruzarlo (girar el teléfono) se vuelve a pintar.
+const COMPACT = "(max-width: 639px)";
+const narrow = () => typeof matchMedia === "function" && matchMedia(COMPACT).matches;
+const resized = (change: () => void) => {
+  const query = typeof matchMedia === "function" ? matchMedia(COMPACT) : undefined;
+  query?.addEventListener?.("change", change);
+  return () => query?.removeEventListener?.("change", change);
+};
+export const useCompact = () => useSyncExternalStore(resized, narrow, () => false);
 
 // `?c=<id>`: solo un UUID llega a la API (el cliente no codifica la ruta: `../` no entra en ella).
 export const validId = (id: string) =>
