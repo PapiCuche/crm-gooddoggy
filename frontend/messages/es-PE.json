@@ -2634,6 +2634,7 @@
       "empty": "No hay respuestas rápidas con ese atajo o texto.",
       "inserting": "Preparando el texto…",
       "gone": "Esa respuesta ya no está disponible. Elige otra.",
+      "stale": "El cuadro cambió mientras se preparaba /{shortcut} y no se insertó. Elígela otra vez.",
       "count": "{count, plural, =0 {Sin respuestas rápidas} one {# respuesta rápida} other {# respuestas rápidas}}. Usa las flechas para moverte y Enter para elegir.",
       "missing": "Quedó sin completar: {fields}. Revísalo antes de enviar.",
       "variable": {

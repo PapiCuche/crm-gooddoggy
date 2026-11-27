@@ -21,6 +21,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 
 import { useTenant } from "@/components/app-shell/tenant-context";
 import { Button } from "@/components/ui/button";
@@ -45,7 +46,7 @@ import { cn } from "@/lib/utils";
 
 import { useDraftsValue } from "./drafts";
 import { fileSize } from "./media-file";
-import { coarse, useCoarse } from "./mobile";
+import { coarse, useCoarse, useCompact } from "./mobile";
 import { useQuickReplies } from "./quick-replies";
 
 // El tope de la API (`BODY_MAX`, 4096 caracteres; se cuentan puntos de código, como ella).
@@ -185,27 +186,36 @@ export function Composer({
   });
   const shown: Mode = modes[chosen] ? chosen : modes.reply ? "reply" : "note";
   const both = modes.reply && modes.note;
+  const [slot, setSlot] = useState<HTMLElement | null>(null); // el botón de respuestas rápidas
+  // UX-INBOX-05b: con el copiloto, la fila lleva cinco botones; por debajo de 380 px, «Responder» y
+  // «Nota» caben con su texto con menos separación y relleno, y la nota sin su icono.
+  const tight = tools ? "max-[379px]:gap-1" : undefined;
   return (
     <div className="border-border relative flex min-w-0 shrink-0 flex-col gap-2 border-t p-2 lg:p-3">
       {both || tools ? (
-        <div className="flex min-w-0 gap-2">
+        <div className={cn("flex min-w-0 gap-2", tight)}>
           {both ? (
             <div
               role="group"
               aria-label={t("mode.label")}
-              className="flex min-w-0 gap-2 max-sm:flex-1"
+              className={cn("flex min-w-0 gap-2 max-sm:flex-1", tight)}
             >
               {(["reply", "note"] as const).map((mode) => (
                 <Button
                   key={mode}
                   type="button"
                   variant={shown === mode ? "accent" : "ghost"}
-                  className="border-border h-9 min-w-0 border max-lg:min-h-11 max-sm:flex-1"
+                  className={cn(
+                    "border-border h-9 min-w-0 border max-lg:min-h-11 max-sm:flex-1",
+                    tight && "max-[379px]:min-w-11 max-[379px]:flex-auto! max-[379px]:px-1",
+                  )}
                   aria-pressed={shown === mode}
                   aria-label={t(`mode.${mode}`)}
                   onClick={() => setChosen(mode)}
                 >
-                  {mode === "note" ? <StickyNote aria-hidden /> : null}
+                  {mode === "note" ? (
+                    <StickyNote aria-hidden className={tight && "max-[379px]:hidden"} />
+                  ) : null}
                   {/* En 320 px las dos etiquetas largas no caben en una fila: se acortan, el nombre accesible no. */}
                   <span className="max-sm:hidden">{t(`mode.${mode}`)}</span>
                   <span className="sm:hidden">{t(`mode.${mode}Short`)}</span>
@@ -213,7 +223,9 @@ export function Composer({
               ))}
             </div>
           ) : null}
-          {tools ? <div className="ml-auto flex gap-2">{tools}</div> : null}
+          {/* En un teléfono, aquí van las respuestas rápidas: tras los modos, antes del copiloto. */}
+          <div ref={setSlot} className="flex empty:hidden" />
+          {tools ? <div className={cn("ml-auto flex gap-2", tight)}>{tools}</div> : null}
         </div>
       ) : null}
       {(["reply", "note"] as const).map((mode) =>
@@ -226,6 +238,7 @@ export function Composer({
             conversation={conversation}
             onQueued={onQueued}
             inserter={mode === "reply" ? replyInserter : undefined}
+            slot={slot}
           />
         ) : null,
       )}
@@ -240,6 +253,7 @@ function ComposeBox({
   conversation,
   onQueued,
   inserter,
+  slot,
 }: {
   mode: Mode;
   active: boolean;
@@ -247,6 +261,7 @@ function ComposeBox({
   conversation: Conversation;
   onQueued: () => void;
   inserter?: RefObject<Inserter | null>;
+  slot: HTMLElement | null; // la fila de los modos, si la hay
 }) {
   const t = useTranslations("inbox.composer");
   const errors = useTranslations("errors");
@@ -460,7 +475,8 @@ function ComposeBox({
       // El estado de entrega avanza en el servidor: se vuelve a pedir; la lista cambia su vista previa.
       void client.invalidateQueries({ queryKey: key });
       if (!note) void client.invalidateQueries({ queryKey: getConversationsListQueryKey(slug) });
-      box.current?.focus();
+      // Con las respuestas rápidas abiertas, el foco sigue en ellas (UX-INBOX-05b): no se cierran.
+      if (!document.activeElement?.closest("dialog[open]")) box.current?.focus();
     },
     onError: (error, request) => {
       if (error === GONE) return release(request.draft, request.press, "expired"); // nada salió
@@ -560,6 +576,9 @@ function ComposeBox({
   // En menos de 640 px el formulario es una cuadrícula de dos columnas: la respuesta lleva el cuadro
   // y un botón de icono en la misma fila; la nota, el cuadro y debajo su aviso con «Guardar nota».
   const first = tabbed ? "max-sm:row-start-1" : "max-sm:row-start-2";
+  // UX-INBOX-05b: por debajo de 640 px el botón de respuestas rápidas sube a la fila de los modos
+  // y el cuadro gana su ancho; sin esa fila (un solo modo, sin copiloto), se queda junto al clip.
+  const raised = useCompact() ? slot : null;
   const second = tabbed ? "max-sm:row-start-2" : "max-sm:row-start-3";
 
   const action = (
@@ -737,7 +756,7 @@ function ComposeBox({
                 event.target.value = ""; // el mismo archivo otra vez también avisa
               }}
             />
-            {quick.trigger}
+            {raised ? null : quick.trigger}
             {media ? (
               <Button
                 type="button"
@@ -803,6 +822,7 @@ function ComposeBox({
     <>
       {quick.sheet}
       {form}
+      {raised && active ? createPortal(quick.trigger, raised) : null}
     </>
   );
 }
