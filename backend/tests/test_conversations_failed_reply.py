@@ -259,7 +259,12 @@ def test_the_unanswered_filter_uses_its_partial_index(world: SimpleNamespace, mi
         )
         sql, params = found.values("id").query.sql_with_params()
         cursor.execute("SET LOCAL enable_seqscan = off")
-        cursor.execute("SET LOCAL enable_sort = off")  # con estadísticas de una tabla vacía
+        # F11-04: con una tabla casi vacía el plan depende de las estadísticas que dejó otro test.
+        # Un ANALYZE con 0 filas no borra las de columna (p. ej., las 2000 filas del relleno de
+        # `test_conversations_awaiting_reply`), y entonces el índice de la organización más un
+        # `Sort` cuesta lo mismo que el parcial. Sin el `Sort`, el test sigue probando que este
+        # índice sirve para la consulta y su orden.
+        cursor.execute("SET LOCAL enable_sort = off")
         cursor.execute("EXPLAIN " + sql, params)
         plan = " ".join(row[0] for row in cursor.fetchall())
     assert INDEX.INDEX in plan, plan
