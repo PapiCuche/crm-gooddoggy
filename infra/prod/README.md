@@ -17,6 +17,7 @@ Producción en un servidor Linux con Docker Compose, según [ADR-033](../../docs
 | `smoke.sh` | La prueba de humo tras `up --wait`, que la llama `deploy.sh` |
 | `deploy.sh` | Despliega un `release.env` por digest: pull, volcado previo cifrado, migrate, up, puerta de salud y vuelta atrás automática (abajo) |
 | `test-deploy.sh` | Prueba `deploy.sh` con un `docker` falso, sin servidor: orden de los pasos, vuelta atrás, negativas y el lock compartido con el backup nocturno (CI: `infra-prod.yml`) |
+| `cd-preflight.sh` | Las condiciones locales que bloquean un despliegue (ADR-048 §6, §7 y §9), de solo lectura (abajo, «Condiciones que bloquean»). Prueba con un servidor simulado: `test-cd-preflight.sh` (CI: `infra-prod.yml`) |
 | `crm-migrate.service`, `crm-migrate.timer` | `deploy.sh --migrate` el día 15 de cada mes (abajo, «Migrate mensual») |
 | `backup/` | Backups (F1-16): `backup.sh` (volcado cifrado con age y copia de los objetos a un destino que el servidor no puede leer ni borrar), `restore.sh`, `check.sh` (aviso a las 26 h), las unidades de systemd, `lifecycle.json` (retención 7/4/6 en el destino) y `drill.sh` (el simulacro de CI). Runbook: [backup-restore.md](../../docs/runbooks/backup-restore.md) |
 
@@ -150,12 +151,23 @@ No hay tope duro: con unas 90 peticiones a la vez en `backend` se llegaría al l
 
 El backup nocturno (`backup.sh nightly`) toma el mismo lock que `deploy.sh`, `/var/lib/crm-deploy/lock`. Mientras dura, ningún despliegue arranca. Si un despliegue lo tiene, el backup espera hasta una hora (`BACKUP_LOCK_WAIT`). Si sigue puesto, porque un despliegue se cortó y lo dejó, el backup falla con `backup.failed` (`stage=deploy_lock`) y avisa. `backup.sh predeploy` no lo toma: lo lanza `deploy.sh`, que ya lo tiene.
 
+## Condiciones que bloquean (`cd-preflight.sh`)
+
+`sudo infra/prod/cd-preflight.sh` comprueba, sin cambiar nada, las condiciones locales de ADR-048 §7: backup de menos de 26 h, disco (`/` y el directorio de Docker), memoria y swap, carga, producción sana (contenedores `healthy` y `/health/ready` desde el backend, con `docker` a secas: nunca `docker compose`, que cargaría los archivos de entorno), el lock de `/var/lib/crm-deploy`, la marca de parada `cd-halted`, un issue abierto con la etiqueta `incident` o `stop-the-line` (API pública de GitHub, sin credenciales), la ventana de la fase 1 (§6), los feriados nacionales del Perú y el calendario de congelación. Escribe una línea por condición y sale con 0 si todas pasan, 1 si alguna bloquea y 2 si recibe argumentos. Lo que no puede comprobar (un archivo que falta o no se puede leer, GitHub sin respuesta o con el límite de peticiones agotado) **bloquea**. Nunca borra el lock ni la marca de parada, y no escribe en el registro ni en ningún otro sitio.
+
+- **Cuándo se usa:** el operador lo ejecuta a mano, y más adelante el agente del servidor (F1-20e1), **solo cuando el propietario habilite la fase 1** (ADR-048, enmienda E1). Hasta entonces rige el GO exacto por SHA y ningún procedimiento lo pide. Este PR no lo ejecuta en producción.
+- **Hora de Lima:** UTC−5 fija, calculada sin la base de zonas horarias (si falta, `TZ=America/Lima` cae en UTC sin avisar). Hoy el Perú no cambia de hora en verano. Si algún día lo hace, hay que actualizar el script.
+- **Umbrales y feriados:** en un solo bloque al principio del script, tal como los propone ADR-048 (decisión 6). Se revisan tras los 10 primeros despliegues. La lista de feriados se revisa cada año, porque el Congreso añade feriados por ley. Jueves y Viernes Santo salen del cálculo de la Pascua.
+- **`/etc/crm/deploy-freeze`** (lo mantiene el propietario, de `root`, sin escritura de grupo ni otros; no va al repositorio): una fecha `AAAA-MM-DD` o un rango `AAAA-MM-DD..AAAA-MM-DD` por línea, con `#` para los comentarios. Ahí van los días no laborables que declare el Gobierno y las campañas y operaciones de la otra aplicación del servidor (decisión 5). Si no hay fechas, el archivo existe y está vacío: si falta, bloquea.
+- **Lo que no comprueba:** CI, procedencia, huella, `main`, clase y ritmo (lado de GitHub, F1-20c y F1-20e1); el vigilante de la otra aplicación y el lock común del servidor (F1-20f).
+
 ## Probar en local
 
 ```bash
 sh infra/prod/validate.sh --caddy
 bash infra/prod/test-smoke.sh   # smoke.sh con docker y curl falsos: certificado, /demo y /health/*
 bash infra/prod/test-deploy.sh  # deploy.sh con docker falso; también el lock con backup.sh nightly
+bash infra/prod/test-cd-preflight.sh  # cd-preflight.sh con un servidor simulado, una prueba por condición
 ```
 
 Para levantarlo entero en local, usa archivos de entorno desechables en un directorio temporal y `CRM_DOMAIN=localhost`. Caddy emite entonces `crm.localhost` con su CA interna. Añade un override que publique el proxy en `127.0.0.1` con otros puertos y un `-p` propio. Al terminar, `down -v`.
