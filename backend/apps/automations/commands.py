@@ -31,6 +31,10 @@ class StaleVersion(Exception):
     """Otra escritura cambió la regla después de la versión que se editaba."""
 
 
+class InvalidParams(ValueError):
+    """`params` fuera del esquema cerrado; el mensaje nombra el parámetro, nunca su valor."""
+
+
 class NotSimulatedLongEnough(Exception):  # noqa: N818 — la regla todavía no puede pasar a `ON`
     """`ON` solo desde `SIMULATE` con al menos `SIMULATE_FOR` (reloj de la base)."""
 
@@ -65,7 +69,7 @@ def set_rule(
     cambió desde `version` (0: todavía sin fila, en `OFF`), y audita `automation.rule.updated`.
     Sin cambios no escribe y devuelve la regla (sin guardar, con versión 0, si no tiene fila).
     `AccessDenied` sin `automations.manage`; `StaleVersion`; `NotSimulatedLongEnough`;
-    `ValueError`."""
+    `InvalidParams` (un `ValueError`); `ValueError`."""
     alias = require_scope(ctx)
     _allowed(ctx, (MANAGE,))
     if key not in schema.KEYS:
@@ -84,7 +88,10 @@ def set_rule(
                 raise StaleVersion(key)
             old = rule or AutomationRule(key=key, params=schema.defaults(key), version=0)
             old_params = {**schema.defaults(key), **old.params}
-            new_params = schema.validate(key, {**old_params, **(params or {})})
+            try:
+                new_params = schema.validate(key, {**old_params, **(params or {})})
+            except ValueError as error:
+                raise InvalidParams(str(error)) from None
             new_mode, now = mode or old.mode, _db_now(alias)
             since = old.simulate_since
             simulated = since is not None and now - since >= SIMULATE_FOR
@@ -112,7 +119,9 @@ def set_rule(
             if rule is None:
                 rule = rules.create(key=key, **values)
             else:
-                rules.filter(pk=rule.pk).update(**values, version=F("version") + 1, updated_at=now)
+                same = rules.filter(pk=rule.pk, version=version)  # además del bloqueo
+                if same.update(**values, version=F("version") + 1, updated_at=now) != 1:
+                    raise StaleVersion(key)
                 rule = rules.get(pk=rule.pk)
             metadata = {"key": key, "version": rule.version}
             record(ctx, "automation.rule.updated", Entity("automation_rule", rule.pk), changes,

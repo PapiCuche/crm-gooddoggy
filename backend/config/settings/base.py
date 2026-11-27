@@ -424,6 +424,8 @@ SPECTACULAR_SETTINGS = {
         "PriceResolutionReasonEnum": "apps.pricing.services.Reason",  # F3-44
         "PipelineKindEnum": "apps.deals.models.Kind",  # F5-02b: el de lectura y el de escritura
         "ChannelAccountStatusEnum": "apps.conversations.models.AccountStatus",  # F7-07a
+        "AutomationModeEnum": "apps.automations.models.Mode",  # F11-07: el `mode` de una regla
+        "AutomationRuleKeyEnum": "apps.automations.params.KEYS",
     },
 }
 # Object storage S3-compatible (ADR-008): credenciales solo por entorno.
