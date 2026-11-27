@@ -71,6 +71,21 @@ Previos transversales: [#3](https://github.com/PapiCuche/crm-gooddoggy/issues/3)
   - **No despliega nada.** Permisos: solo `contents: read`, `actions: read` y `deployments: write`, fijados en `test_workflow_security.py`. `release_record.py` es clase B en la tabla del clasificador.
   - **Probado sin entorno real:** pruebas y ensayo local contra la historia, las atestaciones y la API reales (sin escribir nada). Las comprobaciones en vivo son pasos del propietario: #1198 y #1175.
 
+- **Hecho en F1-20e1 ([#1172](https://github.com/PapiCuche/crm-gooddoggy/issues/1172)):** `infra/prod/cd_agent.py`, el agente del servidor (Python 3 del sistema, solo biblioteca estándar). Una pasada por ejecución; `--loop` repite cada 2 min. **Nunca despliega:** en modo `approve` solo escribe `/var/lib/crm-cd/deployable.json` y anota `DEPLOYABLE`; `deploy.sh` es F1-20e2 ([#1173](https://github.com/PapiCuche/crm-gooddoggy/issues/1173)).
+  - **Modos** en `/etc/crm/cd.conf`: `off` por omisión; cualquier otro valor que no sea `approve`, incluido `auto`, es `off` y no toca la red. `CD_APPROVERS` es la lista propia del servidor.
+  - **Token** de lectura en el archivo que indica `TOKEN_FILE` (de root, `0600`, sin enlaces simbólicos). Solo va en una cabecera `Authorization` que no se reenvía en las redirecciones; nunca en argumentos, entorno, archivos ni registros. Sondea los registros `crm-release` con `ETag`; con un 304 vuelve a verificar el cuerpo guardado, porque la ventana de 24 h avanza.
+  - **Un registro es dato, no autenticación.** Solo es desplegable si pasa todo:
+    - lo creó `github-actions[bot]`;
+    - el run es de `release.yml`, `workflow_dispatch`, `head_branch` `main` con `head_sha` antecesor de `main` (bajado por https y sin credenciales), del mismo repositorio, con `display_title` exacto y el mismo `run_attempt`;
+    - hay exactamente un job por nombre;
+    - la aprobación cuenta desde el `started_at` del job approve, no desde el payload, y vale 24 h;
+    - aprobó una cuenta de `CD_APPROVERS` que no lanzó el run, sin rechazos;
+    - la tupla de §5 se recalcula: la base es la `REVISION` en marcha, el run de images y su `release.env` (huella), la clase y que el SHA sea antecesor de `main`;
+    - `verify_attestations.py` y `cd-preflight.sh` en verde.
+  - **Falla cerrado** ante red, 403/429, JSON, campos ausentes o cualquier error, y antes de cada pasada borra `deployable.json`.
+  - **Probado solo con una API de GitHub simulada** (`test_cd_agent.py`, en `infra-prod.yml`). No se instala en producción ni se habilita: es decisión del propietario.
+  - **Queda para F1-20e2:** las dos condiciones de §7 que no son locales: el CI en verde de cada workflow del rango y que ningún commit posterior de `main` revierta uno del rango.
+
 La parte del propietario (identidades, entorno `production`, token, avisos y la habilitación expresa) es el checklist F1-20g ([#1198](https://github.com/PapiCuche/crm-gooddoggy/issues/1198)).
 
 - **Hecho en F1-20a ([#1167](https://github.com/PapiCuche/crm-gooddoggy/issues/1167)):** `.github/scripts/deploy_class.py` calcula la clase de despliegue (ADR-048 §2) de un rango `(base, SHA]` leyendo solo el repositorio: sin red, sin token y sin secretos. Clasifica cada commit con la tabla `deploy_class_rules.json` (§2 y §2.1; cambiarla es C; revisión prevista el 2027-02-26) y la clase del release es la mayor. Cada regla que coincide solo puede subir la clase. Las migraciones nuevas se analizan con `ast`, sin ejecutarlas, con las reglas de §2.2.
