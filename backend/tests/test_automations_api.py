@@ -1,7 +1,8 @@
 """F11-07 (#1179; ADR-049 §7, §8, E2): `…/automations/`. Permisos por método y rol, la semana en
 `SIMULATE` antes de `ON` por la API (de `OFF` directo, 6 d 23 h, justo 7 d y al volver a
 `SIMULATE`), versión vieja, parámetros cerrados, cuerpo que no elige organización ni interruptor
-global y aislamiento entre organizaciones en las dos direcciones.
+global y aislamiento entre organizaciones en las dos direcciones. F11-07b (#1214): el historial,
+con el sujeto «sin acceso» fuera del alcance y un número de consultas que no crece con la página.
 Middleware, sesión, motor de autorización y PostgreSQL con el rol `crm_app`."""
 
 import datetime as dt
@@ -12,30 +13,39 @@ from uuid import UUID, uuid4
 
 import psycopg
 import pytest
-from django.db import connections
+from django.db import connection, connections
 from django.test import Client
+from django.test.utils import CaptureQueriesContext
 
+from apps.access.models import MembershipRole
 from apps.automations import commands
 from apps.automations.api.views import STALE, TOO_SHORT
 from apps.automations.params import CONVERSATION_UNANSWERED as CONV
 from apps.automations.params import QUOTE_NO_RESPONSE as QUOTE
 from apps.automations.params import defaults
+from core.tenancy.scope import tenant_scope
 from tests import test_conversation_scopes as scopes
 from tests.factories import make_user, sign_in
 from tests.test_authorization import give
 from tests.test_automations_foundation import AUDIT, RULE, team
 from tests.test_conversations_api import UNAUTHENTICATED
 from tests.test_member_branch import DENIED
-from tests.test_memberships import join
+from tests.test_memberships import ctx, join
+from tests.test_quotes_read_api import make_quote
 from tests.test_self_context import NOT_FOUND, reply, signed
 from tests.test_team_writes import send
 
-crm, real_stack = scopes.crm, scopes.real_stack
-__all__ = ["crm", "real_stack", "team"]  # los fixtures, para pytest
+crm, inbox, real_stack = scopes.crm, scopes.inbox, scopes.real_stack
+__all__ = ["crm", "inbox", "real_stack", "team"]  # los fixtures, para pytest
 pytestmark = pytest.mark.usefixtures("tenant_db")
 DB = psycopg.Connection[Any]
 BASE = "/api/v1/o/org-a/automations/"
-RULES, PAUSE, RESUME = BASE + "rules/", BASE + "pause/", BASE + "resume/"
+RULES, PAUSE, RESUME, RUNS = BASE + "rules/", BASE + "pause/", BASE + "resume/", BASE + "runs/"
+RUN = (
+    "INSERT INTO automation_runs (organization_id, rule_id, rule_version, rule_key, subject_type,"
+    " subject_id, episode_at, step, mode, status) SELECT %s, %s, 1, %s, %s, %s,"
+    " now() - make_interval(mins => n), 1, 'SIMULATE', 'DONE' FROM generate_series(1, %s) AS n"
+)
 STATE = (
     "SELECT organization_id, key, mode, version, simulate_since FROM automation_rules ORDER BY 1"
 )
@@ -45,6 +55,11 @@ def rule(db: DB, org: UUID, key: str, mode: str = "OFF") -> UUID:
     pk = uuid4()
     db.execute(RULE, [pk, org, key, mode, "{}", "2026-11-01" if mode == "SIMULATE" else None])
     return pk
+
+
+def runs(db: DB, org: UUID, rule_id: UUID, subject: UUID, count: int = 1, kind: str = "") -> None:
+    key, kind = (QUOTE, "quote") if kind == "quote" else (CONV, "conversation")
+    db.execute(RUN, [org, rule_id, key, kind, subject, count])
 
 
 def patch(client: Client, key: str, body: Any) -> Any:
@@ -61,17 +76,19 @@ def test_each_role_gets_only_its_methods(team: SimpleNamespace, migrator: DB) ->
     De otra organización: 404. Sin sesión: 401."""
     crm = team
     calls = (("get", BASE, None), ("patch", RULES + CONV + "/", {"version": 0, "mode": "OFF"}),
-             ("post", PAUSE, None), ("post", RESUME, None))  # fmt: skip
+             ("post", PAUSE, None), ("post", RESUME, None), ("get", RUNS, None))  # fmt: skip
     expected = {
-        crm.ana: (200, 200, 200, 200), crm.ada: (200, 200, 200, 200),
-        crm.sam: (200, 403, 200, 403), crm.vera: (403,) * 4, crm.bea: (403,) * 4,
-        crm.luis: (404,) * 4,
+        crm.ana: (200, 200, 200, 200, 200), crm.ada: (200, 200, 200, 200, 200),
+        crm.sam: (200, 403, 200, 403, 200), crm.vera: (403,) * 5, crm.bea: (403,) * 5,
+        crm.luis: (404,) * 5,
     }  # fmt: skip
     for who, statuses in expected.items():
         got = tuple(send(signed(who), m, path, body).status_code for m, path, body in calls)
         assert got == statuses, who.email
     for method, path, body in calls:
         assert reply(send(Client(), method, path, body)) == UNAUTHENTICATED
+    assert reply(signed(crm.vera).get(RUNS)) == DENIED
+    assert reply(signed(crm.luis).get(RUNS)) == NOT_FOUND
     assert reply(patch(signed(crm.sam), "custom", {"version": 0})) == DENIED  # permiso primero
     assert reply(patch(signed(crm.ana), "custom", {"version": 0})) == NOT_FOUND
     assert migrator.execute(STATE).fetchall() == []  # nadie configuró nada
@@ -263,3 +280,123 @@ def test_an_internal_value_error_is_a_500_without_its_message(
     assert reply(patch(client, CONV, {"version": 0, "mode": "SIMULATE"})) == (
         500, b'{"code":"INTERNAL_ERROR"}')  # fmt: skip
     assert migrator.execute(STATE).fetchall() == []  # deshecho
+
+
+NUMBERS = "SELECT id, number FROM conversations UNION ALL SELECT id, number FROM quotes"
+
+
+def history(who: Any, url: str = RUNS) -> list[dict[str, Any]]:
+    response = signed(who).get(url)
+    assert response.status_code == 200, response.content
+    body = response.content.decode()  # ni nombres de contacto ni correos
+    assert not [word for word in ("vera", "nobody", "@example") if word in body]
+    return response.json()["results"]  # type: ignore[no-any-return]
+
+
+def shown(found: list[dict[str, Any]]) -> dict[UUID, str]:
+    """El id y el número de los sujetos visibles; los demás, «sin acceso» sin id ni número."""
+    hidden = [r["subject"] for r in found if not r["subject"]["visible"]]
+    assert all(s == {"type": s["type"], "id": None, "number": None, "visible": False}
+               for s in hidden)  # fmt: skip
+    seen = [r["subject"] for r in found if r["subject"]["visible"]]
+    return {UUID(s["id"]): s["number"] for s in seen}
+
+
+def test_history_shows_the_subject_only_within_the_viewers_scope(
+    inbox: SimpleNamespace, migrator: DB
+) -> None:
+    """vera (Vendedora, `OWN`) con `automations.view`: el número de sus conversaciones y
+    cotizaciones; sam (Supervisor) por equipo; con `conversations.view` y sin `quotes.view`, solo
+    las conversaciones; sin ninguno de los dos, nada. Un sujeto de B en una ejecución de A: «sin
+    acceso» también para la Owner."""
+    conv, quote = rule(migrator, inbox.a, CONV), rule(migrator, inbox.a, QUOTE)
+    for pk in inbox.convs.values():  # también la de B: `subject_id` no tiene FK
+        runs(migrator, inbox.a, conv, pk)
+    quotes = {name: make_quote(org, who, inbox.ids[contact]) for name, org, who, contact in (
+        ("vera", inbox.a, inbox.vera, "owned"), ("ana", inbox.a, inbox.ana, "plain"),
+        ("b", inbox.b, inbox.luis, "b"))}  # fmt: skip
+    for pk in quotes.values():
+        runs(migrator, inbox.a, quote, pk, kind="quote")
+    number = dict(migrator.execute(NUMBERS).fetchall())
+    give(inbox.a, inbox.m["vera"], {"automations.view": None})
+
+    def sees(who: Any) -> dict[UUID, str]:
+        found = history(who)
+        assert len(found) == 10
+        return shown(found)
+
+    def of(*pks: UUID) -> dict[UUID, str]:
+        return {pk: number[pk] for pk in pks}
+
+    convs, mine = inbox.convs, quotes["vera"]
+    assert sees(inbox.vera) == of(convs["vera"], convs["both"], convs["nobody"], mine)
+    assert sees(inbox.sam) == of(*(convs[n] for n in ("sam", "team", "both", "nobody")), mine)
+    every = [pk for name, pk in convs.items() if name != "b"]
+    assert sees(inbox.ana) == of(*every, mine, quotes["ana"])  # ni la conversación ni la de B
+    reader = make_user(email="rita@example.com")
+    give(inbox.a, join(inbox.a, reader).pk,
+         {"automations.view": None, "conversations.view": "ORGANIZATION"})  # fmt: skip
+    assert sees(reader) == of(*every)  # sin `quotes.view`: ninguna cotización
+    with tenant_scope(ctx(inbox.a)):  # sin `conversations.view` ni `quotes.view`
+        seller = MembershipRole.objects.filter(membership_id=inbox.m["vera"], role__code="seller")
+        assert seller.delete()[0] == 1
+    assert sees(inbox.vera) == {}
+
+
+def test_history_never_crosses_organizations_and_shows_only_ids(
+    inbox: SimpleNamespace, migrator: DB
+) -> None:
+    """Las ejecuciones de B no salen en A ni al revés; una de B sobre una conversación de A es
+    «sin acceso» para quien ve todas las de B. Cada fila lleva ids y códigos, nunca nombres."""
+    mine, theirs = rule(migrator, inbox.a, CONV), rule(migrator, inbox.b, CONV)
+    runs(migrator, inbox.a, mine, inbox.convs["ana"])
+    migrator.execute("UPDATE automation_runs SET recipients = ARRAY[%s]::uuid[], reason = NULL",
+                     [inbox.m["vera"]])  # fmt: skip
+    runs(migrator, inbox.b, theirs, inbox.convs["b"])
+    runs(migrator, inbox.b, theirs, inbox.convs["ana"])  # el id de una conversación de A
+    give(inbox.b, inbox.m_luis, {"automations.view": None, "conversations.view": "ORGANIZATION"})
+    [row] = history(inbox.ana)
+    assert row == row | {
+        "rule_key": CONV, "rule_version": 1, "step": 1, "mode": "SIMULATE", "status": "DONE",
+        "reason": None, "recipients": [str(inbox.m["vera"])], "task_ids": [], "attempts": 0,
+        "closed_at": None, "subject": {"type": "conversation", "id": str(inbox.convs["ana"]),
+                                       "number": row["subject"]["number"], "visible": True},
+    }  # fmt: skip
+    assert set(row) == {"id", "rule_key", "rule_version", "subject", "episode_at", "step", "mode",
+                        "status", "reason", "recipients", "task_ids", "attempts", "created_at",
+                        "closed_at"}  # fmt: skip
+    other = RUNS.replace("org-a", "org-b")
+    assert set(shown(history(inbox.luis, other))) == {inbox.convs["b"]}
+    assert len(history(inbox.luis, other)) == 2
+    assert reply(signed(inbox.ana).get(other)) == NOT_FOUND
+    assert reply(signed(inbox.luis).get(RUNS)) == NOT_FOUND
+
+
+def test_the_lists_hide_no_rows_the_history_would_have_to_hide() -> None:
+    """El sujeto se ve con `scoped()`, como en `ScopeFilter` de las listas y fichas de
+    conversaciones y cotizaciones. Si una declarara `hidden_unless`, el historial tendría que
+    ocultar lo mismo."""
+    from apps.conversations.api.conversations import ConversationsView, ConversationView
+    from apps.quotes.api.quotes import QuotesView, QuoteView
+
+    for view in (ConversationsView, ConversationView, QuotesView, QuoteView):
+        assert getattr(view, "hidden_unless", None) is None, view.__name__
+
+
+def test_a_page_of_runs_costs_the_same_queries_whatever_its_size(
+    inbox: SimpleNamespace, migrator: DB
+) -> None:
+    conv = rule(migrator, inbox.a, CONV)
+    ana = signed(inbox.ana)
+    runs(migrator, inbox.a, conv, inbox.convs["ana"], count=3)
+    with CaptureQueriesContext(connection) as few:
+        assert len(ana.get(RUNS).json()["results"]) == 3
+    runs(migrator, inbox.a, conv, inbox.convs["vera"], count=60)
+    with CaptureQueriesContext(connection) as page:
+        found = ana.get(RUNS).json()
+    assert len(found["results"]) == 50 and found["next"] is not None
+    assert len(page.captured_queries) == len(few.captured_queries)
+    [sql] = [q["sql"] for q in page.captured_queries if 'FROM "automation_runs"' in q["sql"]]
+    assert '"automation_runs"."organization_id" =' in sql  # `TenantManager`, además de RLS
+    ids = [r["id"] for r in found["results"]]
+    assert ids == sorted(ids, reverse=True)  # lo más reciente primero (UUIDv7)

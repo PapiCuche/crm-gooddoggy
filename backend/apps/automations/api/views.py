@@ -3,27 +3,35 @@ interruptor (`automations.view`), cambiar el modo y los parámetros de una regla
 (`automations.manage`), pausar (`automations.kill_switch` o `automations.manage`), reanudar
 (`automations.manage`). La organización es la de la ruta; el cuerpo solo aporta `version`, `mode`
 y `params` (cualquier otro campo se ignora). `global_enabled` (`AUTOMATIONS_ENABLED`) solo se lee:
-ninguna ruta lo enciende. Nada de aquí crea tareas ni mensajes ni cambia otros módulos. El
-historial de ejecuciones llega en F11-07b. Pendiente: `PATCH` y pausar responden con el estado
-completo también a un rol propio con `automations.manage` o `automations.kill_switch` sin
-`automations.view`."""
+ninguna ruta lo enciende. Nada de aquí crea tareas ni mensajes ni cambia otros módulos.
+
+El historial (F11-07b, `automations.view`) muestra el id y el número de la conversación o de la
+cotización solo si `conversations.view` o `quotes.view` de quien consulta, con su alcance, la cubre;
+si no, «sin acceso»: sin id ni número. Nunca el texto ni el nombre del cliente ni importes.
+
+Pendiente: `PATCH` y pausar responden con el estado completo también a un rol propio con
+`automations.manage` o `automations.kill_switch` sin `automations.view`."""
 
 import datetime as dt
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
 
+from django.db.models import Case, CharField, OuterRef, QuerySet, Subquery, When
 from drf_spectacular.utils import extend_schema, extend_schema_view
-from rest_framework import serializers
+from rest_framework import generics, serializers
 from rest_framework.exceptions import NotFound
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.access.permissions import AnyOf, rbac_errors
+from apps.access.permissions import AnyOf, rbac_errors, request_context
+from apps.access.selectors import scoped
 from apps.automations import commands
 from apps.automations import params as schema
-from apps.automations.models import AutomationRule, AutomationSwitch, Mode
+from apps.automations.models import AutomationRule, AutomationRun, AutomationSwitch, Mode, RunStatus
+from apps.conversations.models import Conversation
+from apps.quotes.models import Quote
 from core.api.errors import ApiError
 from core.api.schema import errors
 from core.tenancy import context
@@ -176,3 +184,70 @@ ResumeView = switch_view(
     "resume", commands.resume, commands.MANAGE,
     "Reanuda la organización (`automations.manage`) y lo audita.",
 )  # fmt: skip
+
+
+class AutomationSubjectSerializer(serializers.Serializer[Any]):
+    type = serializers.CharField(source="subject_type", help_text="`conversation` o `quote`.")
+    id = serializers.SerializerMethodField(help_text="null: sin acceso.")
+    number = serializers.CharField(source="subject_number", allow_null=True)
+    visible = serializers.SerializerMethodField(help_text="false: «sin acceso».")
+
+    def get_id(self, run: Any) -> str | None:  # el id, solo junto al número que el alcance da
+        return str(run.subject_id) if run.subject_number is not None else None
+
+    def get_visible(self, run: Any) -> bool:
+        return run.subject_number is not None
+
+
+class AutomationRunSerializer(serializers.Serializer[Any]):
+    id = serializers.UUIDField()
+    rule_key = serializers.CharField()
+    rule_version = serializers.IntegerField()
+    subject = AutomationSubjectSerializer(source="*")
+    episode_at = serializers.DateTimeField()
+    step = serializers.IntegerField(help_text="1: aviso; 2: escalado.")
+    mode = serializers.ChoiceField(choices=Mode.choices)
+    status = serializers.ChoiceField(choices=RunStatus.choices)
+    reason = serializers.CharField(allow_null=True, help_text="Un código cerrado.")
+    recipients = serializers.ListField(child=serializers.UUIDField(), help_text="Ids de miembro.")
+    task_ids = serializers.ListField(child=serializers.UUIDField())
+    attempts = serializers.IntegerField()
+    created_at = serializers.DateTimeField()
+    closed_at = serializers.DateTimeField(allow_null=True)
+
+
+def with_subject(found: QuerySet[AutomationRun], request: Any) -> QuerySet[AutomationRun]:
+    """`subject_number`: el número del sujeto si `scoped()` de `conversations.view` o `quotes.view`
+    de quien consulta lo deja ver (la misma organización y su alcance, como `ScopeFilter` en sus
+    listas, que no ocultan filas con `hidden_unless`), en la misma consulta; si no, `NULL`."""
+    ectx = request_context(request)
+    assert ectx is not None  # noqa: S101 — `HasPermission` ya lo comprobó
+    same = {"pk": OuterRef("subject_id")}
+    chats = scoped(ectx, "conversations.view", Conversation.objects.filter(**same))
+    quotes = scoped(ectx, "quotes.view", Quote.objects.filter(**same))
+    number = Case(
+        When(subject_type="conversation", then=Subquery(chats.values("number")[:1])),
+        When(subject_type="quote", then=Subquery(quotes.values("number")[:1])),
+        output_field=CharField(),
+    )
+    return found.annotate(subject_number=number)
+
+
+@extend_schema_view(
+    get=extend_schema(
+        operation_id="automations_runs_list", tags=["automations"],
+        responses={200: AutomationRunSerializer(many=True), **errors(400, 401, 403, 404)},
+        description="El historial de ejecuciones, lo más reciente primero (ADR-016), con "
+        "`automations.view`. El sujeto lleva su id y su número solo si `conversations.view` o "
+        "`quotes.view` de quien consulta lo cubre; si no, `visible = false` y ninguno de los dos.",
+    ),
+)  # fmt: skip
+class RunsView(generics.ListAPIView):
+    required_permissions = {"GET": commands.VIEW}
+    serializer_class = AutomationRunSerializer  # `ScopeFilter` por omisión: sin alcance
+    ordering = "-id"  # UUIDv7: el orden en que se crearon
+
+    def get_queryset(self) -> QuerySet[AutomationRun]:
+        found = AutomationRun.objects.all()
+        request = getattr(self, "request", None)
+        return found if request is None else with_subject(found, request)  # OpenAPI: sin él

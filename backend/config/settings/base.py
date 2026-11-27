@@ -419,6 +419,7 @@ SPECTACULAR_SETTINGS = {
         "ChannelAccountStatusEnum": "apps.conversations.models.AccountStatus",  # F7-07a
         "AutomationModeEnum": "apps.automations.models.Mode",  # F11-07: el `mode` de una regla
         "AutomationRuleKeyEnum": "apps.automations.params.KEYS",
+        "AutomationRunStatusEnum": "apps.automations.models.RunStatus",  # F11-07b
     },
 }
 # Object storage S3-compatible (ADR-008): credenciales solo por entorno.
