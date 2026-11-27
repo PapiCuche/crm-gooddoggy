@@ -40,10 +40,6 @@ type MP = pytest.MonkeyPatch
 type LOGS = pytest.LogCaptureFixture
 BASE = dt.datetime(2030, 1, 7, 17, 0, tzinfo=dt.UTC)  # lunes, 12:00 en Lima
 SECRET = "Mi DNI es 12345678"  # noqa: S105 — texto de prueba: nunca en ejecuciones ni logs
-RUNS = (
-    "SELECT subject_id, episode_at, mode, status, reason, recipients, attempts, task_ids"
-    " FROM automation_runs ORDER BY created_at, id"
-)
 STATE = (  # mensajes, eventos (`message.*` o cualquiera), conversaciones, cotizaciones, ventas
     "SELECT (SELECT count(*) FROM messages), (SELECT count(*) FROM outbox_events), (SELECT"
     " array_agg((status, version, updated_at, awaiting_reply_since)::text) FROM conversations),"
@@ -102,8 +98,14 @@ def tick(w: SimpleNamespace, org: UUID | None = None, **step: int) -> Counter[st
     return sweep.evaluate(TenantContext(org or w.a, "celery"))
 
 
+def answer(w: NS, convo: UUID) -> None:
+    with tenant_scope(ctx(w.a)):
+        Conversation.objects.filter(pk=convo).update(last_message_direction="OUTBOUND")
+
+
 def runs(migrator: DB) -> list[tuple[Any, ...]]:
-    return migrator.execute(RUNS).fetchall()
+    sql = "SELECT subject_id, episode_at, mode, status, reason, recipients, attempts, task_ids"
+    return migrator.execute(sql + " FROM automation_runs ORDER BY created_at, id").fetchall()
 
 
 def test_switched_off_the_beat_and_the_task_touch_no_database(w: NS, monkeypatch: MP) -> None:
@@ -176,6 +178,7 @@ def test_paused_off_or_on_write_nothing_and_a_pause_stops_the_pass(
 
 
 @pytest.mark.parametrize(("utc", "zone", "inside"), [
+    ("2030-01-07T14:00", "America/Lima", True),  # lunes 09:00: abre
     ("2030-01-12T23:59", "America/Lima", True),  # sábado 18:59
     ("2030-01-13T00:00", "America/Lima", False),  # sábado 19:00: cierra
     ("2030-01-13T17:00", "America/Lima", False),  # domingo
@@ -194,8 +197,7 @@ def test_working_hours_follow_the_zone_and_its_dst(utc: str, zone: str, inside: 
 def test_outside_hours_nothing_new_but_an_answered_one_still_closes(w: NS, migrator: DB) -> None:
     first = waiting(w, assigned_user_id=w.vera.pk)
     assert tick(w) == Counter(simulated=1)
-    with tenant_scope(ctx(w.a)):
-        Conversation.objects.filter(pk=first).update(last_message_direction="OUTBOUND")
+    answer(w, first)
     waiting(w, assigned_user_id=w.vera.pk)
     assert tick(w, days=6) == Counter(closed=1)  # domingo: ningún aviso nuevo
     assert [r[3] for r in runs(migrator)] == ["CLOSED"]
@@ -228,16 +230,23 @@ def test_recipients_chain_only_picks_who_sees_it(w: NS, migrator: DB) -> None:
     assert chosen(theirs) == [other.pk]
 
 
-def test_the_per_user_cap_skips_and_retries_on_the_next_pass(w: NS, migrator: DB) -> None:
+def test_caps_skip_and_retries_never_starve_new_conversations_or_closings(
+    w: NS, migrator: DB, monkeypatch: MP
+) -> None:
+    monkeypatch.setattr(sweep, "MAX_PER_PASS", 2)
     migrator.execute("UPDATE automation_rules SET params = '{\"max_open_per_user\": 1}'")
-    first, second = (waiting(w, assigned_user_id=w.vera.pk) for _ in range(2))
-    assert tick(w) == Counter(simulated=1, capped=1)
-    assert [(r[0], r[3], r[4]) for r in runs(migrator)] == [
-        (first, "DONE", None), (second, "SKIPPED", "CAPPED")]  # fmt: skip
-    with tenant_scope(ctx(w.a)):
-        Conversation.objects.filter(pk=first).update(last_message_direction="OUTBOUND")
-    assert tick(w) == Counter(closed=1, simulated=1)  # el tope se libera y se reintenta
-    assert {r[0]: r[3] for r in runs(migrator)} == {first: "CLOSED", second: "DONE"}
+    v1, v2, v3 = (waiting(w, assigned_user_id=w.vera.pk) for _ in range(3))
+    anas = waiting(w, assigned_user_id=w.ana.pk)
+    assert tick(w) == Counter(simulated=1, capped=1, capped_pass=1)
+    assert tick(w) == Counter(capped=2, capped_pass=1)
+    assert tick(w) == Counter(capped=1, simulated=1)  # los reintentos dejan sitio a las nuevas
+    answer(w, anas)  # su ejecución tiene un id posterior a los reintentos: se cierra igual
+    assert tick(w) == Counter(closed=1, capped=1)
+    answer(w, v1)
+    assert tick(w) == Counter(closed=1, simulated=1)  # libera el tope; reintenta la más antigua
+    assert {r[0]: r[3:5] for r in runs(migrator)} == {
+        v1: ("CLOSED", "RESOLVED"), v2: ("DONE", None), v3: ("SKIPPED", "CAPPED"),
+        anas: ("CLOSED", "RESOLVED")}  # fmt: skip
 
 
 def test_the_pass_cap_and_three_capped_passes_log_a_storm(
@@ -281,8 +290,7 @@ def test_a_failure_retries_with_backoff_and_dies_at_the_third(
     assert set(dead[0]) <= {"event", "level", "timestamp", "logger", "organization_id", "rule",
                             "reason", "correlation_id", "request_id"}  # solo códigos  # fmt: skip
     assert SECRET[:8] not in log_text(caplog) and str(mine) not in log_text(caplog)
-    with tenant_scope(ctx(w.a)):
-        Conversation.objects.filter(pk=mine).update(last_message_direction="OUTBOUND")
+    answer(w, mine)
     assert tick(w) == Counter(closed=1)
 
 
@@ -401,6 +409,8 @@ def test_each_subject_reads_its_row_again_before_claiming_or_closing(w: NS, migr
         "SELECT id FROM automation_runs WHERE subject_id = %s", [old]
     ).fetchall()
     assert sweep.close(run_, old, run_id, Counter()) == "skipped"  # el cliente sigue esperando
+    later = sweep.Pass(run_.ctx, w.rule, "SIMULATE", 1, run_.params, w.clock[0])
+    assert sweep.claim(later, old, None, Counter()) == "skipped"  # ya la tiene: ON CONFLICT
     assert [r[3] for r in runs(migrator)] == ["DONE", "DONE"]
 
 

@@ -58,6 +58,7 @@ Los issues llevan la etiqueta `phase:f11` y `release:seguimiento`. **El issue es
     - los casos a) y b) de F11-04 no abren otra ejecución;
     - una hora que vuelve a un episodio ya cerrado avisa una vez, contando desde el cierre;
     - si una respuesta y un mensaje nuevo caben entre dos pasadas, sigue la misma ejecución.
+  - **Equidad de la pasada:** primero los cierres; luego los reintentos, los más antiguos (`updated_at`) primero y como mucho la mitad del tope, para que las conversaciones nuevas nunca se queden sin sitio (revisión de #1219).
   - **Cierre:** cuando la conversación ya no espera (respuesta que cuenta, incluida la confirmación de una baja; resuelta o cerrada), la ejecución pasa a `CLOSED`/`RESOLVED` a cualquier hora y en cualquier modo. Un eco de otra app y un entrante en `standby` no cierran nada.
   - **Fallos:** `FAILED` con `attempts + 1` y espera de `2^attempts` minutos; `DEAD` al tercero, con `automations.run_dead` (`ERROR`). Motivos cerrados `LOCK_TIMEOUT` o `DB_ERROR`.
   - **Tormenta:** sin estado compartido, una pasada en el tope con 300 ejecuciones o más de la regla en 170 s deja `automations.storm` (`ERROR`). La regla nunca se apaga sola.

@@ -1,12 +1,8 @@
-"""El barrido de «Conversación sin respuesta», paso 1 (F11-05a; ADR-049 §3, §5-§7), como
-`SYSTEM` bajo RLS: cierra las ejecuciones cuyo episodio terminó, reintenta las fallidas o sin
-destinatario y reclama las que esperan desde hace `first_after_minutes`, en horario. Cada sujeto va
-en su transacción, relee su fila y vuelve a comprobar interruptores y regla (una pausa la detiene).
-`episode_at` = el mayor entre `awaiting_reply_since` y el último `closed_at` del sujeto: con
-`automation_runs_open_uq`, los casos a) y b) de F11-04 no abren otra ejecución y una hora que vuelve
-a un episodio cerrado no choca con su clave. `SIMULATE` nunca crea tareas; `ON` se salta (F11-05b,
-#1216). Horario en `America/Lima`: `Organization.timezone` (ADR-049 §5) aún no existe. Logs con
-códigos y cifras, sin texto del cliente ni ids de sujetos."""
+"""El barrido de «Conversación sin respuesta», paso 1 (F11-05a; ADR-049 §3, §5-§7), como `SYSTEM`
+bajo RLS: cierra, reintenta y reclama, en horario; cada sujeto en su transacción, releída su fila y
+otra vez los interruptores. `episode_at` = el mayor entre `awaiting_reply_since` y el último
+`closed_at`: con `automation_runs_open_uq`, los casos a) y b) no abren otra ejecución. `SIMULATE` no
+crea tareas; `ON`, F11-05b (#1216). Horario en `America/Lima` (aún sin `Organization.timezone`)."""
 
 import datetime as dt
 import time
@@ -49,14 +45,14 @@ CANDIDATES = (  # esperan desde antes del corte, sin ejecución abierta en este 
     " AND r.subject_id = c.id AND r.step = 1 AND (r.mode = %(mode)s AND r.status <> 'CLOSED'"
     " OR r.closed_at > %(cutoff)s)) ORDER BY c.awaiting_reply_since, c.id LIMIT %(limit)s"
 )
-PENDING = (  # abiertas cuyo episodio terminó (cualquier modo) o que toca reintentar (este modo)
+PENDING = (  # primero las que cerrar (cualquier modo); luego reintentos (este modo), en rotación
     "SELECT r.id, c.id, c.awaiting_reply_since IS NULL FROM automation_runs r JOIN conversations c"
     " ON c.organization_id = r.organization_id AND c.id = r.subject_id"
     " WHERE r.organization_id = %(org)s AND r.rule_id = %(rule)s AND r.step = 1"
     " AND r.status <> 'CLOSED' AND (c.awaiting_reply_since IS NULL OR (%(hours)s"
     " AND r.mode = %(mode)s AND (r.status = 'SKIPPED' OR (r.status = 'FAILED'"
     " AND r.updated_at <= %(now)s - make_interval(mins => (2 ^ r.attempts)::int)))))"
-    " ORDER BY r.id LIMIT %(limit)s"
+    " ORDER BY c.awaiting_reply_since IS NOT NULL, r.updated_at, r.id LIMIT %(limit)s"
 )
 OPEN_PER_USER = (
     "SELECT u, count(*) FROM automation_runs r, unnest(r.recipients) u WHERE r.organization_id ="
@@ -255,15 +251,12 @@ def run_pass(ctx: TenantContext, rule: AutomationRule, now: dt.datetime) -> Coun
             return Counter(skipped_locked=1)
         hours = in_hours(now, ORG_TIMEZONE, params)
         pending = _sql(tenant, PENDING, run.sql(hours=hours, limit=MAX_PER_PASS))
-        budget = MAX_PER_PASS - sum(1 for *_, ended in pending if not ended)
+        retries = [row for row in pending if not row[2]][: MAX_PER_PASS // 2]  # sitio a nuevas
+        pending, budget = [row for row in pending if row[2]] + retries, MAX_PER_PASS - len(retries)
         fresh = _sql(tenant, CANDIDATES, run.sql(limit=budget + 1)) if hours and budget > 0 else []
-        counts = (
-            Counter(dict(_sql(tenant, OPEN_PER_USER, run.sql()))) if pending or fresh else Counter()
-        )
-    pending.sort(key=lambda row: not row[2])  # primero los cierres: liberan el tope por persona
-    work = [(r, s, None, ended) for r, s, ended in pending] + [
-        (None, s, episode, False) for s, episode in fresh[:budget]
-    ]
+        counts = Counter(dict(_sql(tenant, OPEN_PER_USER, run.sql()) if pending or fresh else []))
+    work = [(r, s, None, end) for r, s, end in pending]
+    work += [(None, s, episode, False) for s, episode in fresh[:budget]]
     done: Counter[str] = Counter()
     started = time.monotonic()
     for run_id, subject, episode, ended in work:
