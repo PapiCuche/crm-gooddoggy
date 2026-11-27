@@ -7,6 +7,7 @@ ficticios."""
 
 import datetime as dt
 import time
+from collections.abc import Iterator
 from importlib import import_module
 from types import SimpleNamespace
 from typing import Any
@@ -268,14 +269,6 @@ def plan(sql: str, params: list[Any]) -> str:
         return " ".join(row[0] for row in cursor.fetchall())
 
 
-def test_the_wait_query_uses_its_partial_index(world: SimpleNamespace) -> None:
-    inbound(world)
-    with tenant_scope(ctx(world.a)):
-        waiting = Conversation.objects.filter(awaiting_reply_since__lte=timezone.now())
-        sql, params = waiting.values("id").query.sql_with_params()
-        assert INDEX.INDEX in plan(sql, list(params))
-
-
 STEP3 = WAIT.FUNCTION.split("misma fuente que el paso 4\n", 1)[1].split("\n        );", 1)[0]
 STEP4 = WAIT.FUNCTION.split("coalesce((", 1)[1].rsplit("), NEW.last_message_at)", 1)[0]
 
@@ -323,12 +316,27 @@ def fictitious(migrator: DB, world: SimpleNamespace, size: int) -> None:
             " created_at, channel_account_id, conversation_id, delivery_status,"
             " provider_error_code) SELECT %s, %s, CASE WHEN %s = 'INBOUND' THEN 'CONTACT'"
             " ELSE 'SYSTEM' END, 'TEXT', 'Hola', now() - interval '2 hours' + %s * interval"
-            " '1 minute', %s, id, %s, %s FROM conversations WHERE number LIKE 'CONV-1____'"
+            " '1 minute' + substr(number, 6)::int * interval '1 ms', %s, id, %s, %s"
+            " FROM conversations WHERE number LIKE 'CONV-1____'"
             " AND substr(number, 6)::int %% 4 = %s",
             [org, direction, direction, order, account, state, why, shape],
         )
 
 
+@pytest.fixture
+def forgotten(migrator: DB) -> Iterator[None]:
+    """Al terminar, borra las filas ficticias y deja las estadísticas como estaban (`VACUUM
+    ANALYZE`): miles de filas muertas harían que otro test viera otro plan."""
+    yield
+    migrator.execute(
+        "DELETE FROM messages WHERE conversation_id IN (SELECT id FROM conversations WHERE"
+        " number LIKE 'CONV-1____'); DELETE FROM conversations WHERE number LIKE 'CONV-1____';"
+        " DELETE FROM contacts WHERE display_name LIKE 'Ficticio %'"
+    )
+    migrator.execute("VACUUM (ANALYZE) messages, conversations, contacts")
+
+
+@pytest.mark.usefixtures("forgotten")
 def test_the_migrations_backfill_in_batches_and_go_back_and_forth(
     world: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -355,7 +363,16 @@ def test_the_migrations_backfill_in_batches_and_go_back_and_forth(
     held = stamps[-1] - stamps[0]
     print(f"0066: ACCESS EXCLUSIVE held about {held * 1000:.1f} ms on {2000} fictitious rows")
     assert len(stamps) >= 2 and held < 1, stamps
-    migrator.execute("ANALYZE messages")  # con estadísticas, como en producción
+    migrator.execute("ANALYZE messages, conversations")  # con estadísticas, como en producción
+    with tenant_scope(ctx(world.a)):  # las que esperan desde hace más de N: su índice parcial
+        oldest = (
+            Conversation.objects.filter(awaiting_reply_since__isnull=False)
+            .order_by("awaiting_reply_since")[5]
+            .awaiting_reply_since
+        )
+        waiting = Conversation.objects.filter(awaiting_reply_since__lte=oldest)
+        sql, params = waiting.values("id").query.sql_with_params()
+        assert INDEX.INDEX in plan(sql, list(params))
     some = migrator.execute("SELECT id FROM conversations WHERE number = 'CONV-10002'").fetchone()
     found = episode_plan(world, some[0] if some else None)
     assert found.count("messages_org_conversation_idx") == 2, found

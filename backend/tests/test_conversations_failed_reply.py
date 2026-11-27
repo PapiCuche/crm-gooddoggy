@@ -259,6 +259,7 @@ def test_the_unanswered_filter_uses_its_partial_index(world: SimpleNamespace, mi
         )
         sql, params = found.values("id").query.sql_with_params()
         cursor.execute("SET LOCAL enable_seqscan = off")
+        cursor.execute("SET LOCAL enable_sort = off")  # con estadísticas de una tabla vacía
         cursor.execute("EXPLAIN " + sql, params)
         plan = " ".join(row[0] for row in cursor.fetchall())
     assert INDEX.INDEX in plan, plan
