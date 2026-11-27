@@ -115,8 +115,11 @@ export function useQuickReplies({
   const [stale, setStale] = useState<{ text: string; shortcut: string }>();
   const pick = useRef<string | null>(null); // Enter antes de que llegue la búsqueda
   // Lo último que se ve: un `render` que vuelve tarde solo inserta si nada cambió desde que se pidió.
-  const latest = useRef({ conversationId, text, browsing: false });
+  const latest = useRef({ conversationId, text });
   const settling = useRef(false); // recién insertado: un Enter más todavía no envía
+  useEffect(() => {
+    latest.current = { conversationId, text };
+  });
   if (typed === undefined && dismissed) setDismissed(false);
   // Abierta con el botón: para esta conversación y mientras se pueda responder en ella.
   const [browse, setBrowse] = useState<{ id: string; sheet: boolean } | null>(null);
@@ -126,9 +129,6 @@ export function useQuickReplies({
   const slash = enabled && !browsing && typed !== undefined && !dismissed && !away;
   const open = browsing || slash;
   const query = browsing ? search : (typed ?? "");
-  useEffect(() => {
-    latest.current = { conversationId, text, browsing };
-  });
   const button = useRef<HTMLButtonElement>(null);
   const dialog = useRef<HTMLDialogElement>(null);
   const shutting = useRef(false); // se cierra a propósito: el foco ya tiene adónde ir
@@ -174,7 +174,7 @@ export function useQuickReplies({
         const now = latest.current;
         if (now.conversationId !== asked.conversationId) return;
         if (now.text !== asked.text) {
-          if (!browsing || !now.browsing) return;
+          if (!browsing) return; // el aviso solo se ve con la lista abierta
           setStale({ text: now.text, shortcut: reply.shortcut });
           return setActiveId(reply.id); // Enter en el buscador la vuelve a pedir
         }
@@ -240,7 +240,7 @@ export function useQuickReplies({
   };
 
   const failure =
-    stale?.text === text
+    browsing && stale?.text === text
       ? t("stale", { shortcut: stale.shortcut })
       : render.error && failedAt === text
         ? render.error.status === 404
@@ -264,7 +264,8 @@ export function useQuickReplies({
         id={list}
         aria-label={t("label")}
         aria-busy={!current}
-        className="min-h-0 overflow-y-auto overscroll-contain py-1"
+        // El margen va en los grupos: un `mousedown` sobre la propia `listbox` es su barra.
+        className="min-h-0 overflow-y-auto overscroll-contain [&>:first-child]:pt-1 [&>:last-child]:pb-1"
       >
         {groups.map((group) => (
           <div key={group.id} role="group" aria-labelledby={`${list}-g-${group.id}`}>
@@ -434,6 +435,7 @@ export function useQuickReplies({
       onClick={() => {
         setSearch("");
         setActiveId(null);
+        setStale(undefined); // el aviso es de esa vez: al volver a abrir, no se repite
         setBrowse({ id: conversationId, sheet: window.matchMedia?.(SHEET).matches === true });
       }}
     >

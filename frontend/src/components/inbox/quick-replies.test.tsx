@@ -100,6 +100,10 @@ function server(
         new URL(String(url), "http://x").searchParams.get("q"),
       ),
     renders: () => calls((url) => url.pathname.endsWith("/render/")).length,
+    rendered: () =>
+      calls((url) => url.pathname.endsWith("/render/")).map(([url]) =>
+        new URL(String(url), "http://x").pathname.split("/").at(-3),
+      ),
     sends: () =>
       calls((url, method) => url.pathname.endsWith("/messages/") && method === "POST").map(
         ([, init]) => JSON.parse(String(init!.body)) as { body: string },
@@ -667,10 +671,13 @@ describe("remates de las respuestas rápidas (UX-INBOX-05b)", () => {
     await type("hola");
     fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
     await waitFor(() => expect(s.held).toHaveLength(1));
-    fireEvent.click(await browse("lima"));
+    await browse("deli");
+    await waitFor(() => expect(options()).toHaveLength(2));
+    fireEvent.click(screen.getByRole("option", { name: /Envío en Lima/ })); // la segunda
     await waitFor(() => expect(s.held).toHaveLength(2));
     await s.release(); // sale el envío: el cuadro queda vacío
     await waitFor(() => expect(box()).resolves.toHaveValue(""));
+    expect(await search()).toHaveFocus(); // el envío no se lleva el foco de la lista
     await s.release(); // vuelve `render`, tarde
     expect(await screen.findByRole("alert")).toHaveTextContent(notice);
     expect(screen.getByRole("dialog")).toBeInTheDocument();
@@ -679,14 +686,50 @@ describe("remates de las respuestas rápidas (UX-INBOX-05b)", () => {
     expect(screen.queryByText(notice)).toBeNull();
     await type("");
     expect(screen.getByText(notice)).toBeInTheDocument();
+    expect(selected()).toHaveTextContent("/delivery-lima");
     fireEvent.keyDown(await search(), { key: "Enter" }); // la misma, otra vez
     await waitFor(() => expect(s.held).toHaveLength(1));
+    expect(s.rendered()).toEqual(["r3", "r3"]);
     expect(screen.queryByText(notice)).toBeNull();
     await s.release();
     await waitFor(() => expect(box()).resolves.toHaveValue(rendered.text));
     await settle();
     expect(s.renders()).toBe(2);
     expect(s.sends()).toEqual([expect.objectContaining({ body: "hola" })]);
+  });
+
+  it("el aviso no vuelve al reabrir la lista ni pasa a la de `/`", async () => {
+    const s = server(undefined, { hold: true });
+    let setText!: (text: string) => void;
+    function Probe() {
+      const [text, set] = useState("");
+      setText = set;
+      const quick = useQuickReplies({ enabled: true, conversationId: "1", text, insert: vi.fn() });
+      return (
+        <>
+          {quick.picker}
+          {quick.trigger}
+          {quick.sheet}
+        </>
+      );
+    }
+    renderApp(
+      <TenantProvider value={tenant}>
+        <Probe />
+      </TenantProvider>,
+    );
+    fireEvent.click(await browse("lima"));
+    await waitFor(() => expect(s.held).toHaveLength(1));
+    act(() => setText("/deli")); // el cuadro cambia (p. ej., un envío) antes de que vuelva
+    await s.release();
+    expect(await screen.findByText(notice)).toBeInTheDocument();
+    fireEvent.keyDown(await search(), { key: "Escape" });
+    await waitFor(() => expect(options()).toHaveLength(2)); // la lista de `/deli`
+    expect(screen.queryByText(notice)).toBeNull();
+    fireEvent.click(await button());
+    await waitFor(() => expect(options()).toHaveLength(3));
+    expect(screen.queryByText(notice)).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("sin aviso si se siguió escribiendo (`/`) o si la lista ya se cerró", async () => {
@@ -751,7 +794,10 @@ describe("remates de las respuestas rápidas (UX-INBOX-05b)", () => {
       fireEvent.mouseDown(within(screen.getByRole("dialog")).getByText(/Enter para elegir/)),
     ).toBe(false);
     expect(fireEvent.mouseDown(await search())).toBe(true); // el cursor y la selección
-    expect(fireEvent.mouseDown(screen.getByRole("listbox"))).toBe(true); // su barra
+    expect(fireEvent.mouseDown(screen.getByRole("listbox"))).toBe(true); // solo su barra
+    expect(fireEvent.mouseDown(within(screen.getByRole("listbox")).getAllByRole("group")[0]!)).toBe(
+      false,
+    ); // su margen
     fireEvent.keyDown(await search(), { key: "Escape", isComposing: true }); // del IME
     expect(screen.getByRole("dialog")).toBeInTheDocument();
     const close = screen.getByRole("button", { name: "Cerrar respuestas rápidas" });
@@ -799,7 +845,8 @@ describe("el botón en la fila de los modos por debajo de 640 px (UX-INBOX-05b)"
       addEventListener: (_: string, fn: () => void) => heard.add(fn),
       removeEventListener: (_: string, fn: () => void) => heard.delete(fn),
     }));
-    return (next: number) => act(() => ((width = next), heard.forEach((fn) => fn())));
+    const resize = (next: number) => act(() => ((width = next), heard.forEach((fn) => fn())));
+    return Object.assign(resize, { heard });
   };
   const before = (a: Element, b: Element) =>
     !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
@@ -835,12 +882,14 @@ describe("el botón en la fila de los modos por debajo de 640 px (UX-INBOX-05b)"
   });
 
   it("desde 640 px, o sin fila de modos, se queda junto al clip", async () => {
-    at(640);
+    const { heard } = at(640);
     server();
     const first = show();
     await openChat();
     expect((await button()).closest("form")).not.toBeNull();
+    expect(heard.size).toBeGreaterThan(0);
     first.unmount();
+    expect(heard.size).toBe(0); // se dejó de escuchar el ancho
     at(320);
     show(grants("conversations.view", "messages.send"));
     await openChat();
