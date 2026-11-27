@@ -20,6 +20,7 @@ export function setUrlConversation(id: string | null, push: boolean) {
   history[push ? "pushState" : "replaceState"](null, "", url);
 }
 
+const CLOSED = 150; // px: más que la barra de direcciones (56), menos que cualquier teclado
 // iOS no encoge el viewport con el teclado (Android sí): mientras se escribe, `--keyboard-vh`.
 export function useKeyboardHeight(panel: RefObject<HTMLElement | null>, scroller: typeof panel) {
   useEffect(() => {
@@ -31,10 +32,19 @@ export function useKeyboardHeight(panel: RefObject<HTMLElement | null>, scroller
       (pinned = box.scrollHeight - box.scrollTop - box.clientHeight < 8);
     const follow = () => ((seen = box.clientHeight), pinned && (box.scrollTop = box.scrollHeight));
     const keep = window.ResizeObserver ? new ResizeObserver(follow) : null; // jsdom no lo trae
-    const fit = () =>
-      root.style.setProperty("--keyboard-vh", `${Math.round(viewport.height * viewport.scale)}px`);
+    // Android cierra el teclado sin quitar el foco: si lo visible crece más que una barra de
+    // direcciones desde lo menor visto (con el mismo ancho: girar no cuenta), se suelta el cuadro.
+    let [typing, low, wide] = [null as HTMLTextAreaElement | null, 0, 0];
+    const fit = () => {
+      const seen = Math.round(viewport.height * viewport.scale);
+      root.style.setProperty("--keyboard-vh", `${seen}px`);
+      if (viewport.width !== wide) [low, wide] = [seen, viewport.width];
+      low = Math.min(low, seen);
+      if (seen - low > CLOSED && coarse()) typing?.blur();
+    };
     const start = ({ target }: FocusEvent) =>
-      target instanceof HTMLTextAreaElement && (fit(), viewport.addEventListener("resize", fit));
+      target instanceof HTMLTextAreaElement &&
+      ((typing = target), (wide = 0), fit(), viewport.addEventListener("resize", fit));
     const stop = () => {
       viewport.removeEventListener("resize", fit);
       root.style.removeProperty("--keyboard-vh");
@@ -53,7 +63,7 @@ export function useKeyboardHeight(panel: RefObject<HTMLElement | null>, scroller
 }
 
 // UX-INBOX-03b, solo táctil: del foco en un cuadro del redactor (lo último del panel) a su salida,
-// tras un turno: un toque en «Enviar» quita el foco antes del clic (con ratón, más de un turno).
+// tras un turno: el foco puede pasar a un botón del redactor (Chrome enfoca el que se toca).
 export function useComposing(panel: RefObject<HTMLElement | null>) {
   const [on, setOn] = useState(false);
   useEffect(() => {
@@ -71,5 +81,22 @@ export function useComposing(panel: RefObject<HTMLElement | null>) {
     root.addEventListener("focusout", leave, { signal: off.signal });
     return () => (clearTimeout(wait), off.abort());
   }, [panel]);
+  // UX-INBOX-03c: compacto (táctil y por debajo de 640 px, como `max-sm`), pulsar un botón del panel
+  // no quita el foco al cuadro. Si lo quitara, la cabecera y `--keyboard-vh` cambiarían entre
+  // `mousedown` y el clic (WebKit lo perdía). En una tableta, o con el foco fuera del cuadro (p. ej.,
+  // en el buscador de respuestas rápidas), el foco se mueve como siempre.
+  useEffect(() => {
+    const root = panel.current;
+    if (!root || !on) return;
+    const keep = (event: MouseEvent) => {
+      const [typing, press] = [document.activeElement, event.target];
+      if (!(press instanceof Element && press.closest("button"))) return;
+      if (!matchMedia("(max-width: 639px)").matches) return;
+      if (typing instanceof HTMLTextAreaElement && root.lastElementChild?.contains(typing))
+        event.preventDefault();
+    };
+    root.addEventListener("mousedown", keep);
+    return () => root.removeEventListener("mousedown", keep);
+  }, [panel, on]);
   return [on, () => flushSync(() => setOn(false))] as const;
 }

@@ -103,7 +103,7 @@ describe("Inbox, lista (F6-03)", () => {
     });
     serve({ [LIST]: page([rosa, luna]), [MESSAGES("1")]: page([]) });
     show();
-    expect(screen.getByRole("status")).toHaveTextContent("Cargando conversaciones…");
+    expect(screen.getByText("Cargando conversaciones…")).toHaveAttribute("role", "status");
     const row = await screen.findByRole("button", { name: /Rosa Díaz/ });
     expect(row).toHaveTextContent("Hola, ¿tienen collares?");
     expect(row).toHaveTextContent("CONV-00001Pruebas·, SandboxAbiertaSin asignar");
@@ -928,8 +928,13 @@ describe("móvil: la conversación en la URL (UX-INBOX-03)", () => {
       return inner(input, init);
     });
     const { client } = show();
-    const loading = await screen.findByText("Cargando mensajes…");
+    const region = within(screen.getByRole("region", { name: "Conversación" })).getByRole("status");
+    expect(region).toBeEmptyDOMElement(); // se monta vacía…
+    const opening = () => screen.getAllByText("Cargando la conversación…");
+    await waitFor(() => expect(opening()).toHaveLength(2)); // la región se llena tras montarse vacía
+    const [loading, said] = opening();
     expect(loading).not.toHaveClass("max-lg:hidden");
+    expect(said).toHaveAttribute("role", "status"); // se anuncia (UX-INBOX-03c)
     expect(screen.getByRole("region", { name: "Conversaciones" })).toHaveClass("max-lg:hidden");
     arrive();
     expect(await screen.findByRole("heading", { level: 2 })).toHaveTextContent("Rosa Díaz");
@@ -941,7 +946,7 @@ describe("móvil: la conversación en la URL (UX-INBOX-03)", () => {
 
   it("llegar con «adelante» a un `?c=` válido quita el aviso de uno que no existía", async () => {
     history.replaceState(null, "", "/?c=no-existe");
-    serve(routes);
+    serve({ ...routes, [MESSAGES(ID)]: page([]) }); // sin ella, el 404 de los mensajes es otra alerta
     show();
     expect(await screen.findByRole("alert")).toHaveTextContent("No encontramos lo que buscas.");
     await waitFor(() => expect(at()).toBeNull());

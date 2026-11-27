@@ -59,6 +59,11 @@
   --gd-surface: #f3f3f3;
   --gd-honey: #ffdb5b;
   --gd-edge: #202020;
+  /* El AppShell bajo 1024 px (barra, margen lateral y relleno del contenido). El chat compacto
+     (UX-INBOX-03b) los anula con márgenes negativos: los dos leen estas medidas. */
+  --shell-bar: 60px;
+  --shell-gutter: 1rem;
+  --shell-pad: 2rem;
 }
 
 @layer base {

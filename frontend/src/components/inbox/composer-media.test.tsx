@@ -58,7 +58,7 @@ function server(media: () => Reply, stored: Message[] = []) {
     }),
     [MEDIA]: () => {
       const reply = media();
-      if (reply.status < 300) stored.push(reply.body as Message);
+      if (reply.status === 202) stored.push(reply.body as Message); // 200: el ya guardado
       return reply;
     },
   });
@@ -91,6 +91,7 @@ const attach = async (file: File) => {
 };
 const caption = () => screen.findByRole("textbox", { name: "Pie de foto (opcional)" });
 const send = (name = "Enviar") => fireEvent.click(screen.getByRole("button", { name }));
+const pause = () => new Promise((resolve) => setTimeout(resolve, 550)); // pasado `SETTLE`
 
 configure({ asyncUtilTimeout: 4000 });
 vi.setConfig({ testTimeout: 15_000 });
@@ -185,7 +186,7 @@ describe("adjuntar desde el cuadro de redacción (F7-09b3)", () => {
     expect(second!.get("client_message_id")).not.toBe(first!.get("client_message_id"));
   });
 
-  it("sin respuesta en 120 s se libera y reintenta con el id; al volver, el pie solo es otro id (UX-INBOX-04)", async () => {
+  it("sin respuesta en 120 s se libera y reintenta con el id; al volver, el pie pide confirmación (UX-INBOX-04c)", async () => {
     const s = server(() => ({ status: 500, body: { code: "INTERNAL_ERROR" } }));
     const posts = () => s.api.mock.calls.filter(([, init]) => init?.method === "POST");
     const net = hangPosts(s.api);
@@ -211,9 +212,115 @@ describe("adjuntar desde el cuadro de redacción (F7-09b3)", () => {
     expect(posts()).toHaveLength(2); // con la subida en curso no sale otro
     net.expire();
     await waitFor(() => expect(box).not.toHaveAttribute("readonly"));
+    send(); // el archivo pudo llegar: el primer toque solo avisa
+    expect(await screen.findByText(/se enviará solo el texto, sin archivo/)).toBeVisible();
+    expect(posts()).toHaveLength(2);
+    await pause();
     send();
     await waitFor(() => expect(posts()).toHaveLength(3));
     expect(JSON.parse(String(posts()[2]![1]!.body)).client_message_id).not.toBe(first);
+  });
+
+  it("un reintento idéntico que el servidor ya guardó deja una sola burbuja (UX-INBOX-04c)", async () => {
+    const stored: Message[] = [];
+    const id = () => String(s.forms()[0]!.get("client_message_id"));
+    const mine = () => outbound("s1", "DOCUMENT", "Su cotización", { client_message_id: id() });
+    const s = server(() => ({ status: 200, body: mine() }), stored);
+    const net = hangPosts(s.api);
+    show();
+    await openChat();
+    await attach(pdf());
+    fireEvent.change(await caption(), { target: { value: "Su cotización" } });
+    send();
+    await waitFor(() => expect(net.waits).toEqual([120_000]));
+    stored.push(mine()); // el servidor lo guardó; la respuesta no llegó
+    net.expire();
+    expect(await screen.findByText(/Puede que el archivo ya se haya enviado/)).toBeVisible();
+    net.answer();
+    send("Reintentar"); // el mismo archivo y el mismo id: sin confirmar
+    await waitFor(() => expect(s.forms()).toHaveLength(2));
+    expect(s.forms()[1]!.get("client_message_id")).toBe(id());
+    const box = await screen.findByRole("textbox", { name: /Responder/ });
+    await waitFor(() => expect(box).toHaveValue(""));
+    const log = await screen.findByRole("list", { name: "Mensajes" });
+    expect(within(log).getAllByText("Su cotización")).toHaveLength(1);
+    expect(screen.queryByText(/Puede que el archivo/)).toBeNull();
+  });
+
+  it("tras un archivo vencido, otro texto, otro archivo o volver piden confirmar otra vez (UX-INBOX-04c)", async () => {
+    const s = server(() => ({ status: 500 }));
+    const posts = () => s.api.mock.calls.filter(([, init]) => init?.method === "POST");
+    const net = hangPosts(s.api);
+    const hint = /Si pulsas «Enviar» otra vez/;
+    show();
+    await openChat();
+    await attach(pdf());
+    fireEvent.change(await caption(), { target: { value: "Su cotización" } });
+    send();
+    await waitFor(() => expect(net.waits).toEqual([120_000]));
+    net.expire();
+    const warning = await screen.findByText(/Puede que el archivo ya se haya enviado/);
+    expect(warning).toHaveAttribute("role", "status"); // se anuncia sin interrumpir
+    fireEvent.click(screen.getByRole("button", { name: "Quitar el archivo" }));
+    send(); // solo avisa
+    expect(await screen.findByText(/se enviará solo el texto, sin archivo/)).toBeVisible();
+    const box = await screen.findByRole("textbox", { name: /Responder/ });
+    fireEvent.change(box, { target: { value: "Su cotización." } });
+    expect(screen.queryByText(hint)).toBeNull(); // otro texto: otra confirmación
+    await pause();
+    send();
+    await screen.findByText(hint);
+    await attach(pdf("otra.pdf"));
+    expect(screen.queryByText(hint)).toBeNull(); // otro archivo, también
+    await pause();
+    send();
+    expect(await screen.findByText(/se enviará como mensaje nuevo/)).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Quitar el archivo" }));
+    await pause();
+    send();
+    await screen.findByText(/se enviará solo el texto/); // lo mismo que habrá al volver
+    fireEvent.click(screen.getByRole("button", { name: "Volver a las conversaciones" }));
+    await waitFor(() => expect(screen.queryByRole("heading", { level: 2 })).toBeNull());
+    await openChat();
+    expect(await screen.findByText(/Puede que el archivo ya se haya enviado/)).toBeVisible();
+    expect(screen.queryByText(hint)).toBeNull(); // al volver, también
+    send();
+    await screen.findByText(hint);
+    expect(posts()).toHaveLength(1); // nada salió sin confirmar
+    await pause();
+    send();
+    await waitFor(() => expect(posts()).toHaveLength(2));
+    expect(JSON.parse(String(posts()[1]![1]!.body)).body).toBe("Su cotización.");
+  });
+
+  it("tras un archivo vencido, un pie más largo con el mismo archivo y un doble toque piden confirmar (UX-INBOX-04c)", async () => {
+    let reply: Reply = { status: 409, body: { code: "CLIENT_MESSAGE_ID_TAKEN" } };
+    const s = server(() => reply);
+    const net = hangPosts(s.api);
+    show();
+    await openChat();
+    await attach(pdf());
+    fireEvent.change(await caption(), { target: { value: "Su cotización" } });
+    send();
+    await waitFor(() => expect(net.waits).toEqual([120_000]));
+    net.expire();
+    await screen.findByText(/Puede que el archivo ya se haya enviado/);
+    net.answer();
+    send("Reintentar"); // idéntico: el mismo id; si choca, sigue dudoso
+    await waitFor(() => expect(s.forms()).toHaveLength(2));
+    const first = s.forms()[0]!.get("client_message_id");
+    expect(await screen.findByRole("alert")).toHaveTextContent(/primera parte ya se haya enviado/);
+    expect(screen.getByText(/Puede que el archivo ya se haya enviado/)).toBeVisible();
+    fireEvent.change(await caption(), { target: { value: "Su cotización, con delivery" } });
+    send();
+    send(); // doble toque: el segundo no confirma
+    expect(await screen.findByText(/se enviará como mensaje nuevo/)).toBeVisible();
+    await pause();
+    expect(s.forms().map((form) => form.get("client_message_id"))).toEqual([first, first]);
+    reply = { status: 202, body: outbound("s2", "DOCUMENT", "Su cotización, con delivery") };
+    send(); // ahora sí: otro id, con su archivo
+    await waitFor(() => expect(s.forms()).toHaveLength(3));
+    expect(s.forms()[2]!.get("client_message_id")).not.toBe(first);
   });
 
   it("una imagen con pie de foto lo envía tal cual; solo espacios no cuenta como pie", async () => {
