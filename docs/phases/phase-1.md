@@ -70,6 +70,9 @@ La parte del propietario (identidades, entorno `production`, token, avisos y la 
   - **Workflows:** los que construyen, publican o despliegan imágenes, o usan secretos o entornos, son B como mínimo.
   - **Clase declarada:** el PR la declara en «Clase de despliegue» de la plantilla; solo sube la clase, nunca la baja.
   - **Solo informativo en la fase 1:** el workflow `deploy-class.yml` (solo `contents: read`, no requerido) escribe la clase y sus motivos en el resumen del run.
+- **Hecho en F1-20b ([#1168](https://github.com/PapiCuche/crm-gooddoggy/issues/1168)):** `images.yml` firma, en un job `attest` aparte, una atestación de procedencia (SLSA v1, Sigstore) por imagen propia en cada push a `main`. Ese job tiene solo `id-token: write` y `attestations: write`, sin checkout ni código del repositorio. `images-pr.yml` no atesta nada. `infra/prod/verify_attestations.py` verifica un `release.env` sin credenciales: la API de GitHub sin token, `gh attestation verify --bundle` fijado (2.103.3) y nunca autenticado, y GHCR anónimo.
+  - **Falla cerrado:** otro workflow, rama, SHA, repositorio o digest, un runner propio, una atestación ausente, un error de red (también un 403 o 429), otra versión de `gh`, un hash del registro que no cuadra o la etiqueta `org.opencontainers.image.revision` distinta del SHA. Basta una atestación que cumpla todo, en cualquier orden.
+  - **No se usa todavía en producción:** lo usará el agente (F1-20e1), una vez por release, cuando el propietario habilite la fase 1.
 
 ## Definition of Done de la fase
 
