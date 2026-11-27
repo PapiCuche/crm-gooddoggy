@@ -20,10 +20,11 @@ Los issues llevan la etiqueta `phase:f11` y `release:seguimiento`. **El issue es
 | F11-03 | [#1177](https://github.com/PapiCuche/crm-gooddoggy/issues/1177) Tareas: entrada del sistema y enlaces | `feature/f11-tasks-automation-entry` | #1176 |
 | F11-04 | [#1178](https://github.com/PapiCuche/crm-gooddoggy/issues/1178) Conversaciones: `awaiting_reply_since` | `feature/f11-conversation-awaiting-reply-since` | #1166, #1093 |
 | F11-07 | [#1179](https://github.com/PapiCuche/crm-gooddoggy/issues/1179) API de reglas, interruptor e historial | `feature/f11-automations-api` | #1176 |
+| F11-07b | [#1214](https://github.com/PapiCuche/crm-gooddoggy/issues/1214) Historial de automatizaciones (API) | `feature/f11-automations-runs-api` | #1179 |
 | F11-05 | [#1180](https://github.com/PapiCuche/crm-gooddoggy/issues/1180) Barrido y regla «Conversación sin respuesta» | `feature/f11-unanswered-conversation-rule` | #1176, #1177, #1178 |
 | F11-06 | [#1181](https://github.com/PapiCuche/crm-gooddoggy/issues/1181) Escalado a supervisores | `feature/f11-unanswered-escalation` | #1180 |
 | F11-09 | [#1182](https://github.com/PapiCuche/crm-gooddoggy/issues/1182) Regla «Cotización enviada sin respuesta» | `feature/f11-quote-no-response-rule` | #1180 |
-| F11-08a | [#1183](https://github.com/PapiCuche/crm-gooddoggy/issues/1183) Pantalla «Automatizaciones» | `feature/f11-automations-settings-screen` | #1179 |
+| F11-08a | [#1183](https://github.com/PapiCuche/crm-gooddoggy/issues/1183) Pantalla «Automatizaciones» | `feature/f11-automations-settings-screen` | #1179, #1214 |
 | F11-08b | [#1184](https://github.com/PapiCuche/crm-gooddoggy/issues/1184) Marca «Automática», runbook y E2E (cierra la serie) | `feature/f11-automations-tasks-badge-runbook` | #1177, #1183 |
 | F11-10 | [#1185](https://github.com/PapiCuche/crm-gooddoggy/issues/1185) Retención de 180 días con purga auditada | `feature/f11-automation-runs-retention` | #1176 |
 
@@ -38,7 +39,7 @@ Los issues llevan la etiqueta `phase:f11` y `release:seguimiento`. **El issue es
 - **Hecho en F11-07 ([#1179](https://github.com/PapiCuche/crm-gooddoggy/issues/1179)):** la API de `…/automations/`: `GET` (las dos reglas registradas, con su modo, parámetros completos, `version` (0 = sin configurar), `simulate_since` y `on_allowed_at`; el interruptor de la organización y `global_enabled`, solo de lectura) con `automations.view`; `PATCH rules/{key}/` (`version`, `mode`, `params` parciales) con `automations.manage`; `POST pause/` con `automations.kill_switch` o `automations.manage`; `POST resume/` con `automations.manage`. Supervisor: lee y pausa; Vendedor: nada.
   - **E2 en la API:** pasar a `ON` sin 7 días seguidos en `SIMULATE` (reloj de la base) responde 409 `SIMULATION_TOO_SHORT` y no cambia nada; versión vieja, 409 `STALE_VERSION`; una clave de `params` fuera del esquema o un valor fuera de rango (`max_recipients` de 1 a 3), 400 en `params`, sin repetir el valor.
   - **`global_enabled` apagado:** una regla puede pasar a `SIMULATE` u `ON`, pero nada se ejecuta; la lectura y el `PATCH` lo dicen con `global_enabled = false` (la pantalla, F11-08a, lo muestra). Ninguna ruta lo enciende (E3).
-  - **Historial, dividido a F11-07b:** no cabía en el tope de 800 líneas relevantes (con él eran 1081), así que `GET runs/` (con «sin acceso» y el límite de consultas por página) pasa a un work item de seguimiento. F11-08a depende también de él.
+  - **Historial, dividido a F11-07b:** no cabía en el tope de 800 líneas relevantes (con él eran 1081), así que `GET runs/` (con «sin acceso» y el límite de consultas por página) pasa a F11-07b ([#1214](https://github.com/PapiCuche/crm-gooddoggy/issues/1214)). F11-08a depende también de él.
   - **Sin segundo factor:** ADR-049 no lo pide. Pedirlo en `PATCH` hacia `ON` y en `resume` es un endurecimiento posible más adelante.
 
 ## Observaciones
