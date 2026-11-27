@@ -81,9 +81,9 @@ Previos transversales: [#3](https://github.com/PapiCuche/crm-gooddoggy/issues/3)
     - la aprobación cuenta desde el `started_at` del job approve, no desde el payload, y vale 24 h;
     - aprobó una cuenta de `CD_APPROVERS` que no lanzó el run, sin rechazos;
     - la tupla de §5 se recalcula: la base es la `REVISION` en marcha, el run de images y su `release.env` (huella), la clase y que el SHA sea antecesor de `main`;
-    - el artefacto `release-env` es de ese run y de ese SHA, y se creó antes de que empezara el job prepare. El run de images no se relanzó después: si no, los digests no serían los aprobados;
+    - el artefacto `release-env` es de ese run y de ese SHA, y es del último intento: se creó después de que empezara ese intento y antes de que empezara el job prepare. El run de images no se relanzó después: si no, los digests no serían los aprobados;
     - `verify_attestations.py` y `cd-preflight.sh` en verde.
-  - **Falla cerrado** ante red, 403/429, JSON, campos ausentes o cualquier error. Antes de cada pasada, y antes de leer `cd.conf`, borra `deployable.json`.
+  - **Falla cerrado** ante red, 403/429, JSON, campos ausentes o cualquier error. Antes de cada pasada, y antes de leer `cd.conf`, borra `/var/lib/crm-cd/deployable.json`. Esa ruta es fija y no se configura.
   - **Clase C:** `cd_agent.py`, `verify_attestations.py`, `cd-preflight.sh`, `release_record.py`, `deploy_class.py` y su tabla son clase C. Así, un release B no puede cambiar el verificador.
   - **Probado solo con una API de GitHub simulada** (`test_cd_agent.py`, en `infra-prod.yml`). No se instala en producción ni se habilita: es decisión del propietario.
   - **Queda para F1-20e2:** las dos condiciones de §7 que no son locales: el CI en verde de cada workflow del rango y que ningún commit posterior de `main` revierta uno del rango.

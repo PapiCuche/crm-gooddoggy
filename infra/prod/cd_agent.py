@@ -4,14 +4,14 @@
     sudo python3 infra/prod/cd_agent.py [--config /etc/crm/cd.conf] [--loop]
 
 F1-20e1 (ADR-048 §4, §5, §7 and §11). One cycle per run; --loop repeats it every 2 min. It NEVER deploys:
-in mode `approve` it only writes STATE_DIR/deployable.json and logs DEPLOYABLE (deploy.sh is F1-20e2).
+in mode `approve` it only writes /var/lib/crm-cd/deployable.json and logs DEPLOYABLE (deploy.sh is F1-20e2).
 Installing it on the server or changing its mode is the owner's decision (amendment E1); no unit ships here.
 
 /etc/crm/cd.conf (root, no group/other write), KEY=value lines:
     MODE=off|approve     anything else, `auto` included (phase 2, not authorized), is off: no network at all
     CD_APPROVERS=login[,login]   the server's own list (§4); never taken from GitHub
     TOKEN_FILE=/etc/crm/cd.env   root, 0600, one line CD_GITHUB_TOKEN=<fine-grained read token> (decision 4)
-    STATE_DIR=/var/lib/crm-cd  ENV_DIR=/etc/crm  GIT_DIR=<this checkout>  GIT_REMOTE=<https URL, no credential>
+    ENV_DIR=/etc/crm  GIT_DIR=<this checkout>  GIT_REMOTE=<https URL, no credential>
 
 A crm-release deployment record is data, not authentication (any workflow can POST one). It is deployable only
 if EVERY check of verify() passes; anything else (network, 304 without cache, 403/429, JSON, a missing field,
@@ -52,7 +52,7 @@ BOT = ("github-actions[bot]", "Bot", 41898282)  # the only creator of a crm-rele
 WORKFLOW = ".github/workflows/release.yml"
 JOBS = ("release prepare", "release approve")
 EVERY = 120  # seconds between polls (§11)
-STATE_DIR = "/var/lib/crm-cd"
+STATE_DIR = "/var/lib/crm-cd"  # fixed, not configurable: a missing cd.conf must still clear the verdict
 NUM = re.compile(r"[1-9][0-9]{0,19}")
 DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 TOKEN = re.compile(r"[A-Za-z0-9_]{20,255}")
@@ -172,7 +172,7 @@ def release_env_of(blob: bytes) -> str:
 class Agent:
     def __init__(self, conf: dict, gh: GitHub, now: dt.datetime, log=print) -> None:
         self.conf, self.gh, self.now, self.log = conf, gh, now, log
-        self.state = pathlib.Path(conf.get("STATE_DIR", STATE_DIR))
+        self.state = pathlib.Path(STATE_DIR)
         self.git_dir = conf.get("GIT_DIR", str(ROOT))
 
     def api(self, path: str):
@@ -277,8 +277,9 @@ class Agent:
         runs = self.api(f"actions/workflows/images.yml/runs?head_sha={sha}&per_page=100")
         if str(rr.images_run(runs, sha, REPO)) != images_id:
             raise Refused("images_run_id is not THE images run of the SHA")
-        images = runs["workflow_runs"][0]  # a re-run after prepare can publish other digests (§5)
-        if images.get("run_attempt") != 1 and not when(images.get("run_started_at"), "images run start") < prepared_at:
+        # Its latest attempt started before prepare: a re-run after it can publish other digests (§5).
+        images_started = when(runs["workflow_runs"][0].get("run_started_at"), "images run start")
+        if not images_started < prepared_at:
             raise Refused("images run re-run after the preparation (§5)")
         one_per_name(self.api(f"actions/runs/{images_id}/jobs?filter=latest&per_page=100"), int(images_id),
                      rr.IMAGES_JOBS)
@@ -287,9 +288,9 @@ class Agent:
                 or artifacts[0].get("expired") is not False:
             raise Refused("images run: not exactly one live release-env artifact")
         made = artifacts[0].get("workflow_run") or {}
-        if made.get("id") != int(images_id) or made.get("head_sha") != sha or \
-                not when(artifacts[0].get("created_at"), "artifact created_at") < prepared_at:
-            raise Refused("release-env artifact not of that run or created after the preparation (§5)")
+        created = when(artifacts[0].get("created_at"), "artifact created_at")
+        if made.get("id") != int(images_id) or made.get("head_sha") != sha or not images_started <= created < prepared_at:
+            raise Refused("release-env artifact not of the latest attempt of that run, or created after prepare (§5)")
         artifact = num(artifacts[0].get("id"), "artifact id")
         lines = rr.release_env(release_env_of(self.gh.get(f"/repos/{REPO}/actions/artifacts/{artifact}/zip",
                                                           raw=True)[0]), sha)
@@ -343,6 +344,11 @@ def write(path: pathlib.Path, text: str) -> None:
         handle.flush()
         os.fsync(handle.fileno())
     os.replace(tmp, path)
+    directory = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
 
 
 def drop(state: str) -> None:
@@ -353,7 +359,6 @@ def once(config: str, opener=None, now: dt.datetime | None = None) -> int:
     try:
         drop(STATE_DIR)  # first: an unreadable or missing cd.conf must not leave an old verdict
         conf = parse(private_file(config, secret=False))
-        drop(conf.get("STATE_DIR", STATE_DIR))
         if conf.get("MODE") != "approve":
             print("mode off: no polling and nothing deployable (only MODE=approve polls; auto is phase 2)")
             return 0

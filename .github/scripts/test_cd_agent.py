@@ -87,7 +87,7 @@ class AgentTest(unittest.TestCase):
         self.token.write_text(f"CD_GITHUB_TOKEN={TOKEN}\n")
         self.token.chmod(0o600)
         self.settings = {"MODE": "approve", "CD_APPROVERS": "owner, deputy", "TOKEN_FILE": str(self.token),
-                         "STATE_DIR": str(self.state), "ENV_DIR": str(d / "etc"), "GIT_DIR": self.repo.root,
+                         "ENV_DIR": str(d / "etc"), "GIT_DIR": self.repo.root,
                          "GIT_REMOTE": self.repo.root}
         payload = {"schema": 1, "sha": self.sha, "fingerprint": rr.fingerprint(env_lines(self.sha)),
                    "base": self.base, "class": "A1", "repository": REPO, "run_id": "7", "run_attempt": "1",
@@ -166,7 +166,7 @@ class AgentTest(unittest.TestCase):
     def test_deployable_only_with_every_check_green(self):
         (self.state / "deployable.json.tmp").write_text("stale")
         (self.state / "deployable.json.tmp").chmod(0o666)  # a stale .tmp never lends its mode
-        code, text = self.cycle()
+        code, text = self.cycle(STATE_DIR=str(self.state.with_name("ignored")))  # not a configurable key
         self.assertEqual(code, 0, text)
         self.assertIn(f"DEPLOYABLE record 900: {self.sha} class A1", text)
         result = json.loads((self.state / "deployable.json").read_text())
@@ -176,13 +176,10 @@ class AgentTest(unittest.TestCase):
         self.assertFalse(any("deploy.sh" in " ".join(a) for a, _ in self.argv))  # never deploys
 
     def test_any_mode_but_approve_is_off_without_network(self):
-        other = self.state.with_name("other")  # a STATE_DIR other than the default is cleared too
-        other.mkdir()
         for mode in ("off", "auto", "AUTO", "", "deploy", "approve,auto"):
             with self.subTest(mode=mode):
-                (other / "deployable.json").write_text("{}")
-                self.refused("mode off", MODE=mode, STATE_DIR=str(other))
-                self.assertFalse((other / "deployable.json").exists())
+                (self.state / "deployable.json").write_text("{}")
+                self.refused("mode off", MODE=mode, STATE_DIR="/elsewhere")  # STATE_DIR is not configurable
         self.assertEqual((self.opener.requests, self.argv), ([], []))
 
     def test_forged_records_from_anywhere_but_release_yml_on_main(self):
@@ -318,13 +315,18 @@ class AgentTest(unittest.TestCase):
         self.routes["actions/artifacts/5/zip"] = zipped("\n".join(lines))
         self.record["payload"]["fingerprint"] = rr.fingerprint(lines)
         self.artifact["created_at"] = t(1.5)
-        self.refused("created after the preparation")
-        for change, reason in (({"workflow_run": {"id": 43, "head_sha": self.sha}}, "not of that run"),
-                               ({"workflow_run": {"id": 42, "head_sha": self.repo.docs}}, "not of that run"),
+        self.refused("created after prepare")
+        for change, reason in (({"workflow_run": {"id": 43, "head_sha": self.sha}}, "not of the latest attempt of that run"),
+                               ({"workflow_run": {"id": 42, "head_sha": self.repo.docs}}, "not of the latest attempt of that run"),
                                ({"created_at": None}, "artifact created_at is not")):
             with self.subTest(change=change), mock.patch.dict(self.artifact, {"created_at": t(3), **change}):
                 self.refused(reason)
+        # Re-run before prepare: the artifact of attempt 1 (before the latest attempt started) is not the prepared one.
+        self.images_runs["workflow_runs"][0].update(run_attempt=2, run_started_at=t(4))
+        self.artifact["created_at"] = t(5)
+        self.refused("not of the latest attempt")
         self.artifact["created_at"] = t(3)
+        self.assertIn("DEPLOYABLE", self.cycle()[1])
         self.images_runs["workflow_runs"][0].update(run_attempt=2, run_started_at=t(1.5))
         self.refused("images run re-run after the preparation")
         self.images_runs["workflow_runs"][0].update(run_attempt=1, run_started_at=t(4))
