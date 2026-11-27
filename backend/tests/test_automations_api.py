@@ -23,6 +23,8 @@ from apps.automations.api.views import STALE, TOO_SHORT
 from apps.automations.params import CONVERSATION_UNANSWERED as CONV
 from apps.automations.params import QUOTE_NO_RESPONSE as QUOTE
 from apps.automations.params import defaults
+from apps.conversations.models import Conversation
+from apps.quotes.models import Quote
 from core.tenancy.scope import tenant_scope
 from tests import test_conversation_scopes as scopes
 from tests.factories import make_user, sign_in
@@ -337,6 +339,10 @@ def test_history_shows_the_subject_only_within_the_viewers_scope(
     give(inbox.a, join(inbox.a, reader).pk,
          {"automations.view": None, "conversations.view": "ORGANIZATION"})  # fmt: skip
     assert sees(reader) == of(*every)  # sin `quotes.view`: ninguna cotización
+    seller = make_user(email="quinn@example.com")  # `quotes.view` de la organización, sin chats
+    give(inbox.a, join(inbox.a, seller).pk, {"automations.view": None, "quotes.view":
+         "ORGANIZATION", "quotes.update": "OWN"})  # fmt: skip
+    assert sees(seller) == of(mine, quotes["ana"])  # el alcance de `quotes.view`, no el de update
     with tenant_scope(ctx(inbox.a)):  # sin `conversations.view` ni `quotes.view`
         seller = MembershipRole.objects.filter(membership_id=inbox.m["vera"], role__code="seller")
         assert seller.delete()[0] == 1
@@ -372,15 +378,21 @@ def test_history_never_crosses_organizations_and_shows_only_ids(
     assert reply(signed(inbox.luis).get(RUNS)) == NOT_FOUND
 
 
-def test_the_lists_hide_no_rows_the_history_would_have_to_hide() -> None:
-    """El sujeto se ve con `scoped()`, como en `ScopeFilter` de las listas y fichas de
-    conversaciones y cotizaciones. Si una declarara `hidden_unless`, el historial tendría que
-    ocultar lo mismo."""
+def test_the_lists_hide_no_rows_the_history_would_have_to_hide(crm: SimpleNamespace) -> None:
+    """El sujeto se ve con `scoped()` sobre `Conversation.objects` y `Quote.objects` (el
+    historial no puede importar sus selectores ni su API: ADR-049 §1). Las listas y fichas parten
+    de esos selectores con `ScopeFilter`: si un selector filtrara más filas o una vista declarara
+    `hidden_unless`, el historial tendría que ocultar lo mismo."""
+    from apps.conversations import selectors as chats
     from apps.conversations.api.conversations import ConversationsView, ConversationView
+    from apps.quotes import selectors as quotes
     from apps.quotes.api.quotes import QuotesView, QuoteView
 
     for view in (ConversationsView, ConversationView, QuotesView, QuoteView):
         assert getattr(view, "hidden_unless", None) is None, view.__name__
+    with tenant_scope(ctx(crm.a)):
+        for listed, model in ((chats.conversations(), Conversation), (quotes.quotes(), Quote)):
+            assert str(listed.values("pk").query) == str(model.objects.values("pk").query)
 
 
 def test_a_page_of_runs_costs_the_same_queries_whatever_its_size(

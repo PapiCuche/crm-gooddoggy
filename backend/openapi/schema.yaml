@@ -13581,6 +13581,7 @@ components:
           description: '`conversation` o `quote`.'
         id:
           type: string
+          format: uuid
           nullable: true
           readOnly: true
           description: 'null: sin acceso.'

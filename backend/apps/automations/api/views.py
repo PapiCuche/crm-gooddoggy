@@ -18,7 +18,7 @@ from contextlib import contextmanager
 from typing import Any
 
 from django.db.models import Case, CharField, OuterRef, QuerySet, Subquery, When
-from drf_spectacular.utils import extend_schema, extend_schema_view
+from drf_spectacular.utils import extend_schema, extend_schema_field, extend_schema_view
 from rest_framework import generics, serializers
 from rest_framework.exceptions import NotFound
 from rest_framework.request import Request
@@ -192,6 +192,7 @@ class AutomationSubjectSerializer(serializers.Serializer[Any]):
     number = serializers.CharField(source="subject_number", allow_null=True)
     visible = serializers.SerializerMethodField(help_text="false: «sin acceso».")
 
+    @extend_schema_field(serializers.UUIDField(allow_null=True))
     def get_id(self, run: Any) -> str | None:  # el id, solo junto al número que el alcance da
         return str(run.subject_id) if run.subject_number is not None else None
 
