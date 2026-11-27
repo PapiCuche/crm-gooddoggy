@@ -46,9 +46,9 @@ RULES, PAUSE, RESUME, RUNS = BASE + "rules/", BASE + "pause/", BASE + "resume/",
 RUN = (
     "INSERT INTO automation_runs (organization_id, rule_id, rule_version, rule_key, subject_type,"
     " subject_id, episode_at, step, mode, status, closed_at) SELECT %s, %s, 1, %s, %s, %s,"
-    " now() - make_interval(mins => n), 1, 'SIMULATE', CASE WHEN n = 1 THEN 'DONE' ELSE 'CLOSED' END,"
-    " CASE WHEN n = 1 THEN NULL ELSE now() END FROM generate_series(1, %s) AS n"
-)  # una sola ejecución abierta por sujeto, paso y modo (`automation_runs_open_uq`, F11-05a)
+    " now() - make_interval(mins => n), 1, 'SIMULATE', CASE n WHEN 1 THEN 'DONE' ELSE 'CLOSED' END,"
+    " CASE n WHEN 1 THEN NULL ELSE now() END FROM generate_series(1, %s) AS n"
+)
 STATE = (
     "SELECT organization_id, key, mode, version, simulate_since FROM automation_rules ORDER BY 1"
 )
